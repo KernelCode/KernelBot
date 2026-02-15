@@ -1,5 +1,7 @@
 # KernelBot
 
+[kernelbot.io](https://kernelbot.io) | [npm](https://www.npmjs.com/package/kernelbot) | [GitHub](https://github.com/KernelCode/KERNEL)
+
 AI engineering agent — a Telegram bot backed by Claude with full OS control via tool use.
 
 Send a message in Telegram, and KernelBot will read files, write code, run commands, browse the web, manage infrastructure, and respond with the results. It's your personal engineering assistant with direct access to your machine.

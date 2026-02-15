@@ -24,7 +24,7 @@
   "bugs": {
     "url": "https://github.com/KernelCode/KernelBot/issues"
   },
-  "homepage": "https://github.com/KernelCode/KernelBot#readme",
+  "homepage": "https://kernelbot.io",
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
