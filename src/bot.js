@@ -114,15 +114,42 @@ export function startBot(config, agent, conversationManager) {
     bot.sendChatAction(chatId, 'typing').catch(() => {});
 
     try {
-      const onUpdate = async (update) => {
-        const parts = splitMessage(update);
-        for (const part of parts) {
+      const onUpdate = async (update, opts = {}) => {
+        // Edit an existing message instead of sending a new one
+        if (opts.editMessageId) {
           try {
-            await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
+            const edited = await bot.editMessageText(update, {
+              chat_id: chatId,
+              message_id: opts.editMessageId,
+              parse_mode: 'Markdown',
+            });
+            return edited.message_id;
           } catch {
-            await bot.sendMessage(chatId, part);
+            try {
+              const edited = await bot.editMessageText(update, {
+                chat_id: chatId,
+                message_id: opts.editMessageId,
+              });
+              return edited.message_id;
+            } catch {
+              return opts.editMessageId;
+            }
           }
         }
+
+        // Send new message(s)
+        const parts = splitMessage(update);
+        let lastMsgId = null;
+        for (const part of parts) {
+          try {
+            const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
+            lastMsgId = sent.message_id;
+          } catch {
+            const sent = await bot.sendMessage(chatId, part);
+            lastMsgId = sent.message_id;
+          }
+        }
+        return lastMsgId;
       };
 
       const reply = await agent.processMessage(chatId, text, {
