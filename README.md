@@ -4,6 +4,26 @@ AI engineering agent — a Telegram bot backed by Claude with full OS control vi
 
 Send a message in Telegram, and KernelBot will read files, write code, run commands, browse the web, manage infrastructure, and respond with the results. It's your personal engineering assistant with direct access to your machine.
 
+## Features
+
+- **Autonomous agent loop** — send one message and KernelBot chains tool calls until the task is done, no hand-holding needed
+- **Full shell access** — run any command, install packages, build projects, run tests
+- **File management** — read, write, and create files with automatic directory creation
+- **Web browsing** — navigate pages, extract content, take screenshots, interact with forms and buttons (Puppeteer)
+- **Git workflow** — clone repos, create branches, commit, push, and view diffs
+- **GitHub integration** — create repos, open PRs, post code reviews, list and inspect pull requests
+- **Claude Code sub-agent** — spawn a dedicated Claude Code CLI session for complex coding tasks (write, edit, debug, refactor)
+- **Docker management** — list containers, read logs, exec into containers, run compose commands
+- **Process control** — list, kill, and manage system processes and systemd services
+- **System monitoring** — check CPU, RAM, disk usage, and read system logs
+- **Networking** — make HTTP requests, check ports, test and reload nginx
+- **Send images** — share screenshots and files directly in the Telegram chat
+- **Conversation memory** — per-chat history that persists across restarts
+- **Live status updates** — Claude Code activity consolidated into a single updating message instead of spam
+- **Security built-in** — user allowlist, blocked paths, dangerous operation confirmation, audit logging, secret redaction
+- **Zero config setup** — auto-detects config, prompts for missing credentials on first run
+- **Credential management** — auto-prompts for missing API keys (GitHub, Anthropic, Telegram) and saves them
+
 ## How It Works
 
 ```text
