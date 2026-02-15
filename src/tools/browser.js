@@ -1,5 +1,5 @@
 import puppeteer from 'puppeteer';
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir, access } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -187,6 +187,25 @@ export const definitions = [
     },
   },
   {
+    name: 'send_image',
+    description:
+      'Send an image or screenshot file directly to the Telegram chat. Use this to share screenshots, generated images, or any image file with the user.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        file_path: {
+          type: 'string',
+          description: 'Absolute path to the image file to send (e.g., "/home/user/.kernelbot/screenshots/example.png")',
+        },
+        caption: {
+          type: 'string',
+          description: 'Optional caption to include with the image',
+        },
+      },
+      required: ['file_path'],
+    },
+  },
+  {
     name: 'interact_with_page',
     description:
       'Interact with a webpage by clicking elements, typing into inputs, scrolling, or executing JavaScript. Returns the page state after interaction.',
@@ -350,7 +369,7 @@ async function handleBrowse(params) {
   });
 }
 
-async function handleScreenshot(params) {
+async function handleScreenshot(params, context) {
   const validation = validateUrl(params.url);
   if (!validation.valid) return { error: validation.error };
 
@@ -397,12 +416,24 @@ async function handleScreenshot(params) {
       await page.screenshot(screenshotOptions);
     }
 
+    const title = await page.title();
+
+    // Send the screenshot directly to Telegram chat
+    if (context?.sendPhoto) {
+      try {
+        await context.sendPhoto(filepath, `📸 ${title || url}`);
+      } catch {
+        // Photo sending is best-effort; don't fail the tool
+      }
+    }
+
     return {
       success: true,
       url: page.url(),
-      title: await page.title(),
+      title,
       screenshot_path: filepath,
       filename,
+      sent_to_chat: !!context?.sendPhoto,
     };
   });
 }
@@ -614,6 +645,30 @@ async function handleInteract(params) {
   });
 }
 
+async function handleSendImage(params, context) {
+  if (!params.file_path) {
+    return { error: 'file_path is required' };
+  }
+
+  // Verify the file exists
+  try {
+    await access(params.file_path);
+  } catch {
+    return { error: `File not found: ${params.file_path}` };
+  }
+
+  if (!context?.sendPhoto) {
+    return { error: 'Image sending is not available in this context (no active Telegram chat)' };
+  }
+
+  try {
+    await context.sendPhoto(params.file_path, params.caption || '');
+    return { success: true, file_path: params.file_path, sent: true };
+  } catch (err) {
+    return { error: `Failed to send image: ${err.message}` };
+  }
+}
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export const handlers = {
@@ -621,4 +676,5 @@ export const handlers = {
   screenshot_website: handleScreenshot,
   extract_content: handleExtract,
   interact_with_page: handleInteract,
+  send_image: handleSendImage,
 };
