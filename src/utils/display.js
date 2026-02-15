@@ -26,19 +26,17 @@ const LOGO = `
  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═════╝  ╚═════╝    ╚═╝
 `;
 
-// Create a vibrant rainbow gradient
-const rainbowGradient = gradient([
-  '#FF0080', // Hot Pink
-  '#FF8C00', // Dark Orange
-  '#FFD700', // Gold
-  '#00FF00', // Lime Green
-  '#00CED1', // Dark Turquoise
-  '#1E90FF', // Dodger Blue
-  '#9370DB'  // Medium Purple
+// White to ~70% black gradient
+const monoGradient = gradient([
+  '#FFFFFF',
+  '#D0D0D0',
+  '#A0A0A0',
+  '#707070',
+  '#4D4D4D',
 ]);
 
 export function showLogo() {
-  console.log(rainbowGradient.multiline(LOGO));
+  console.log(monoGradient.multiline(LOGO));
   console.log(chalk.dim(`  AI Engineering Agent — v${getVersion()}\n`));
   console.log(
     boxen(

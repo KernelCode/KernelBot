@@ -84,7 +84,7 @@ function processEvent(line, onOutput, logger) {
     // Not JSON — send raw text if it looks meaningful
     if (line.trim() && line.length > 3 && onOutput) {
       logger.info(`Claude Code (raw): ${line.slice(0, 200)}`);
-      onOutput(`📟 ${line.trim()}`).catch(() => {});
+      onOutput(`▹ ${line.trim()}`).catch(() => {});
     }
     return null;
   }
@@ -103,7 +103,7 @@ function processEvent(line, onOutput, logger) {
     const tool = extractToolUse(event);
     if (tool) {
       logger.info(`Claude Code tool: ${tool.name}: ${tool.summary}`);
-      if (onOutput) onOutput(`🔨 ${tool.name}: ${tool.summary}`).catch(() => {});
+      if (onOutput) onOutput(`▸ ${tool.name}: ${tool.summary}`).catch(() => {});
     }
     return event;
   }
@@ -113,7 +113,7 @@ function processEvent(line, onOutput, logger) {
     const tool = extractToolUse(event);
     if (tool) {
       logger.info(`Claude Code tool: ${tool.name}: ${tool.summary}`);
-      if (onOutput) onOutput(`🔨 ${tool.name}: ${tool.summary}`).catch(() => {});
+      if (onOutput) onOutput(`▸ ${tool.name}: ${tool.summary}`).catch(() => {});
     }
     return event;
   }
@@ -124,7 +124,7 @@ function processEvent(line, onOutput, logger) {
     const duration = event.duration_ms ? ` in ${(event.duration_ms / 1000).toFixed(1)}s` : '';
     const cost = event.cost_usd ? ` ($${event.cost_usd.toFixed(3)})` : '';
     logger.info(`Claude Code finished: ${status}${duration}${cost}`);
-    if (onOutput) onOutput(`✅ Claude Code finished (${status}${duration}${cost})`).catch(() => {});
+    if (onOutput) onOutput(`▪ done (${status}${duration}${cost})`).catch(() => {});
     return event;
   }
 
@@ -173,12 +173,12 @@ export class ClaudeCodeSpawner {
         ? `\n_... ${activityLines.length} operations total_\n`
         : '';
       if (finalState === 'done') {
-        return `✅ *Claude Code Done* — ${activityLines.length} ops\n${countInfo}\n${visible.join('\n')}`;
+        return `░▒▓ *Claude Code Done* — ${activityLines.length} ops\n${countInfo}\n${visible.join('\n')}`;
       }
       if (finalState === 'error') {
-        return `❌ *Claude Code Failed* — ${activityLines.length} ops\n${countInfo}\n${visible.join('\n')}`;
+        return `░▒▓ *Claude Code Failed* — ${activityLines.length} ops\n${countInfo}\n${visible.join('\n')}`;
       }
-      return `⚙️ *Claude Code Working...*\n${countInfo}\n${visible.join('\n')}`;
+      return `░▒▓ *Claude Code Working...*\n${countInfo}\n${visible.join('\n')}`;
     };
 
     const flushStatus = async () => {
@@ -206,17 +206,15 @@ export class ClaudeCodeSpawner {
 
     const smartOutput = onOutput ? async (text) => {
       // Tool calls, raw output, warnings, starting → accumulate in status message
-      if (text.startsWith('🔨') || text.startsWith('📟') || text.startsWith('⚠️') || text.startsWith('⏳')) {
+      if (text.startsWith('▸') || text.startsWith('▹') || text.startsWith('▪')) {
         addActivity(text);
         return;
       }
-      // Completion → handled by close handler, skip
-      if (text.startsWith('✅')) return;
-      // Everything else (💬 text, ❌ error, ⏰ timeout) → new message
+      // Everything else (💬 text, errors, timeout) → new message
       await onOutput(text);
     } : null;
 
-    if (smartOutput) smartOutput(`⏳ Starting Claude Code...`).catch(() => {});
+    if (smartOutput) smartOutput(`▸ Starting Claude Code...`).catch(() => {});
 
     return new Promise((resolve, reject) => {
       const child = spawn('claude', args, {
@@ -258,13 +256,13 @@ export class ClaudeCodeSpawner {
         stderr += chunk + '\n';
         logger.warn(`Claude Code stderr: ${chunk.slice(0, 300)}`);
         if (smartOutput && chunk) {
-          smartOutput(`⚠️ ${chunk.slice(0, 300)}`).catch(() => {});
+          smartOutput(`▹ ${chunk.slice(0, 300)}`).catch(() => {});
         }
       });
 
       const timer = setTimeout(() => {
         child.kill('SIGTERM');
-        if (smartOutput) smartOutput(`⏰ Claude Code timed out after ${this.timeout / 1000}s`).catch(() => {});
+        if (smartOutput) smartOutput(`▸ Claude Code timed out after ${this.timeout / 1000}s`).catch(() => {});
         reject(new Error(`Claude Code timed out after ${this.timeout / 1000}s`));
       }, this.timeout);
 
