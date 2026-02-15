@@ -1,9 +1,9 @@
 {
   "name": "kernelbot",
-  "version": "1.0.003",
+  "version": "1.0.004",
   "description": "KernelBot — AI engineering agent with full OS control",
   "type": "module",
-  "author": "Abdullah Al-Tahrei <abdullah@altaheri.me>",
+  "author": "Abdullah Al-Taheri <abdullah@altaheri.me>",
   "bin": {
     "kernelbot": "./bin/kernel.js"
   },

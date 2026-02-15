@@ -128,4 +128,4 @@ KernelBot/
 
 ## Author
 
-Abdullah Al-Tahrei
+Abdullah Al-Taheri
