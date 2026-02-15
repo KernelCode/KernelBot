@@ -5,6 +5,7 @@ export class ClaudeCodeSpawner {
   constructor(config) {
     this.maxTurns = config.claude_code?.max_turns || 50;
     this.timeout = (config.claude_code?.timeout_seconds || 600) * 1000;
+    this.model = config.claude_code?.model || null;
   }
 
   async run({ workingDirectory, prompt, maxTurns, onOutput }) {
@@ -15,6 +16,9 @@ export class ClaudeCodeSpawner {
 
     return new Promise((resolve, reject) => {
       const args = ['-p', prompt, '--max-turns', String(turns), '--output-format', 'text'];
+      if (this.model) {
+        args.push('--model', this.model);
+      }
 
       const child = spawn('claude', args, {
         cwd: workingDirectory,
