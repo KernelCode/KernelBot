@@ -13,10 +13,11 @@ export class Agent {
     this._pending = new Map(); // chatId -> pending state
   }
 
-  async processMessage(chatId, userMessage, user, onUpdate) {
+  async processMessage(chatId, userMessage, user, onUpdate, sendPhoto) {
     const logger = getLogger();
 
     this._onUpdate = onUpdate || null;
+    this._sendPhoto = sendPhoto || null;
 
     // Handle pending responses (confirmation or credential)
     const pending = this._pending.get(chatId);
@@ -66,6 +67,11 @@ export class Agent {
       docker_compose: 'action',
       curl_url: 'url',
       check_port: 'port',
+      screenshot_website: 'url',
+      send_image: 'file_path',
+      browse_website: 'url',
+      extract_content: 'url',
+      interact_with_page: 'url',
     }[name];
     const val = key && input[key] ? String(input[key]).slice(0, 120) : JSON.stringify(input).slice(0, 120);
     return `${name}: ${val}`;
@@ -99,6 +105,8 @@ export class Agent {
     const result = await executeTool(pending.block.name, pending.block.input, {
       config: this.config,
       user,
+      onUpdate: this._onUpdate,
+      sendPhoto: this._sendPhoto,
     });
 
     pending.toolResults.push({
@@ -116,7 +124,7 @@ export class Agent {
 
     if (lower === 'yes' || lower === 'y' || lower === 'confirm') {
       logger.info(`User confirmed dangerous tool: ${pending.block.name}`);
-      const result = await executeTool(pending.block.name, pending.block.input, pending.context);
+      const result = await executeTool(pending.block.name, pending.block.input, { ...pending.context, onUpdate: this._onUpdate, sendPhoto: this._sendPhoto });
 
       pending.toolResults.push({
         type: 'tool_result',
@@ -143,7 +151,7 @@ export class Agent {
       const pauseMsg = await this._checkPause(chatId, block, user, pending.toolResults, pending.remainingBlocks.filter((b) => b !== block), pending.messages);
       if (pauseMsg) return pauseMsg;
 
-      const r = await executeTool(block.name, block.input, { config: this.config, user });
+      const r = await executeTool(block.name, block.input, { config: this.config, user, onUpdate: this._onUpdate, sendPhoto: this._sendPhoto });
       pending.toolResults.push({
         type: 'tool_result',
         tool_use_id: block.id,
@@ -254,6 +262,8 @@ export class Agent {
           const result = await executeTool(block.name, block.input, {
             config: this.config,
             user,
+            onUpdate: this._onUpdate,
+            sendPhoto: this._sendPhoto,
           });
 
           toolResults.push({

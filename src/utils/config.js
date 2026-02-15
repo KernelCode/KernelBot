@@ -21,6 +21,7 @@ const DEFAULTS = {
     allowed_users: [],
   },
   claude_code: {
+    model: 'claude-opus-4-6',
     max_turns: 50,
     timeout_seconds: 600,
     workspace_dir: null, // defaults to ~/.kernelbot/workspaces

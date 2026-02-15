@@ -1,4 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
+import { createReadStream } from 'fs';
 import { isAllowedUser, getUnauthorizedMessage } from './security/auth.js';
 import { getLogger } from './utils/logger.js';
 
@@ -47,7 +48,7 @@ export function startBot(config, agent, conversationManager) {
       return;
     }
 
-    const text = msg.text.trim();
+    let text = msg.text.trim();
 
     // Handle commands
     if (text === '/clean' || text === '/clear' || text === '/reset') {
@@ -69,11 +70,40 @@ export function startBot(config, agent, conversationManager) {
         '',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',
+        '/browse <url> — Browse a website and get a summary',
+        '/screenshot <url> — Take a screenshot of a website',
+        '/extract <url> <selector> — Extract content using CSS selector',
         '/help — Show this help message',
         '',
         'Or just send any message to chat with the agent.',
       ].join('\n'), { parse_mode: 'Markdown' });
       return;
+    }
+
+    // Web browsing shortcut commands — rewrite as natural language for the agent
+    if (text.startsWith('/browse ')) {
+      const browseUrl = text.slice('/browse '.length).trim();
+      if (!browseUrl) {
+        await bot.sendMessage(chatId, 'Usage: /browse <url>');
+        return;
+      }
+      text = `Browse this website and give me a summary: ${browseUrl}`;
+    } else if (text.startsWith('/screenshot ')) {
+      const screenshotUrl = text.slice('/screenshot '.length).trim();
+      if (!screenshotUrl) {
+        await bot.sendMessage(chatId, 'Usage: /screenshot <url>');
+        return;
+      }
+      text = `Take a screenshot of this website: ${screenshotUrl}`;
+    } else if (text.startsWith('/extract ')) {
+      const extractParts = text.slice('/extract '.length).trim().split(/\s+/);
+      if (extractParts.length < 2) {
+        await bot.sendMessage(chatId, 'Usage: /extract <url> <css-selector>');
+        return;
+      }
+      const extractUrl = extractParts[0];
+      const extractSelector = extractParts.slice(1).join(' ');
+      text = `Extract content from ${extractUrl} using the CSS selector: ${extractSelector}`;
     }
 
     logger.info(`Message from ${username} (${userId}): ${text.slice(0, 100)}`);
@@ -85,13 +115,57 @@ export function startBot(config, agent, conversationManager) {
     bot.sendChatAction(chatId, 'typing').catch(() => {});
 
     try {
-      const onUpdate = async (update) => {
+      const onUpdate = async (update, opts = {}) => {
+        // Edit an existing message instead of sending a new one
+        if (opts.editMessageId) {
+          try {
+            const edited = await bot.editMessageText(update, {
+              chat_id: chatId,
+              message_id: opts.editMessageId,
+              parse_mode: 'Markdown',
+            });
+            return edited.message_id;
+          } catch {
+            try {
+              const edited = await bot.editMessageText(update, {
+                chat_id: chatId,
+                message_id: opts.editMessageId,
+              });
+              return edited.message_id;
+            } catch {
+              return opts.editMessageId;
+            }
+          }
+        }
+
+        // Send new message(s)
         const parts = splitMessage(update);
+        let lastMsgId = null;
         for (const part of parts) {
           try {
-            await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
+            const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
+            lastMsgId = sent.message_id;
           } catch {
-            await bot.sendMessage(chatId, part);
+            const sent = await bot.sendMessage(chatId, part);
+            lastMsgId = sent.message_id;
+          }
+        }
+        return lastMsgId;
+      };
+
+      const sendPhoto = async (filePath, caption) => {
+        try {
+          await bot.sendPhoto(chatId, createReadStream(filePath), {
+            caption: caption || '',
+            parse_mode: 'Markdown',
+          });
+        } catch {
+          try {
+            await bot.sendPhoto(chatId, createReadStream(filePath), {
+              caption: caption || '',
+            });
+          } catch (err) {
+            logger.error(`Failed to send photo: ${err.message}`);
           }
         }
       };
@@ -99,7 +173,7 @@ export function startBot(config, agent, conversationManager) {
       const reply = await agent.processMessage(chatId, text, {
         id: userId,
         username,
-      }, onUpdate);
+      }, onUpdate, sendPhoto);
 
       clearInterval(typingInterval);
 

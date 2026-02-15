@@ -1,6 +1,21 @@
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
+import gradient from 'gradient-string';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+function getVersion() {
+  try {
+    const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8'));
+    return pkg.version;
+  } catch {
+    return 'unknown';
+  }
+}
 
 const LOGO = `
  ██╗  ██╗███████╗██████╗ ███╗   ██╗███████╗██╗     ██████╗  ██████╗ ████████╗
@@ -11,9 +26,18 @@ const LOGO = `
  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝╚═════╝  ╚═════╝    ╚═╝
 `;
 
+// White to ~70% black gradient
+const monoGradient = gradient([
+  '#FFFFFF',
+  '#D0D0D0',
+  '#A0A0A0',
+  '#707070',
+  '#4D4D4D',
+]);
+
 export function showLogo() {
-  console.log(chalk.cyan(LOGO));
-  console.log(chalk.dim('  AI Engineering Agent\n'));
+  console.log(monoGradient.multiline(LOGO));
+  console.log(chalk.dim(`  AI Engineering Agent — v${getVersion()}\n`));
   console.log(
     boxen(
       chalk.yellow.bold('WARNING') +
