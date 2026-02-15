@@ -150,6 +150,7 @@ export class ClaudeCodeSpawner {
       '-p', prompt,
       '--max-turns', String(turns),
       '--output-format', 'stream-json',
+      '--verbose',
       '--dangerously-skip-permissions',
     ];
     if (this.model) {
