@@ -177,6 +177,12 @@ export function loadConfig() {
     if (!config.github) config.github = {};
     config.github.token = process.env.GITHUB_TOKEN;
   }
+  if (process.env.JIRA_BASE_URL || process.env.JIRA_EMAIL || process.env.JIRA_API_TOKEN) {
+    if (!config.jira) config.jira = {};
+    if (process.env.JIRA_BASE_URL) config.jira.base_url = process.env.JIRA_BASE_URL;
+    if (process.env.JIRA_EMAIL) config.jira.email = process.env.JIRA_EMAIL;
+    if (process.env.JIRA_API_TOKEN) config.jira.api_token = process.env.JIRA_API_TOKEN;
+  }
 
   return config;
 }
@@ -220,6 +226,18 @@ export function saveCredential(config, envKey, value) {
     case 'TELEGRAM_BOT_TOKEN':
       config.telegram.bot_token = value;
       break;
+    case 'JIRA_BASE_URL':
+      if (!config.jira) config.jira = {};
+      config.jira.base_url = value;
+      break;
+    case 'JIRA_EMAIL':
+      if (!config.jira) config.jira = {};
+      config.jira.email = value;
+      break;
+    case 'JIRA_API_TOKEN':
+      if (!config.jira) config.jira = {};
+      config.jira.api_token = value;
+      break;
   }
 
   // Also set in process.env so tools pick it up
@@ -236,6 +254,20 @@ export function getMissingCredential(toolName, config) {
     const token = config.github?.token || process.env.GITHUB_TOKEN;
     if (!token) {
       return { envKey: 'GITHUB_TOKEN', label: 'GitHub Personal Access Token' };
+    }
+  }
+
+  const jiraTools = ['jira_get_ticket', 'jira_search_tickets', 'jira_list_my_tickets', 'jira_get_project_tickets'];
+
+  if (jiraTools.includes(toolName)) {
+    if (!config.jira?.base_url && !process.env.JIRA_BASE_URL) {
+      return { envKey: 'JIRA_BASE_URL', label: 'JIRA Base URL (e.g. https://yourcompany.atlassian.net)' };
+    }
+    if (!config.jira?.email && !process.env.JIRA_EMAIL) {
+      return { envKey: 'JIRA_EMAIL', label: 'JIRA Email / Username' };
+    }
+    if (!config.jira?.api_token && !process.env.JIRA_API_TOKEN) {
+      return { envKey: 'JIRA_API_TOKEN', label: 'JIRA API Token' };
     }
   }
 

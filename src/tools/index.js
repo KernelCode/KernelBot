@@ -7,6 +7,7 @@ import { definitions as gitDefinitions, handlers as gitHandlers } from './git.js
 import { definitions as githubDefinitions, handlers as githubHandlers } from './github.js';
 import { definitions as codingDefinitions, handlers as codingHandlers } from './coding.js';
 import { definitions as browserDefinitions, handlers as browserHandlers } from './browser.js';
+import { definitions as jiraDefinitions, handlers as jiraHandlers } from './jira.js';
 import { logToolCall } from '../security/audit.js';
 import { requiresConfirmation } from '../security/confirm.js';
 
@@ -20,6 +21,7 @@ export const toolDefinitions = [
   ...githubDefinitions,
   ...codingDefinitions,
   ...browserDefinitions,
+  ...jiraDefinitions,
 ];
 
 const handlerMap = {
@@ -32,6 +34,7 @@ const handlerMap = {
   ...githubHandlers,
   ...codingHandlers,
   ...browserHandlers,
+  ...jiraHandlers,
 };
 
 export function checkConfirmation(name, params, config) {

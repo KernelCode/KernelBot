@@ -12,6 +12,7 @@ Send a message in Telegram, and KernelBot will read files, write code, run comma
 - **Web browsing** — navigate pages, extract content, take screenshots, interact with forms and buttons (Puppeteer)
 - **Git workflow** — clone repos, create branches, commit, push, and view diffs
 - **GitHub integration** — create repos, open PRs, post code reviews, list and inspect pull requests
+- **JIRA integration** — read tickets, search with JQL, list assigned/project tickets (Cloud + Server)
 - **Claude Code sub-agent** — spawn a dedicated Claude Code CLI session for complex coding tasks (write, edit, debug, refactor)
 - **Docker management** — list containers, read logs, exec into containers, run compose commands
 - **Process control** — list, kill, and manage system processes and systemd services
@@ -22,7 +23,7 @@ Send a message in Telegram, and KernelBot will read files, write code, run comma
 - **Live status updates** — Claude Code activity consolidated into a single updating message instead of spam
 - **Security built-in** — user allowlist, blocked paths, dangerous operation confirmation, audit logging, secret redaction
 - **Zero config setup** — auto-detects config, prompts for missing credentials on first run
-- **Credential management** — auto-prompts for missing API keys (GitHub, Anthropic, Telegram) and saves them
+- **Credential management** — auto-prompts for missing API keys (GitHub, Anthropic, Telegram, JIRA) and saves them
 
 ## How It Works
 
@@ -73,6 +74,15 @@ For complex coding tasks, KernelBot can spawn **Claude Code CLI** as a sub-agent
 | `extract_content` | Extract specific content using CSS selectors |
 | `interact_with_page` | Click, type, scroll, and run JS on a webpage |
 | `send_image` | Send an image/screenshot directly to the Telegram chat |
+
+### JIRA
+
+| Tool | Description |
+| --- | --- |
+| `jira_get_ticket` | Get details of a specific JIRA ticket |
+| `jira_search_tickets` | Search tickets using JQL queries |
+| `jira_list_my_tickets` | List tickets assigned to the current user |
+| `jira_get_project_tickets` | Get tickets from a specific JIRA project |
 
 ### Docker
 
@@ -148,7 +158,10 @@ Set these in `.env` or as system environment variables:
 ```text
 ANTHROPIC_API_KEY=sk-ant-...
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
-GITHUB_TOKEN=ghp_...          # optional, for GitHub tools
+GITHUB_TOKEN=ghp_...                           # optional, for GitHub tools
+JIRA_BASE_URL=https://yourcompany.atlassian.net # optional, for JIRA tools
+JIRA_EMAIL=you@company.com
+JIRA_API_TOKEN=your-jira-api-token
 ```
 
 ### `config.yaml` (optional)
@@ -168,6 +181,11 @@ anthropic:
 telegram:
   allowed_users: [] # empty = allow all (dev mode)
   # allowed_users: [123456789]  # lock to specific Telegram user IDs
+
+jira:
+  base_url: https://yourcompany.atlassian.net
+  email: you@company.com
+  api_token: your-api-token
 
 security:
   blocked_paths: # paths the agent cannot touch
@@ -204,6 +222,31 @@ conversation:
 - **Audit logging** — every tool call is logged to `kernel-audit.log` with user, tool, params, result, and duration. Secrets in params are automatically redacted.
 - **Command timeout** — shell commands are killed after 30 seconds by default.
 
+## JIRA Integration
+
+KernelBot can read and search JIRA tickets. Supports both Atlassian Cloud (`*.atlassian.net`) and self-hosted JIRA Server instances.
+
+### Setup
+
+1. **Get an API token** — for Atlassian Cloud, generate one at [id.atlassian.net/manage-profile/security/api-tokens](https://id.atlassian.net/manage-profile/security/api-tokens). For JIRA Server, use your password or a personal access token.
+
+2. **Configure** via environment variables or `config.yaml`:
+
+```text
+JIRA_BASE_URL=https://yourcompany.atlassian.net
+JIRA_EMAIL=you@company.com
+JIRA_API_TOKEN=your-api-token
+```
+
+If credentials are missing when a JIRA tool is called, KernelBot will prompt for them via Telegram.
+
+### Available Tools
+
+- **`jira_get_ticket`** — Fetch a single ticket by key (e.g. `PROJ-123`). Returns summary, description, status, assignee, priority, and dates.
+- **`jira_search_tickets`** — Search using JQL (e.g. `project = PROJ AND status = "In Progress"`). Returns up to `max_results` tickets.
+- **`jira_list_my_tickets`** — List tickets assigned to the current user (or a specified assignee).
+- **`jira_get_project_tickets`** — List all tickets in a project, ordered by last update.
+
 ## Project Structure
 
 ```text
@@ -231,6 +274,7 @@ KernelBot/
 │   │   ├── monitor.js         # System monitoring (CPU, RAM, disk)
 │   │   ├── network.js         # Network tools (HTTP, ports, nginx)
 │   │   ├── coding.js          # Claude Code CLI handler
+│   │   ├── jira.js            # JIRA ticket reading + search
 │   │   └── index.js           # Tool registry + dispatcher
 │   └── utils/
 │       ├── config.js          # Config loading (auto-detect + prompt)
@@ -248,6 +292,7 @@ KernelBot/
 - [Telegram Bot Token](https://t.me/BotFather)
 - Chromium/Chrome (for browser tools — installed automatically by Puppeteer)
 - [GitHub Token](https://github.com/settings/tokens) (optional, for GitHub tools)
+- [JIRA API Token](https://id.atlassian.net/manage-profile/security/api-tokens) (optional, for JIRA integration)
 - [Claude Code CLI](https://www.npmjs.com/package/@anthropic-ai/claude-code) (optional, for coding tasks)
 
 ## License

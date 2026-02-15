@@ -20,6 +20,11 @@ github:
   default_branch: main
   # default_org: my-org
 
+jira:
+  # base_url: https://yourcompany.atlassian.net  # or self-hosted JIRA server URL
+  # email: you@company.com                       # JIRA account email (Cloud) or username (Server)
+  # api_token: your-api-token                    # API token from https://id.atlassian.net/manage-profile/security/api-tokens
+
 telegram:
   # List Telegram user IDs allowed to interact. Empty = allow all (dev mode).
   allowed_users: []
