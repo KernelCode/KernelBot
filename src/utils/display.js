@@ -1,6 +1,20 @@
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+function getVersion() {
+  try {
+    const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8'));
+    return pkg.version;
+  } catch {
+    return 'unknown';
+  }
+}
 
 const LOGO = `
  ██╗  ██╗███████╗██████╗ ███╗   ██╗███████╗██╗     ██████╗  ██████╗ ████████╗
@@ -13,7 +27,7 @@ const LOGO = `
 
 export function showLogo() {
   console.log(chalk.cyan(LOGO));
-  console.log(chalk.dim('  AI Engineering Agent\n'));
+  console.log(chalk.dim(`  AI Engineering Agent — v${getVersion()}\n`));
   console.log(
     boxen(
       chalk.yellow.bold('WARNING') +
