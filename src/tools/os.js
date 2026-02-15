@@ -129,11 +129,22 @@ export const handlers = {
           if (error && error.killed) {
             return res({ error: `Command timed out after ${timeout_seconds}s` });
           }
-          res({
+          const result = {
             stdout: stdout || '',
             stderr: stderr || '',
             exit_code: error ? error.code ?? 1 : 0,
-          });
+          };
+
+          // Send output summary to Telegram
+          if (context.onUpdate) {
+            const output = (result.stdout || result.stderr || '').trim();
+            if (output) {
+              const preview = output.length > 300 ? output.slice(0, 300) + '...' : output;
+              context.onUpdate(`📋 \`${command.slice(0, 60)}\`\n\`\`\`\n${preview}\n\`\`\``).catch(() => {});
+            }
+          }
+
+          res(result);
         },
       );
     });
