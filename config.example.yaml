@@ -11,6 +11,15 @@ anthropic:
   temperature: 0.3
   max_tool_depth: 25
 
+claude_code:
+  max_turns: 50
+  timeout_seconds: 600
+  # workspace_dir: /tmp/kernelbot-workspaces  # default: ~/.kernelbot/workspaces
+
+github:
+  default_branch: main
+  # default_org: my-org
+
 telegram:
   # List Telegram user IDs allowed to interact. Empty = allow all (dev mode).
   allowed_users: []

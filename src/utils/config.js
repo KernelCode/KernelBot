@@ -20,6 +20,15 @@ const DEFAULTS = {
   telegram: {
     allowed_users: [],
   },
+  claude_code: {
+    max_turns: 50,
+    timeout_seconds: 600,
+    workspace_dir: null, // defaults to ~/.kernelbot/workspaces
+  },
+  github: {
+    default_branch: 'main',
+    default_org: null,
+  },
   security: {
     blocked_paths: [
       '/etc/shadow',
@@ -162,6 +171,10 @@ export function loadConfig() {
   }
   if (process.env.TELEGRAM_BOT_TOKEN) {
     config.telegram.bot_token = process.env.TELEGRAM_BOT_TOKEN;
+  }
+  if (process.env.GITHUB_TOKEN) {
+    if (!config.github) config.github = {};
+    config.github.token = process.env.GITHUB_TOKEN;
   }
 
   return config;
