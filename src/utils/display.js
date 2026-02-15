@@ -59,6 +59,29 @@ export function showError(msg) {
   );
 }
 
+export function showHelp() {
+  showLogo();
+  console.log(
+    boxen(
+      [
+        chalk.bold('Commands:'),
+        '',
+        `  ${chalk.cyan('kernelbot start')}          ${chalk.dim('Launch the Telegram bot')}`,
+        `  ${chalk.cyan('kernelbot run')} ${chalk.yellow('"prompt"')}   ${chalk.dim('One-off agent call (no Telegram)')}`,
+        `  ${chalk.cyan('kernelbot check')}          ${chalk.dim('Validate config & test APIs')}`,
+        `  ${chalk.cyan('kernelbot init')}           ${chalk.dim('Interactive setup wizard')}`,
+        '',
+        chalk.dim(`  kernelbot --help         Show all options`),
+      ].join('\n'),
+      {
+        padding: 1,
+        borderStyle: 'round',
+        borderColor: 'cyan',
+      },
+    ),
+  );
+}
+
 export function createSpinner(text) {
   return ora({ text, color: 'cyan' });
 }

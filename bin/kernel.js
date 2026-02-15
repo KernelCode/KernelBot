@@ -11,6 +11,7 @@ import { loadConfig } from '../src/utils/config.js';
 import { createLogger, getLogger } from '../src/utils/logger.js';
 import {
   showLogo,
+  showHelp,
   showStartupCheck,
   showStartupComplete,
   showError,
@@ -26,7 +27,10 @@ const program = new Command();
 program
   .name('kernelbot')
   .description('KernelBot — AI engineering agent with full OS control')
-  .version('1.0.0');
+  .version('1.0.0')
+  .action(() => {
+    showHelp();
+  });
 
 // ─── kernel start ────────────────────────────────────────────
 program
