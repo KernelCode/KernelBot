@@ -4,14 +4,15 @@
 process.removeAllListeners('warning');
 process.on('warning', (w) => { if (w.name !== 'DeprecationWarning' || !w.message.includes('punycode')) console.warn(w); });
 
-import { Command } from 'commander';
 import { createInterface } from 'readline';
-import { writeFileSync, existsSync } from 'fs';
-import { loadConfig } from '../src/utils/config.js';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import chalk from 'chalk';
+import { loadConfig, loadConfigInteractive } from '../src/utils/config.js';
 import { createLogger, getLogger } from '../src/utils/logger.js';
 import {
   showLogo,
-  showHelp,
   showStartupCheck,
   showStartupComplete,
   showError,
@@ -22,180 +23,163 @@ import { Agent } from '../src/agent.js';
 import { startBot } from '../src/bot.js';
 import Anthropic from '@anthropic-ai/sdk';
 
-const program = new Command();
+function showMenu() {
+  console.log('');
+  console.log(chalk.bold('  What would you like to do?\n'));
+  console.log(`  ${chalk.cyan('1.')} Start bot`);
+  console.log(`  ${chalk.cyan('2.')} Check connections`);
+  console.log(`  ${chalk.cyan('3.')} View logs`);
+  console.log(`  ${chalk.cyan('4.')} View audit logs`);
+  console.log(`  ${chalk.cyan('5.')} Exit`);
+  console.log('');
+}
 
-program
-  .name('kernelbot')
-  .description('KernelBot — AI engineering agent with full OS control')
-  .version('1.0.0')
-  .action(() => {
-    showHelp();
-  });
+function ask(rl, question) {
+  return new Promise((res) => rl.question(question, res));
+}
 
-// ─── kernel start ────────────────────────────────────────────
-program
-  .command('start')
-  .description('Start KernelBot Telegram bot')
-  .action(async () => {
-    showLogo();
+function viewLog(filename) {
+  const paths = [
+    join(process.cwd(), filename),
+    join(homedir(), '.kernelbot', filename),
+  ];
 
-    const config = loadConfig();
-    createLogger(config);
-    createAuditLogger();
-    const logger = getLogger();
-
-    // Startup checks
-    const checks = [];
-
-    checks.push(
-      await showStartupCheck('Configuration loaded', async () => {
-        if (!config.anthropic.api_key) throw new Error('ANTHROPIC_API_KEY not set');
-        if (!config.telegram.bot_token) throw new Error('TELEGRAM_BOT_TOKEN not set');
-      }),
-    );
-
-    checks.push(
-      await showStartupCheck('Anthropic API connection', async () => {
-        const client = new Anthropic({ apiKey: config.anthropic.api_key });
-        await client.messages.create({
-          model: config.anthropic.model,
-          max_tokens: 16,
-          messages: [{ role: 'user', content: 'ping' }],
-        });
-      }),
-    );
-
-    if (checks.some((c) => !c)) {
-      showError('Startup checks failed. Fix the issues above and try again.');
-      process.exit(1);
+  for (const p of paths) {
+    if (existsSync(p)) {
+      const content = readFileSync(p, 'utf-8');
+      const lines = content.split('\n').filter(Boolean);
+      const recent = lines.slice(-30);
+      console.log(chalk.dim(`\n  Showing last ${recent.length} entries from ${p}\n`));
+      for (const line of recent) {
+        try {
+          const entry = JSON.parse(line);
+          const time = entry.timestamp || '';
+          const level = entry.level || '';
+          const msg = entry.message || '';
+          const color = level === 'error' ? chalk.red : level === 'warn' ? chalk.yellow : chalk.dim;
+          console.log(`  ${chalk.dim(time)} ${color(level)} ${msg}`);
+        } catch {
+          console.log(`  ${line}`);
+        }
+      }
+      console.log('');
+      return;
     }
+  }
+  console.log(chalk.dim(`\n  No ${filename} found yet.\n`));
+}
 
-    const conversationManager = new ConversationManager(config);
-    const agent = new Agent({ config, conversationManager });
-
-    startBot(config, agent);
-    showStartupComplete();
+async function runCheck(config) {
+  await showStartupCheck('ANTHROPIC_API_KEY', async () => {
+    if (!config.anthropic.api_key) throw new Error('Not set');
   });
 
-// ─── kernel run ──────────────────────────────────────────────
-program
-  .command('run')
-  .description('Run a one-off prompt through the agent (no Telegram)')
-  .argument('<prompt>', 'The prompt to send')
-  .action(async (prompt) => {
-    const config = loadConfig();
-    createLogger(config);
-    createAuditLogger();
-
-    if (!config.anthropic.api_key) {
-      showError('ANTHROPIC_API_KEY not set. Run `kernelbot init` first.');
-      process.exit(1);
-    }
-
-    const conversationManager = new ConversationManager(config);
-    const agent = new Agent({ config, conversationManager });
-
-    const reply = await agent.processMessage('cli', prompt, {
-      id: 'cli',
-      username: 'cli',
-    });
-
-    console.log('\n' + reply);
+  await showStartupCheck('TELEGRAM_BOT_TOKEN', async () => {
+    if (!config.telegram.bot_token) throw new Error('Not set');
   });
 
-// ─── kernel check ────────────────────────────────────────────
-program
-  .command('check')
-  .description('Validate configuration and test API connections')
-  .action(async () => {
-    showLogo();
-
-    const config = loadConfig();
-    createLogger(config);
-
-    await showStartupCheck('Configuration file', async () => {
-      // loadConfig already succeeded if we got here
+  await showStartupCheck('Anthropic API connection', async () => {
+    const client = new Anthropic({ apiKey: config.anthropic.api_key });
+    await client.messages.create({
+      model: config.anthropic.model,
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'ping' }],
     });
+  });
 
-    await showStartupCheck('ANTHROPIC_API_KEY', async () => {
-      if (!config.anthropic.api_key) throw new Error('Not set');
-    });
+  await showStartupCheck('Telegram Bot API', async () => {
+    const res = await fetch(
+      `https://api.telegram.org/bot${config.telegram.bot_token}/getMe`,
+    );
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.description || 'Invalid token');
+  });
 
-    await showStartupCheck('TELEGRAM_BOT_TOKEN', async () => {
-      if (!config.telegram.bot_token) throw new Error('Not set');
-    });
+  console.log(chalk.green('\n  All checks passed.\n'));
+}
 
-    await showStartupCheck('Anthropic API connection', async () => {
+async function startBotFlow(config) {
+  createAuditLogger();
+  const logger = getLogger();
+
+  const checks = [];
+
+  checks.push(
+    await showStartupCheck('Anthropic API', async () => {
       const client = new Anthropic({ apiKey: config.anthropic.api_key });
       await client.messages.create({
         model: config.anthropic.model,
         max_tokens: 16,
         messages: [{ role: 'user', content: 'ping' }],
       });
-    });
+    }),
+  );
 
+  checks.push(
     await showStartupCheck('Telegram Bot API', async () => {
       const res = await fetch(
         `https://api.telegram.org/bot${config.telegram.bot_token}/getMe`,
       );
       const data = await res.json();
       if (!data.ok) throw new Error(data.description || 'Invalid token');
-    });
+    }),
+  );
 
-    console.log('\nAll checks complete.');
-  });
+  if (checks.some((c) => !c)) {
+    showError('Startup failed. Fix the issues above and try again.');
+    return false;
+  }
 
-// ─── kernel init ─────────────────────────────────────────────
-program
-  .command('init')
-  .description('Interactive setup: create .env and config.yaml')
-  .action(async () => {
-    showLogo();
+  const conversationManager = new ConversationManager(config);
+  const agent = new Agent({ config, conversationManager });
 
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const ask = (q) => new Promise((res) => rl.question(q, res));
+  startBot(config, agent);
+  showStartupComplete();
+  return true;
+}
 
-    const apiKey = await ask('Anthropic API key: ');
-    const botToken = await ask('Telegram Bot Token: ');
-    const userId = await ask('Your Telegram User ID (leave blank for dev mode): ');
+async function main() {
+  showLogo();
 
-    rl.close();
+  const config = await loadConfigInteractive();
+  createLogger(config);
 
-    // Write .env
-    const envContent = `ANTHROPIC_API_KEY=${apiKey}\nTELEGRAM_BOT_TOKEN=${botToken}\n`;
-    writeFileSync('.env', envContent);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
 
-    // Write config.yaml
-    const allowedUsers =
-      userId.trim() ? `\n  allowed_users:\n    - ${userId.trim()}` : '\n  allowed_users: []';
+  let running = true;
+  while (running) {
+    showMenu();
+    const choice = await ask(rl, chalk.cyan('  > '));
 
-    const configContent = `bot:
-  name: KernelBot
+    switch (choice.trim()) {
+      case '1': {
+        rl.close();
+        const started = await startBotFlow(config);
+        if (!started) process.exit(1);
+        return; // bot is running, don't show menu again
+      }
+      case '2':
+        await runCheck(config);
+        break;
+      case '3':
+        viewLog('kernel.log');
+        break;
+      case '4':
+        viewLog('kernel-audit.log');
+        break;
+      case '5':
+        running = false;
+        break;
+      default:
+        console.log(chalk.dim('  Invalid choice.\n'));
+    }
+  }
 
-anthropic:
-  model: claude-sonnet-4-20250514
-  max_tokens: 8192
-  temperature: 0.3
-  max_tool_depth: 25
+  rl.close();
+  console.log(chalk.dim('  Goodbye.\n'));
+}
 
-telegram:${allowedUsers}
-
-security:
-  blocked_paths:
-    - /etc/shadow
-    - /etc/passwd
-
-logging:
-  level: info
-  max_file_size: 5242880
-
-conversation:
-  max_history: 50
-`;
-    writeFileSync('config.yaml', configContent);
-
-    console.log('\nCreated .env and config.yaml');
-    console.log('Run `kernelbot check` to verify, then `kernelbot start` to launch.');
-  });
-
-program.parse();
+main().catch((err) => {
+  showError(err.message);
+  process.exit(1);
+});

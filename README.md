@@ -6,10 +6,10 @@ Send a message in Telegram, and KernelBot will read files, write code, run comma
 
 ## How It Works
 
-```
+```text
 You (Telegram) → KernelBot → Claude Sonnet (Anthropic API)
-                                    ↕
-                              OS Tools (shell, files, directories)
+                                   ↕
+                             OS Tools (shell, files, directories)
 ```
 
 KernelBot runs a **tool-use loop**: Claude decides which tools to call, KernelBot executes them on your OS, feeds results back, and Claude continues until the task is done. One message can trigger dozens of tool calls autonomously.
@@ -29,42 +29,35 @@ KernelBot runs a **tool-use loop**: Claude decides which tools to call, KernelBo
 npm install -g kernelbot
 ```
 
-This installs the `kernelbot` command globally.
-
 ## Quick Start
 
 ```bash
-# Interactive setup — creates .env and config.yaml
-kernelbot init
-
-# Verify everything works
-kernelbot check
-
-# Launch the bot
-kernelbot start
+kernelbot
 ```
 
-## Commands
+That's it. On first run, KernelBot will:
 
-| Command                   | Description                                               |
-| ------------------------- | --------------------------------------------------------- |
-| `kernelbot start`         | Start the Telegram bot                                    |
-| `kernelbot run "prompt"`  | One-off agent call without Telegram (for testing/scripts) |
-| `kernelbot check`         | Validate config and test API connections                  |
-| `kernelbot init`          | Interactive setup wizard                                  |
+1. Detect missing credentials and prompt for them
+2. Save them to `~/.kernelbot/.env`
+3. Verify API connections
+4. Launch the Telegram bot
 
 ## Configuration
 
-KernelBot looks for `config.yaml` in the current directory or `~/.kernelbot/`. Secrets are loaded from `.env`.
+KernelBot auto-detects config from the current directory or `~/.kernelbot/`. Everything works with zero config — just provide your API keys when prompted.
 
-### `.env`
+### Environment Variables
 
-```
+Set these in `.env` or as system environment variables:
+
+```text
 ANTHROPIC_API_KEY=sk-ant-...
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 ```
 
-### `config.yaml`
+### `config.yaml` (optional)
+
+Drop a `config.yaml` in your working directory or `~/.kernelbot/` to customize behavior:
 
 ```yaml
 bot:
@@ -102,10 +95,10 @@ conversation:
 
 ## Project Structure
 
-```
+```text
 KernelBot/
 ├── bin/
-│   └── kernel.js           # CLI entry point
+│   └── kernel.js           # Entry point
 ├── src/
 │   ├── agent.js            # Sonnet tool-use loop
 │   ├── bot.js              # Telegram bot (polling, auth, message handling)
@@ -119,7 +112,7 @@ KernelBot/
 │   │   ├── os.js           # OS tool definitions + handlers
 │   │   └── index.js        # Tool registry + dispatcher
 │   └── utils/
-│       ├── config.js       # Config loading (yaml + env + defaults)
+│       ├── config.js       # Config loading (auto-detect + prompt)
 │       ├── display.js      # CLI display (logo, spinners, banners)
 │       └── logger.js       # Winston logger
 ├── config.example.yaml
