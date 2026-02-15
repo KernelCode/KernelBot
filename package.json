@@ -1,6 +1,6 @@
 {
   "name": "kernelbot",
-  "version": "1.0.0",
+  "version": "1.0.001",
   "description": "KernelBot — AI engineering agent with full OS control",
   "type": "module",
   "author": "Abdullah Al-Tahrei <abdullah@altaheri.me>",
@@ -17,6 +17,14 @@
     "anthropic",
     "tools"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KernelCode/KernelBot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KernelCode/KernelBot/issues"
+  },
+  "homepage": "https://github.com/KernelCode/KernelBot#readme",
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
