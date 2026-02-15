@@ -1,4 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
+import { createReadStream } from 'fs';
 import { isAllowedUser, getUnauthorizedMessage } from './security/auth.js';
 import { getLogger } from './utils/logger.js';
 
@@ -152,10 +153,27 @@ export function startBot(config, agent, conversationManager) {
         return lastMsgId;
       };
 
+      const sendPhoto = async (filePath, caption) => {
+        try {
+          await bot.sendPhoto(chatId, createReadStream(filePath), {
+            caption: caption || '',
+            parse_mode: 'Markdown',
+          });
+        } catch {
+          try {
+            await bot.sendPhoto(chatId, createReadStream(filePath), {
+              caption: caption || '',
+            });
+          } catch (err) {
+            logger.error(`Failed to send photo: ${err.message}`);
+          }
+        }
+      };
+
       const reply = await agent.processMessage(chatId, text, {
         id: userId,
         username,
-      }, onUpdate);
+      }, onUpdate, sendPhoto);
 
       clearInterval(typingInterval);
 
