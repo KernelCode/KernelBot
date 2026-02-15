@@ -23,6 +23,10 @@ KernelBot runs a **tool-use loop**: Claude decides which tools to call, KernelBo
 | `write_file`      | Write/create files, auto-creates parent directories |
 | `list_directory`  | List directory contents, optionally recursive       |
 
+## Disclaimer
+
+> **WARNING:** KernelBot has full access to your operating system. It can execute shell commands, read/write files, manage processes, control Docker containers, and interact with external services (GitHub, Telegram) on your behalf. Only run KernelBot on machines you own and control. Always configure `allowed_users` in production to restrict who can interact with the bot. The authors are not responsible for any damage caused by misuse.
+
 ## Installation
 
 ```bash

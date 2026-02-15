@@ -14,6 +14,24 @@ const LOGO = `
 export function showLogo() {
   console.log(chalk.cyan(LOGO));
   console.log(chalk.dim('  AI Engineering Agent\n'));
+  console.log(
+    boxen(
+      chalk.yellow.bold('WARNING') +
+        chalk.yellow(
+          '\n\nKernelBot has full access to your operating system.\n' +
+            'It can execute commands, read/write files, manage processes,\n' +
+            'and interact with external services on your behalf.\n\n' +
+            'Only run this on machines you control.\n' +
+            'Set allowed_users in config.yaml to restrict access.',
+        ),
+      {
+        padding: 1,
+        borderStyle: 'round',
+        borderColor: 'yellow',
+      },
+    ),
+  );
+  console.log('');
 }
 
 export async function showStartupCheck(label, checkFn) {
