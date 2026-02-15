@@ -9,6 +9,24 @@ function getWorkspaceDir(config) {
   return dir;
 }
 
+function injectToken(url, config) {
+  const token = config.github?.token || process.env.GITHUB_TOKEN;
+  if (!token) return url;
+
+  // Inject token into HTTPS GitHub URLs for auth-free push/pull
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'github.com' && parsed.protocol === 'https:') {
+      parsed.username = token;
+      parsed.password = 'x-oauth-basic';
+      return parsed.toString();
+    }
+  } catch {
+    // Not a parseable URL (e.g. org/repo shorthand before expansion)
+  }
+  return url;
+}
+
 export const definitions = [
   {
     name: 'git_clone',
@@ -88,12 +106,15 @@ export const handlers = {
       url = `https://github.com/${repo}.git`;
     }
 
+    // Inject GitHub token for authenticated clone (enables push later)
+    const authUrl = injectToken(url, context.config);
+
     const repoName = dest || repo.split('/').pop().replace('.git', '');
     const targetDir = join(workspaceDir, repoName);
 
     try {
       const git = simpleGit();
-      await git.clone(url, targetDir);
+      await git.clone(authUrl, targetDir);
       return { success: true, path: targetDir };
     } catch (err) {
       return { error: err.message };
@@ -127,10 +148,21 @@ export const handlers = {
     }
   },
 
-  git_push: async (params) => {
+  git_push: async (params, context) => {
     const { dir, force = false } = params;
     try {
       const git = simpleGit(dir);
+
+      // Ensure remote URL has auth token for push
+      const remotes = await git.getRemotes(true);
+      const origin = remotes.find((r) => r.name === 'origin');
+      if (origin) {
+        const authUrl = injectToken(origin.refs.push || origin.refs.fetch, context.config);
+        if (authUrl !== (origin.refs.push || origin.refs.fetch)) {
+          await git.remote(['set-url', 'origin', authUrl]);
+        }
+      }
+
       const branch = (await git.branchLocal()).current;
       const options = force ? ['--force'] : [];
       await git.push('origin', branch, options);

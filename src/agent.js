@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { toolDefinitions, executeTool, checkConfirmation } from './tools/index.js';
 import { getSystemPrompt } from './prompts/system.js';
 import { getLogger } from './utils/logger.js';
+import { getMissingCredential, saveCredential } from './utils/config.js';
 
 export class Agent {
   constructor({ config, conversationManager }) {
@@ -9,69 +10,23 @@ export class Agent {
     this.conversationManager = conversationManager;
     this.client = new Anthropic({ apiKey: config.anthropic.api_key });
     this.systemPrompt = getSystemPrompt(config);
-    this._pendingConfirmation = new Map(); // chatId -> { block, context }
+    this._pending = new Map(); // chatId -> pending state
   }
 
   async processMessage(chatId, userMessage, user) {
     const logger = getLogger();
 
-    // Handle pending confirmation responses
-    const pending = this._pendingConfirmation.get(chatId);
+    // Handle pending responses (confirmation or credential)
+    const pending = this._pending.get(chatId);
     if (pending) {
-      this._pendingConfirmation.delete(chatId);
-      const lower = userMessage.toLowerCase().trim();
+      this._pending.delete(chatId);
 
-      if (lower === 'yes' || lower === 'y' || lower === 'confirm') {
-        // User approved — execute the blocked tool and resume
-        logger.info(`User confirmed dangerous tool: ${pending.block.name}`);
-        const result = await executeTool(pending.block.name, pending.block.input, pending.context);
+      if (pending.type === 'credential') {
+        return await this._handleCredentialResponse(chatId, userMessage, user, pending);
+      }
 
-        // Resume the agent loop with the tool result
-        pending.toolResults.push({
-          type: 'tool_result',
-          tool_use_id: pending.block.id,
-          content: JSON.stringify(result),
-        });
-
-        // Process remaining blocks if any
-        for (const block of pending.remainingBlocks) {
-          if (block.type !== 'tool_use') continue;
-
-          const dangerLabel = checkConfirmation(block.name, block.input, this.config);
-          if (dangerLabel) {
-            // Another dangerous tool — ask again
-            this._pendingConfirmation.set(chatId, {
-              block,
-              context: pending.context,
-              toolResults: pending.toolResults,
-              remainingBlocks: pending.remainingBlocks.filter((b) => b !== block),
-              messages: pending.messages,
-            });
-            return `⚠️ Next action will **${dangerLabel}**.\n\n\`${block.name}\`: \`${JSON.stringify(block.input)}\`\n\nConfirm? (yes/no)`;
-          }
-
-          logger.info(`Tool call: ${block.name}`);
-          const r = await executeTool(block.name, block.input, pending.context);
-          pending.toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: JSON.stringify(r),
-          });
-        }
-
-        // Continue the agent loop
-        pending.messages.push({ role: 'user', content: pending.toolResults });
-        return await this._continueLoop(chatId, pending.messages, user);
-      } else {
-        // User denied
-        logger.info(`User denied dangerous tool: ${pending.block.name}`);
-        pending.toolResults.push({
-          type: 'tool_result',
-          tool_use_id: pending.block.id,
-          content: JSON.stringify({ error: 'User denied this operation.' }),
-        });
-        pending.messages.push({ role: 'user', content: pending.toolResults });
-        return await this._continueLoop(chatId, pending.messages, user);
+      if (pending.type === 'confirmation') {
+        return await this._handleConfirmationResponse(chatId, userMessage, user, pending);
       }
     }
 
@@ -84,6 +39,122 @@ export class Agent {
     const messages = [...this.conversationManager.getHistory(chatId)];
 
     return await this._runLoop(chatId, messages, user, 0, max_tool_depth);
+  }
+
+  async _handleCredentialResponse(chatId, userMessage, user, pending) {
+    const logger = getLogger();
+    const value = userMessage.trim();
+
+    if (value.toLowerCase() === 'skip' || value.toLowerCase() === 'cancel') {
+      logger.info(`User skipped credential: ${pending.credential.envKey}`);
+      pending.toolResults.push({
+        type: 'tool_result',
+        tool_use_id: pending.block.id,
+        content: JSON.stringify({ error: `${pending.credential.label} not provided. Operation skipped.` }),
+      });
+      return await this._resumeAfterPause(chatId, user, pending);
+    }
+
+    // Save the credential
+    saveCredential(this.config, pending.credential.envKey, value);
+    logger.info(`Saved credential: ${pending.credential.envKey}`);
+
+    // Now execute the original tool
+    const result = await executeTool(pending.block.name, pending.block.input, {
+      config: this.config,
+      user,
+    });
+
+    pending.toolResults.push({
+      type: 'tool_result',
+      tool_use_id: pending.block.id,
+      content: JSON.stringify(result),
+    });
+
+    return await this._resumeAfterPause(chatId, user, pending);
+  }
+
+  async _handleConfirmationResponse(chatId, userMessage, user, pending) {
+    const logger = getLogger();
+    const lower = userMessage.toLowerCase().trim();
+
+    if (lower === 'yes' || lower === 'y' || lower === 'confirm') {
+      logger.info(`User confirmed dangerous tool: ${pending.block.name}`);
+      const result = await executeTool(pending.block.name, pending.block.input, pending.context);
+
+      pending.toolResults.push({
+        type: 'tool_result',
+        tool_use_id: pending.block.id,
+        content: JSON.stringify(result),
+      });
+    } else {
+      logger.info(`User denied dangerous tool: ${pending.block.name}`);
+      pending.toolResults.push({
+        type: 'tool_result',
+        tool_use_id: pending.block.id,
+        content: JSON.stringify({ error: 'User denied this operation.' }),
+      });
+    }
+
+    return await this._resumeAfterPause(chatId, user, pending);
+  }
+
+  async _resumeAfterPause(chatId, user, pending) {
+    // Process remaining blocks
+    for (const block of pending.remainingBlocks) {
+      if (block.type !== 'tool_use') continue;
+
+      const pauseMsg = await this._checkPause(chatId, block, user, pending.toolResults, pending.remainingBlocks.filter((b) => b !== block), pending.messages);
+      if (pauseMsg) return pauseMsg;
+
+      const r = await executeTool(block.name, block.input, { config: this.config, user });
+      pending.toolResults.push({
+        type: 'tool_result',
+        tool_use_id: block.id,
+        content: JSON.stringify(r),
+      });
+    }
+
+    pending.messages.push({ role: 'user', content: pending.toolResults });
+    const { max_tool_depth } = this.config.anthropic;
+    return await this._runLoop(chatId, pending.messages, user, 0, max_tool_depth);
+  }
+
+  _checkPause(chatId, block, user, toolResults, remainingBlocks, messages) {
+    const logger = getLogger();
+
+    // Check missing credentials first
+    const missing = getMissingCredential(block.name, this.config);
+    if (missing) {
+      logger.warn(`Missing credential for ${block.name}: ${missing.envKey}`);
+      this._pending.set(chatId, {
+        type: 'credential',
+        block,
+        credential: missing,
+        context: { config: this.config, user },
+        toolResults,
+        remainingBlocks,
+        messages,
+      });
+      return `🔑 **${missing.label}** is required for this action.\n\nPlease send your token now (it will be saved to \`~/.kernelbot/.env\`).\n\nOr reply **skip** to cancel.`;
+    }
+
+    // Check dangerous operation confirmation
+    const dangerLabel = checkConfirmation(block.name, block.input, this.config);
+    if (dangerLabel) {
+      logger.warn(`Dangerous tool detected: ${block.name} — ${dangerLabel}`);
+      this._pending.set(chatId, {
+        type: 'confirmation',
+        block,
+        context: { config: this.config, user },
+        toolResults,
+        remainingBlocks,
+        messages,
+      });
+      return `⚠️ This action will **${dangerLabel}**.\n\n\`${block.name}\`: \`${JSON.stringify(block.input)}\`\n\nConfirm? (yes/no)`;
+    }
+
+    return null;
   }
 
   async _runLoop(chatId, messages, user, startDepth, maxDepth) {
@@ -121,22 +192,16 @@ export class Agent {
         for (let i = 0; i < toolUseBlocks.length; i++) {
           const block = toolUseBlocks[i];
 
-          // Check if this tool requires confirmation
-          const dangerLabel = checkConfirmation(block.name, block.input, this.config);
-          if (dangerLabel) {
-            logger.warn(`Dangerous tool detected: ${block.name} — ${dangerLabel}`);
-
-            // Store state and pause for user confirmation
-            this._pendingConfirmation.set(chatId, {
-              block,
-              context: { config: this.config, user },
-              toolResults,
-              remainingBlocks: toolUseBlocks.slice(i + 1),
-              messages,
-            });
-
-            return `⚠️ This action will **${dangerLabel}**.\n\n\`${block.name}\`: \`${JSON.stringify(block.input)}\`\n\nConfirm? (yes/no)`;
-          }
+          // Check if we need to pause (missing cred or dangerous action)
+          const pauseMsg = this._checkPause(
+            chatId,
+            block,
+            user,
+            toolResults,
+            toolUseBlocks.slice(i + 1),
+            messages,
+          );
+          if (pauseMsg) return pauseMsg;
 
           logger.info(`Tool call: ${block.name}`);
 
@@ -174,10 +239,5 @@ export class Agent {
       `Please try again with a simpler request.`;
     this.conversationManager.addMessage(chatId, 'assistant', depthWarning);
     return depthWarning;
-  }
-
-  async _continueLoop(chatId, messages, user) {
-    const { max_tool_depth } = this.config.anthropic;
-    return await this._runLoop(chatId, messages, user, 0, max_tool_depth);
   }
 }

@@ -184,3 +184,59 @@ export async function loadConfigInteractive() {
   const config = loadConfig();
   return await promptForMissing(config);
 }
+
+/**
+ * Save a credential to ~/.kernelbot/.env and update the live config object.
+ * Called at runtime when a user provides a missing token via Telegram.
+ */
+export function saveCredential(config, envKey, value) {
+  const configDir = getConfigDir();
+  mkdirSync(configDir, { recursive: true });
+  const envPath = join(configDir, '.env');
+
+  let content = '';
+  if (existsSync(envPath)) {
+    content = readFileSync(envPath, 'utf-8').trimEnd() + '\n';
+  }
+
+  const regex = new RegExp(`^${envKey}=.*$`, 'm');
+  if (regex.test(content)) {
+    content = content.replace(regex, `${envKey}=${value}`);
+  } else {
+    content += `${envKey}=${value}\n`;
+  }
+  writeFileSync(envPath, content);
+
+  // Update live config
+  switch (envKey) {
+    case 'GITHUB_TOKEN':
+      if (!config.github) config.github = {};
+      config.github.token = value;
+      break;
+    case 'ANTHROPIC_API_KEY':
+      config.anthropic.api_key = value;
+      break;
+    case 'TELEGRAM_BOT_TOKEN':
+      config.telegram.bot_token = value;
+      break;
+  }
+
+  // Also set in process.env so tools pick it up
+  process.env[envKey] = value;
+}
+
+/**
+ * Check which credentials a tool needs and return the missing one, if any.
+ */
+export function getMissingCredential(toolName, config) {
+  const githubTools = ['github_create_pr', 'github_get_pr_diff', 'github_post_review', 'github_create_repo', 'github_list_prs', 'git_clone', 'git_push'];
+
+  if (githubTools.includes(toolName)) {
+    const token = config.github?.token || process.env.GITHUB_TOKEN;
+    if (!token) {
+      return { envKey: 'GITHUB_TOKEN', label: 'GitHub Personal Access Token' };
+    }
+  }
+
+  return null;
+}
