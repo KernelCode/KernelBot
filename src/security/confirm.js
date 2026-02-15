@@ -6,6 +6,7 @@ const DANGEROUS_PATTERNS = [
   { tool: 'github_create_repo', pattern: null, label: 'create a GitHub repository' },
   { tool: 'docker_compose', param: 'action', value: 'down', label: 'take down containers' },
   { tool: 'git_push', param: 'force', value: true, label: 'force push' },
+  { tool: 'interact_with_page', pattern: null, label: 'interact with a webpage (click, type, execute scripts)' },
 ];
 
 export function requiresConfirmation(toolName, params, config) {

@@ -47,7 +47,7 @@ export function startBot(config, agent, conversationManager) {
       return;
     }
 
-    const text = msg.text.trim();
+    let text = msg.text.trim();
 
     // Handle commands
     if (text === '/clean' || text === '/clear' || text === '/reset') {
@@ -69,11 +69,40 @@ export function startBot(config, agent, conversationManager) {
         '',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',
+        '/browse <url> — Browse a website and get a summary',
+        '/screenshot <url> — Take a screenshot of a website',
+        '/extract <url> <selector> — Extract content using CSS selector',
         '/help — Show this help message',
         '',
         'Or just send any message to chat with the agent.',
       ].join('\n'), { parse_mode: 'Markdown' });
       return;
+    }
+
+    // Web browsing shortcut commands — rewrite as natural language for the agent
+    if (text.startsWith('/browse ')) {
+      const browseUrl = text.slice('/browse '.length).trim();
+      if (!browseUrl) {
+        await bot.sendMessage(chatId, 'Usage: /browse <url>');
+        return;
+      }
+      text = `Browse this website and give me a summary: ${browseUrl}`;
+    } else if (text.startsWith('/screenshot ')) {
+      const screenshotUrl = text.slice('/screenshot '.length).trim();
+      if (!screenshotUrl) {
+        await bot.sendMessage(chatId, 'Usage: /screenshot <url>');
+        return;
+      }
+      text = `Take a screenshot of this website: ${screenshotUrl}`;
+    } else if (text.startsWith('/extract ')) {
+      const extractParts = text.slice('/extract '.length).trim().split(/\s+/);
+      if (extractParts.length < 2) {
+        await bot.sendMessage(chatId, 'Usage: /extract <url> <css-selector>');
+        return;
+      }
+      const extractUrl = extractParts[0];
+      const extractSelector = extractParts.slice(1).join(' ');
+      text = `Extract content from ${extractUrl} using the CSS selector: ${extractSelector}`;
     }
 
     logger.info(`Message from ${username} (${userId}): ${text.slice(0, 100)}`);

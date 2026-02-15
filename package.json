@@ -38,6 +38,7 @@
     "js-yaml": "^4.1.0",
     "node-telegram-bot-api": "^0.66.0",
     "ora": "^8.1.1",
+    "puppeteer": "^24.37.3",
     "simple-git": "^3.31.1",
     "uuid": "^11.1.0",
     "winston": "^3.17.0"
