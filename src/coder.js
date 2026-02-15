@@ -222,8 +222,13 @@ export class ClaudeCodeSpawner {
           processEvent(buffer.trim(), onOutput, logger);
         }
 
-        if (code !== 0 && !fullOutput) {
-          reject(new Error(`Claude Code exited with code ${code}: ${stderr}`));
+        logger.info(`Claude Code exited with code ${code} | stdout: ${fullOutput.length} chars | stderr: ${stderr.length} chars`);
+
+        if (code !== 0) {
+          const errMsg = stderr.trim() || fullOutput.trim() || `exited with code ${code}`;
+          logger.error(`Claude Code failed: ${errMsg.slice(0, 500)}`);
+          if (onOutput) onOutput(`❌ Claude Code failed (exit ${code}):\n\`\`\`\n${errMsg.slice(0, 400)}\n\`\`\``).catch(() => {});
+          reject(new Error(`Claude Code exited with code ${code}: ${errMsg.slice(0, 500)}`));
         } else {
           resolve({
             output: resultText || fullOutput.trim(),

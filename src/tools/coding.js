@@ -1,4 +1,7 @@
+import { existsSync } from 'fs';
+import { resolve } from 'path';
 import { ClaudeCodeSpawner } from '../coder.js';
+import { getLogger } from '../utils/logger.js';
 
 let spawner = null;
 
@@ -35,16 +38,36 @@ export const definitions = [
 
 export const handlers = {
   spawn_claude_code: async (params, context) => {
+    const logger = getLogger();
+    const onUpdate = context.onUpdate || null;
+    const dir = resolve(params.working_directory);
+
+    // Validate directory exists
+    if (!existsSync(dir)) {
+      const msg = `Directory not found: ${dir}`;
+      logger.error(`spawn_claude_code: ${msg}`);
+      if (onUpdate) onUpdate(`❌ ${msg}`).catch(() => {});
+      return { error: msg };
+    }
+
     try {
       const coder = getSpawner(context.config);
       const result = await coder.run({
-        workingDirectory: params.working_directory,
+        workingDirectory: dir,
         prompt: params.prompt,
         maxTurns: params.max_turns,
-        onOutput: context.onUpdate || null,
+        onOutput: onUpdate,
       });
+
+      // Show stderr if any
+      if (result.stderr && onUpdate) {
+        onUpdate(`⚠️ Claude Code stderr:\n\`\`\`\n${result.stderr.slice(0, 500)}\n\`\`\``).catch(() => {});
+      }
+
       return { success: true, output: result.output };
     } catch (err) {
+      logger.error(`spawn_claude_code failed: ${err.message}`);
+      if (onUpdate) onUpdate(`❌ Claude Code error: ${err.message}`).catch(() => {});
       return { error: err.message };
     }
   },
