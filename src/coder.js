@@ -103,7 +103,7 @@ function processEvent(line, onOutput, logger) {
     const tool = extractToolUse(event);
     if (tool) {
       logger.info(`Claude Code tool: ${tool.name}: ${tool.summary}`);
-      if (onOutput) onOutput(`🔨 \`${tool.name}: ${tool.summary}\``).catch(() => {});
+      if (onOutput) onOutput(`🔨 ${tool.name}: ${tool.summary}`).catch(() => {});
     }
     return event;
   }
@@ -113,7 +113,7 @@ function processEvent(line, onOutput, logger) {
     const tool = extractToolUse(event);
     if (tool) {
       logger.info(`Claude Code tool: ${tool.name}: ${tool.summary}`);
-      if (onOutput) onOutput(`🔨 \`${tool.name}: ${tool.summary}\``).catch(() => {});
+      if (onOutput) onOutput(`🔨 ${tool.name}: ${tool.summary}`).catch(() => {});
     }
     return event;
   }
@@ -160,7 +160,63 @@ export class ClaudeCodeSpawner {
     const cmd = `claude ${args.map((a) => a.includes(' ') ? `"${a}"` : a).join(' ')}`;
     logger.info(`Spawning: ${cmd.slice(0, 300)}`);
     logger.info(`CWD: ${workingDirectory}`);
-    if (onOutput) onOutput(`⏳ Starting Claude Code...\n\`${cmd.slice(0, 200)}\``).catch(() => {});
+
+    // --- Smart output: consolidate tool activity into one editable message ---
+    let statusMsgId = null;
+    let activityLines = [];
+    let flushTimer = null;
+    const MAX_VISIBLE = 15;
+
+    const buildStatusText = (finalState = null) => {
+      const visible = activityLines.slice(-MAX_VISIBLE);
+      const countInfo = activityLines.length > MAX_VISIBLE
+        ? `\n_... ${activityLines.length} operations total_\n`
+        : '';
+      if (finalState === 'done') {
+        return `✅ *Claude Code Done* — ${activityLines.length} ops\n${countInfo}\n${visible.join('\n')}`;
+      }
+      if (finalState === 'error') {
+        return `❌ *Claude Code Failed* — ${activityLines.length} ops\n${countInfo}\n${visible.join('\n')}`;
+      }
+      return `⚙️ *Claude Code Working...*\n${countInfo}\n${visible.join('\n')}`;
+    };
+
+    const flushStatus = async () => {
+      flushTimer = null;
+      if (!onOutput || activityLines.length === 0) return;
+      try {
+        if (statusMsgId) {
+          await onOutput(buildStatusText(), { editMessageId: statusMsgId });
+        } else {
+          statusMsgId = await onOutput(buildStatusText());
+        }
+      } catch {}
+    };
+
+    const addActivity = (line) => {
+      activityLines.push(line);
+      if (!statusMsgId && !flushTimer) {
+        // First activity — create the status message immediately
+        flushStatus();
+      } else if (!flushTimer) {
+        // Throttle subsequent edits to avoid Telegram rate limits
+        flushTimer = setTimeout(flushStatus, 1000);
+      }
+    };
+
+    const smartOutput = onOutput ? async (text) => {
+      // Tool calls, raw output, warnings, starting → accumulate in status message
+      if (text.startsWith('🔨') || text.startsWith('📟') || text.startsWith('⚠️') || text.startsWith('⏳')) {
+        addActivity(text);
+        return;
+      }
+      // Completion → handled by close handler, skip
+      if (text.startsWith('✅')) return;
+      // Everything else (💬 text, ❌ error, ⏰ timeout) → new message
+      await onOutput(text);
+    } : null;
+
+    if (smartOutput) smartOutput(`⏳ Starting Claude Code...`).catch(() => {});
 
     return new Promise((resolve, reject) => {
       const child = spawn('claude', args, {
@@ -193,7 +249,7 @@ export class ClaudeCodeSpawner {
             }
           } catch {}
 
-          processEvent(trimmed, onOutput, logger);
+          processEvent(trimmed, smartOutput, logger);
         }
       });
 
@@ -201,19 +257,18 @@ export class ClaudeCodeSpawner {
         const chunk = data.toString().trim();
         stderr += chunk + '\n';
         logger.warn(`Claude Code stderr: ${chunk.slice(0, 300)}`);
-        // Forward ALL stderr to Telegram immediately
-        if (onOutput && chunk) {
-          onOutput(`⚠️ Claude Code: ${chunk.slice(0, 400)}`).catch(() => {});
+        if (smartOutput && chunk) {
+          smartOutput(`⚠️ ${chunk.slice(0, 300)}`).catch(() => {});
         }
       });
 
       const timer = setTimeout(() => {
         child.kill('SIGTERM');
-        if (onOutput) onOutput(`⏰ Claude Code timed out after ${this.timeout / 1000}s`).catch(() => {});
+        if (smartOutput) smartOutput(`⏰ Claude Code timed out after ${this.timeout / 1000}s`).catch(() => {});
         reject(new Error(`Claude Code timed out after ${this.timeout / 1000}s`));
       }, this.timeout);
 
-      child.on('close', (code) => {
+      child.on('close', async (code) => {
         clearTimeout(timer);
 
         if (buffer.trim()) {
@@ -224,7 +279,22 @@ export class ClaudeCodeSpawner {
               resultText = event.result || resultText;
             }
           } catch {}
-          processEvent(buffer.trim(), onOutput, logger);
+          processEvent(buffer.trim(), smartOutput, logger);
+        }
+
+        // Flush any pending status edits
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        await flushStatus();
+
+        // Final status message update — show done/failed state
+        if (statusMsgId && onOutput) {
+          const finalState = code === 0 ? 'done' : 'error';
+          try {
+            await onOutput(buildStatusText(finalState), { editMessageId: statusMsgId });
+          } catch {}
         }
 
         logger.info(`Claude Code exited with code ${code} | stdout: ${fullOutput.length} chars | stderr: ${stderr.length} chars`);
@@ -232,7 +302,6 @@ export class ClaudeCodeSpawner {
         if (code !== 0) {
           const errMsg = stderr.trim() || fullOutput.trim() || `exited with code ${code}`;
           logger.error(`Claude Code failed: ${errMsg.slice(0, 500)}`);
-          if (onOutput) onOutput(`❌ Claude Code failed (exit ${code}):\n\`\`\`\n${errMsg.slice(0, 400)}\n\`\`\``).catch(() => {});
           reject(new Error(`Claude Code exited with code ${code}: ${errMsg.slice(0, 500)}`));
         } else {
           resolve({
