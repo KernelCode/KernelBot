@@ -13,8 +13,10 @@ export class Agent {
     this._pending = new Map(); // chatId -> pending state
   }
 
-  async processMessage(chatId, userMessage, user) {
+  async processMessage(chatId, userMessage, user, onUpdate) {
     const logger = getLogger();
+
+    this._onUpdate = onUpdate || null;
 
     // Handle pending responses (confirmation or credential)
     const pending = this._pending.get(chatId);
@@ -39,6 +41,40 @@ export class Agent {
     const messages = [...this.conversationManager.getHistory(chatId)];
 
     return await this._runLoop(chatId, messages, user, 0, max_tool_depth);
+  }
+
+  _formatToolSummary(name, input) {
+    const key = {
+      execute_command: 'command',
+      read_file: 'path',
+      write_file: 'path',
+      list_directory: 'path',
+      git_clone: 'repo',
+      git_checkout: 'branch',
+      git_commit: 'message',
+      git_push: 'dir',
+      git_diff: 'dir',
+      github_create_pr: 'title',
+      github_create_repo: 'name',
+      github_list_prs: 'repo',
+      github_get_pr_diff: 'repo',
+      github_post_review: 'repo',
+      spawn_claude_code: 'prompt',
+      kill_process: 'pid',
+      docker_exec: 'container',
+      docker_logs: 'container',
+      docker_compose: 'action',
+      curl_url: 'url',
+      check_port: 'port',
+    }[name];
+    const val = key && input[key] ? String(input[key]).slice(0, 120) : JSON.stringify(input).slice(0, 120);
+    return `${name}: ${val}`;
+  }
+
+  async _sendUpdate(text) {
+    if (this._onUpdate) {
+      try { await this._onUpdate(text); } catch {}
+    }
   }
 
   async _handleCredentialResponse(chatId, userMessage, user, pending) {
@@ -186,6 +222,14 @@ export class Agent {
       if (response.stop_reason === 'tool_use') {
         messages.push({ role: 'assistant', content: response.content });
 
+        // Send Claude's thinking text to the user
+        const thinkingBlocks = response.content.filter((b) => b.type === 'text' && b.text.trim());
+        if (thinkingBlocks.length > 0) {
+          const thinking = thinkingBlocks.map((b) => b.text).join('\n');
+          logger.info(`Agent thinking: ${thinking.slice(0, 200)}`);
+          await this._sendUpdate(`💭 ${thinking}`);
+        }
+
         const toolUseBlocks = response.content.filter((b) => b.type === 'tool_use');
         const toolResults = [];
 
@@ -203,7 +247,9 @@ export class Agent {
           );
           if (pauseMsg) return pauseMsg;
 
-          logger.info(`Tool call: ${block.name}`);
+          const summary = this._formatToolSummary(block.name, block.input);
+          logger.info(`Tool call: ${summary}`);
+          await this._sendUpdate(`🔧 \`${summary}\``);
 
           const result = await executeTool(block.name, block.input, {
             config: this.config,

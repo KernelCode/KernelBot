@@ -50,10 +50,21 @@ export function startBot(config, agent) {
     bot.sendChatAction(chatId, 'typing').catch(() => {});
 
     try {
+      const onUpdate = async (text) => {
+        const parts = splitMessage(text);
+        for (const part of parts) {
+          try {
+            await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
+          } catch {
+            await bot.sendMessage(chatId, part);
+          }
+        }
+      };
+
       const reply = await agent.processMessage(chatId, msg.text, {
         id: userId,
         username,
-      });
+      }, onUpdate);
 
       clearInterval(typingInterval);
 
