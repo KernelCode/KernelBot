@@ -99,6 +99,7 @@ export class Agent {
     const result = await executeTool(pending.block.name, pending.block.input, {
       config: this.config,
       user,
+      onUpdate: this._onUpdate,
     });
 
     pending.toolResults.push({
@@ -116,7 +117,7 @@ export class Agent {
 
     if (lower === 'yes' || lower === 'y' || lower === 'confirm') {
       logger.info(`User confirmed dangerous tool: ${pending.block.name}`);
-      const result = await executeTool(pending.block.name, pending.block.input, pending.context);
+      const result = await executeTool(pending.block.name, pending.block.input, { ...pending.context, onUpdate: this._onUpdate });
 
       pending.toolResults.push({
         type: 'tool_result',
@@ -143,7 +144,7 @@ export class Agent {
       const pauseMsg = await this._checkPause(chatId, block, user, pending.toolResults, pending.remainingBlocks.filter((b) => b !== block), pending.messages);
       if (pauseMsg) return pauseMsg;
 
-      const r = await executeTool(block.name, block.input, { config: this.config, user });
+      const r = await executeTool(block.name, block.input, { config: this.config, user, onUpdate: this._onUpdate });
       pending.toolResults.push({
         type: 'tool_result',
         tool_use_id: block.id,
@@ -254,6 +255,7 @@ export class Agent {
           const result = await executeTool(block.name, block.input, {
             config: this.config,
             user,
+            onUpdate: this._onUpdate,
           });
 
           toolResults.push({

@@ -7,7 +7,7 @@ export class ClaudeCodeSpawner {
     this.timeout = (config.claude_code?.timeout_seconds || 600) * 1000;
   }
 
-  async run({ workingDirectory, prompt, maxTurns }) {
+  async run({ workingDirectory, prompt, maxTurns, onOutput }) {
     const logger = getLogger();
     const turns = maxTurns || this.maxTurns;
 
@@ -24,9 +24,24 @@ export class ClaudeCodeSpawner {
 
       let stdout = '';
       let stderr = '';
+      let buffer = '';
 
       child.stdout.on('data', (data) => {
-        stdout += data.toString();
+        const chunk = data.toString();
+        stdout += chunk;
+        buffer += chunk;
+
+        // Stream output in meaningful chunks (split on newlines)
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // keep incomplete line in buffer
+
+        if (lines.length > 0 && onOutput) {
+          const text = lines.join('\n').trim();
+          if (text) {
+            logger.info(`Claude Code output: ${text.slice(0, 200)}`);
+            onOutput(text).catch(() => {});
+          }
+        }
       });
 
       child.stderr.on('data', (data) => {
@@ -40,6 +55,12 @@ export class ClaudeCodeSpawner {
 
       child.on('close', (code) => {
         clearTimeout(timer);
+
+        // Flush remaining buffer
+        if (buffer.trim() && onOutput) {
+          onOutput(buffer.trim()).catch(() => {});
+        }
+
         if (code !== 0 && !stdout) {
           reject(new Error(`Claude Code exited with code ${code}: ${stderr}`));
         } else {

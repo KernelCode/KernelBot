@@ -41,6 +41,9 @@ export const handlers = {
         workingDirectory: params.working_directory,
         prompt: params.prompt,
         maxTurns: params.max_turns,
+        onOutput: context.onUpdate
+          ? (text) => context.onUpdate(`📟 \`Claude Code:\`\n${text}`)
+          : null,
       });
       return { success: true, output: result.output };
     } catch (err) {
