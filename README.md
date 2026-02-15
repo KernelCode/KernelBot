@@ -1,6 +1,6 @@
 # KernelBot
 
-[kernelbot.io](https://kernelbot.io) | [npm](https://www.npmjs.com/package/kernelbot) | [GitHub](https://github.com/KernelCode/KERNEL)
+[kernelbot.io](https://kernelbot.io) | [npm](https://www.npmjs.com/package/kernelbot) | [GitHub](https://github.com/KernelCode/kernelbot)
 
 AI engineering agent — a Telegram bot backed by Claude with full OS control via tool use.
 
@@ -45,85 +45,85 @@ For complex coding tasks, KernelBot can spawn **Claude Code CLI** as a sub-agent
 
 ### File System & Shell
 
-| Tool | Description |
-| --- | --- |
-| `execute_command` | Run any shell command (git, npm, python, etc.) |
-| `read_file` | Read file contents with optional line limits |
-| `write_file` | Write/create files, auto-creates parent directories |
-| `list_directory` | List directory contents, optionally recursive |
+| Tool              | Description                                         |
+| ----------------- | --------------------------------------------------- |
+| `execute_command` | Run any shell command (git, npm, python, etc.)      |
+| `read_file`       | Read file contents with optional line limits        |
+| `write_file`      | Write/create files, auto-creates parent directories |
+| `list_directory`  | List directory contents, optionally recursive       |
 
 ### Git & GitHub
 
-| Tool | Description |
-| --- | --- |
-| `git_clone` | Clone a repo (`org/repo` shorthand or full URL) |
-| `git_checkout` | Checkout or create branches |
-| `git_commit` | Stage all changes and commit |
-| `git_push` | Push current branch to remote |
-| `git_diff` | Show uncommitted changes |
-| `github_create_pr` | Create a pull request |
-| `github_get_pr_diff` | Get the diff of a PR |
-| `github_post_review` | Post a review on a PR |
-| `github_create_repo` | Create a new GitHub repository |
-| `github_list_prs` | List pull requests for a repo |
+| Tool                 | Description                                     |
+| -------------------- | ----------------------------------------------- |
+| `git_clone`          | Clone a repo (`org/repo` shorthand or full URL) |
+| `git_checkout`       | Checkout or create branches                     |
+| `git_commit`         | Stage all changes and commit                    |
+| `git_push`           | Push current branch to remote                   |
+| `git_diff`           | Show uncommitted changes                        |
+| `github_create_pr`   | Create a pull request                           |
+| `github_get_pr_diff` | Get the diff of a PR                            |
+| `github_post_review` | Post a review on a PR                           |
+| `github_create_repo` | Create a new GitHub repository                  |
+| `github_list_prs`    | List pull requests for a repo                   |
 
 ### Web Browsing
 
-| Tool | Description |
-| --- | --- |
-| `browse_website` | Navigate to a URL and extract page content (title, headings, text, links) |
-| `screenshot_website` | Take a screenshot of a website, supports full-page and element capture |
-| `extract_content` | Extract specific content using CSS selectors |
-| `interact_with_page` | Click, type, scroll, and run JS on a webpage |
-| `send_image` | Send an image/screenshot directly to the Telegram chat |
+| Tool                 | Description                                                               |
+| -------------------- | ------------------------------------------------------------------------- |
+| `browse_website`     | Navigate to a URL and extract page content (title, headings, text, links) |
+| `screenshot_website` | Take a screenshot of a website, supports full-page and element capture    |
+| `extract_content`    | Extract specific content using CSS selectors                              |
+| `interact_with_page` | Click, type, scroll, and run JS on a webpage                              |
+| `send_image`         | Send an image/screenshot directly to the Telegram chat                    |
 
 ### JIRA
 
-| Tool | Description |
-| --- | --- |
-| `jira_get_ticket` | Get details of a specific JIRA ticket |
-| `jira_search_tickets` | Search tickets using JQL queries |
-| `jira_list_my_tickets` | List tickets assigned to the current user |
-| `jira_get_project_tickets` | Get tickets from a specific JIRA project |
+| Tool                       | Description                               |
+| -------------------------- | ----------------------------------------- |
+| `jira_get_ticket`          | Get details of a specific JIRA ticket     |
+| `jira_search_tickets`      | Search tickets using JQL queries          |
+| `jira_list_my_tickets`     | List tickets assigned to the current user |
+| `jira_get_project_tickets` | Get tickets from a specific JIRA project  |
 
 ### Docker
 
-| Tool | Description |
-| --- | --- |
-| `docker_ps` | List containers |
-| `docker_logs` | Get container logs |
-| `docker_exec` | Execute a command inside a running container |
-| `docker_compose` | Run docker compose commands |
+| Tool             | Description                                  |
+| ---------------- | -------------------------------------------- |
+| `docker_ps`      | List containers                              |
+| `docker_logs`    | Get container logs                           |
+| `docker_exec`    | Execute a command inside a running container |
+| `docker_compose` | Run docker compose commands                  |
 
 ### Process & System
 
-| Tool | Description |
-| --- | --- |
-| `process_list` | List running processes, optionally filter by name |
-| `kill_process` | Kill a process by PID or name |
+| Tool              | Description                                            |
+| ----------------- | ------------------------------------------------------ |
+| `process_list`    | List running processes, optionally filter by name      |
+| `kill_process`    | Kill a process by PID or name                          |
 | `service_control` | Manage systemd services (start, stop, restart, status) |
 
 ### Monitoring
 
-| Tool | Description |
-| --- | --- |
-| `disk_usage` | Show disk space usage |
-| `memory_usage` | Show RAM usage |
-| `cpu_usage` | Show CPU load |
-| `system_logs` | Read system or application logs |
+| Tool           | Description                     |
+| -------------- | ------------------------------- |
+| `disk_usage`   | Show disk space usage           |
+| `memory_usage` | Show RAM usage                  |
+| `cpu_usage`    | Show CPU load                   |
+| `system_logs`  | Read system or application logs |
 
 ### Networking
 
-| Tool | Description |
-| --- | --- |
-| `check_port` | Check if a port is open and listening |
-| `curl_url` | Make HTTP requests and return the response |
-| `nginx_reload` | Test nginx config and reload if valid |
+| Tool           | Description                                |
+| -------------- | ------------------------------------------ |
+| `check_port`   | Check if a port is open and listening      |
+| `curl_url`     | Make HTTP requests and return the response |
+| `nginx_reload` | Test nginx config and reload if valid      |
 
 ### Coding
 
-| Tool | Description |
-| --- | --- |
+| Tool                | Description                                                                               |
+| ------------------- | ----------------------------------------------------------------------------------------- |
 | `spawn_claude_code` | Spawn Claude Code CLI for coding tasks — writing, fixing, reviewing, and scaffolding code |
 
 ## Disclaimer
@@ -209,11 +209,11 @@ conversation:
 
 ## Telegram Commands
 
-| Command | Description |
-| --- | --- |
-| `/clean` | Clear conversation and start fresh |
-| `/history` | Show message count in memory |
-| `/help` | Show help message |
+| Command    | Description                        |
+| ---------- | ---------------------------------- |
+| `/clean`   | Clear conversation and start fresh |
+| `/history` | Show message count in memory       |
+| `/help`    | Show help message                  |
 
 ## Security
 
