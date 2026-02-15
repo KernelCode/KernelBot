@@ -146,23 +146,25 @@ export class ClaudeCodeSpawner {
 
     ensureClaudeCodeSetup();
 
-    logger.info(`Spawning Claude Code in ${workingDirectory}${this.model ? ` (model: ${this.model})` : ''}`);
-    if (onOutput) onOutput(`⏳ Starting Claude Code...`).catch(() => {});
+    const args = [
+      '-p', prompt,
+      '--max-turns', String(turns),
+      '--output-format', 'stream-json',
+      '--dangerously-skip-permissions',
+    ];
+    if (this.model) {
+      args.push('--model', this.model);
+    }
+
+    const cmd = `claude ${args.map((a) => a.includes(' ') ? `"${a}"` : a).join(' ')}`;
+    logger.info(`Spawning: ${cmd.slice(0, 300)}`);
+    logger.info(`CWD: ${workingDirectory}`);
+    if (onOutput) onOutput(`⏳ Starting Claude Code...\n\`${cmd.slice(0, 200)}\``).catch(() => {});
 
     return new Promise((resolve, reject) => {
-      const args = [
-        '-p', prompt,
-        '--max-turns', String(turns),
-        '--output-format', 'stream-json',
-        '--dangerously-skip-permissions',
-      ];
-      if (this.model) {
-        args.push('--model', this.model);
-      }
-
       const child = spawn('claude', args, {
         cwd: workingDirectory,
-        env: { ...process.env },
+        env: { ...process.env, IS_SANDBOX: '1' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -183,7 +185,6 @@ export class ClaudeCodeSpawner {
 
           fullOutput += trimmed + '\n';
 
-          // Try to extract result text
           try {
             const event = JSON.parse(trimmed);
             if (event.type === 'result') {
@@ -196,10 +197,13 @@ export class ClaudeCodeSpawner {
       });
 
       child.stderr.on('data', (data) => {
-        const chunk = data.toString();
-        stderr += chunk;
-        // Forward stderr too — might contain useful info
-        logger.warn(`Claude Code stderr: ${chunk.trim().slice(0, 200)}`);
+        const chunk = data.toString().trim();
+        stderr += chunk + '\n';
+        logger.warn(`Claude Code stderr: ${chunk.slice(0, 300)}`);
+        // Forward ALL stderr to Telegram immediately
+        if (onOutput && chunk) {
+          onOutput(`⚠️ Claude Code: ${chunk.slice(0, 400)}`).catch(() => {});
+        }
       });
 
       const timer = setTimeout(() => {
