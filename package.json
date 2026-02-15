@@ -1,0 +1,33 @@
+{
+  "name": "kernelbot",
+  "version": "1.0.0",
+  "description": "KernelBot — AI engineering agent with full OS control",
+  "type": "module",
+  "author": "Abdullah Al-Tahrei <abdullah@altaheri.me>",
+  "bin": {
+    "kernelbot": "./bin/kernel.js"
+  },
+  "scripts": {
+    "start": "node bin/kernel.js start"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "telegram",
+    "anthropic",
+    "tools"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "js-yaml": "^4.1.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "ora": "^8.1.1",
+    "boxen": "^8.0.1",
+    "uuid": "^11.1.0",
+    "winston": "^3.17.0"
+  }
+}

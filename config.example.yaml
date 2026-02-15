@@ -1,0 +1,30 @@
+# KernelBot Configuration
+# Copy to config.yaml and adjust as needed.
+
+bot:
+  name: KernelBot
+  description: AI engineering agent with full OS control
+
+anthropic:
+  model: claude-sonnet-4-20250514
+  max_tokens: 8192
+  temperature: 0.3
+  max_tool_depth: 25
+
+telegram:
+  # List Telegram user IDs allowed to interact. Empty = allow all (dev mode).
+  allowed_users: []
+
+security:
+  blocked_paths:
+    - /etc/shadow
+    - /etc/passwd
+    - ~/.ssh/id_rsa
+    - ~/.ssh/id_ed25519
+
+logging:
+  level: info
+  max_file_size: 5242880  # 5 MB
+
+conversation:
+  max_history: 50

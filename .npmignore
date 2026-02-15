@@ -1,0 +1,5 @@
+.claude/
+.env
+*.log
+config.yaml
+initplan.md
