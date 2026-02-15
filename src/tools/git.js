@@ -164,7 +164,8 @@ export const handlers = {
       }
 
       const branch = (await git.branchLocal()).current;
-      const options = force ? ['--force'] : [];
+      const options = ['-u'];
+      if (force) options.push('--force');
       await git.push('origin', branch, options);
       return { success: true, branch };
     } catch (err) {

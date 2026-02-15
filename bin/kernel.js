@@ -133,7 +133,7 @@ async function startBotFlow(config) {
   const conversationManager = new ConversationManager(config);
   const agent = new Agent({ config, conversationManager });
 
-  startBot(config, agent);
+  startBot(config, agent, conversationManager);
   showStartupComplete();
   return true;
 }

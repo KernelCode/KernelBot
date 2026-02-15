@@ -21,9 +21,15 @@ function splitMessage(text, maxLength = 4096) {
   return chunks;
 }
 
-export function startBot(config, agent) {
+export function startBot(config, agent, conversationManager) {
   const logger = getLogger();
   const bot = new TelegramBot(config.telegram.bot_token, { polling: true });
+
+  // Load previous conversations from disk
+  const loaded = conversationManager.load();
+  if (loaded) {
+    logger.info('Loaded previous conversations from disk');
+  }
 
   logger.info('Telegram bot started with polling');
 
@@ -41,7 +47,36 @@ export function startBot(config, agent) {
       return;
     }
 
-    logger.info(`Message from ${username} (${userId}): ${msg.text.slice(0, 100)}`);
+    const text = msg.text.trim();
+
+    // Handle commands
+    if (text === '/clean' || text === '/clear' || text === '/reset') {
+      conversationManager.clear(chatId);
+      logger.info(`Conversation cleared for chat ${chatId} by ${username}`);
+      await bot.sendMessage(chatId, '🧹 Conversation cleared. Starting fresh.');
+      return;
+    }
+
+    if (text === '/history') {
+      const count = conversationManager.getMessageCount(chatId);
+      await bot.sendMessage(chatId, `📝 This chat has *${count}* messages in memory.`, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    if (text === '/help') {
+      await bot.sendMessage(chatId, [
+        '*KernelBot Commands*',
+        '',
+        '/clean — Clear conversation and start fresh',
+        '/history — Show message count in memory',
+        '/help — Show this help message',
+        '',
+        'Or just send any message to chat with the agent.',
+      ].join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
+    logger.info(`Message from ${username} (${userId}): ${text.slice(0, 100)}`);
 
     // Show typing and keep refreshing it
     const typingInterval = setInterval(() => {
@@ -50,8 +85,8 @@ export function startBot(config, agent) {
     bot.sendChatAction(chatId, 'typing').catch(() => {});
 
     try {
-      const onUpdate = async (text) => {
-        const parts = splitMessage(text);
+      const onUpdate = async (update) => {
+        const parts = splitMessage(update);
         for (const part of parts) {
           try {
             await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
@@ -61,7 +96,7 @@ export function startBot(config, agent) {
         }
       };
 
-      const reply = await agent.processMessage(chatId, msg.text, {
+      const reply = await agent.processMessage(chatId, text, {
         id: userId,
         username,
       }, onUpdate);
