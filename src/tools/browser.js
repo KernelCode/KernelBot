@@ -10,8 +10,8 @@ const MAX_CONTENT_LENGTH = 15000;
 const MAX_SCREENSHOT_WIDTH = 1920;
 const MAX_SCREENSHOT_HEIGHT = 1080;
 const SCREENSHOTS_DIR = join(homedir(), '.kernelbot', 'screenshots');
+const SESSION_TTL = 180_000; // 3 minutes of inactivity
 
-// Blocklist to prevent abuse — internal/private network ranges and sensitive targets
 const BLOCKED_URL_PATTERNS = [
   /^https?:\/\/localhost/i,
   /^https?:\/\/127\./,
@@ -26,6 +26,96 @@ const BLOCKED_URL_PATTERNS = [
   /^data:/i,
 ];
 
+const BROWSER_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-extensions',
+  '--disable-background-networking',
+  '--disable-default-apps',
+  '--disable-sync',
+  '--no-first-run',
+];
+
+// ── Persistent Browser Session ──────────────────────────────────────────────
+
+let _browser = null;
+let _page = null; // persistent main page
+let _sessionTimer = null;
+
+async function ensureBrowser() {
+  if (_browser && _browser.connected) return _browser;
+  // Old browser died — clean up references
+  _page = null;
+  _browser = await puppeteer.launch({ headless: true, args: BROWSER_ARGS });
+  return _browser;
+}
+
+function resetSessionTimer() {
+  if (_sessionTimer) clearTimeout(_sessionTimer);
+  _sessionTimer = setTimeout(() => closeBrowserSession(), SESSION_TTL);
+}
+
+async function closeBrowserSession() {
+  if (_sessionTimer) { clearTimeout(_sessionTimer); _sessionTimer = null; }
+  if (_browser) {
+    await _browser.close().catch(() => {});
+    _browser = null;
+    _page = null;
+  }
+}
+
+async function setupPage(page) {
+  await page.setUserAgent(
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  );
+  await page.setViewport({ width: MAX_SCREENSHOT_WIDTH, height: MAX_SCREENSHOT_HEIGHT });
+}
+
+/**
+ * Get the persistent main page. If url is provided and differs from
+ * the current page URL, navigate to it. Reuses the same tab.
+ */
+async function getMainPage(url) {
+  resetSessionTimer();
+  const browser = await ensureBrowser();
+
+  if (_page) {
+    try {
+      await _page.title(); // probe — throws if page closed/crashed
+      if (url) {
+        const current = _page.url();
+        if (current !== url) {
+          await _page.goto(url, { waitUntil: 'networkidle2', timeout: NAVIGATION_TIMEOUT });
+        }
+      }
+      return _page;
+    } catch {
+      // Page is stale, recreate
+      _page = null;
+    }
+  }
+
+  _page = await browser.newPage();
+  await setupPage(_page);
+  if (url) {
+    await _page.goto(url, { waitUntil: 'networkidle2', timeout: NAVIGATION_TIMEOUT });
+  }
+  return _page;
+}
+
+/**
+ * Get a temporary page (for web_search). Auto-closed by caller.
+ */
+async function getTempPage() {
+  resetSessionTimer();
+  const browser = await ensureBrowser();
+  const page = await browser.newPage();
+  await setupPage(page);
+  return page;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function validateUrl(url) {
@@ -33,14 +123,12 @@ function validateUrl(url) {
     return { valid: false, error: 'URL is required' };
   }
 
-  // Block non-http protocols before auto-prepending https
   for (const pattern of BLOCKED_URL_PATTERNS) {
     if (pattern.test(url)) {
       return { valid: false, error: 'Access to internal/private network addresses or non-HTTP protocols is blocked' };
     }
   }
 
-  // Add https:// if no protocol specified
   if (!/^https?:\/\//i.test(url)) {
     url = 'https://' + url;
   }
@@ -51,7 +139,6 @@ function validateUrl(url) {
     return { valid: false, error: 'Invalid URL format' };
   }
 
-  // Check again after normalization (e.g., localhost without protocol)
   for (const pattern of BLOCKED_URL_PATTERNS) {
     if (pattern.test(url)) {
       return { valid: false, error: 'Access to internal/private network addresses is blocked' };
@@ -70,39 +157,61 @@ async function ensureScreenshotsDir() {
   await mkdir(SCREENSHOTS_DIR, { recursive: true });
 }
 
-async function withBrowser(fn) {
-  let browser;
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-extensions',
-        '--disable-background-networking',
-        '--disable-default-apps',
-        '--disable-sync',
-        '--no-first-run',
-      ],
-    });
-    return await fn(browser);
-  } finally {
-    if (browser) {
-      await browser.close().catch(() => {});
-    }
+function handleNavError(err, url) {
+  if (err.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
+    return { error: `Could not resolve hostname for: ${url}` };
   }
+  if (err.message.includes('Timeout')) {
+    return { error: `Page load timed out after ${NAVIGATION_TIMEOUT / 1000}s: ${url}` };
+  }
+  return { error: `Navigation failed: ${err.message}` };
 }
 
-async function navigateTo(page, url, waitUntil = 'networkidle2') {
-  await page.setUserAgent(
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-  );
-  await page.setViewport({ width: MAX_SCREENSHOT_WIDTH, height: MAX_SCREENSHOT_HEIGHT });
-  await page.goto(url, {
-    waitUntil,
-    timeout: NAVIGATION_TIMEOUT,
+/** Extract page content + links from a page. */
+async function extractPageContent(page) {
+  return page.evaluate(() => {
+    const title = document.title || '';
+    const metaDesc = document.querySelector('meta[name="description"]')?.content || '';
+    const canonicalUrl = document.querySelector('link[rel="canonical"]')?.href || window.location.href;
+
+    const headings = [];
+    for (const tag of ['h1', 'h2', 'h3']) {
+      document.querySelectorAll(tag).forEach((el) => {
+        const text = el.textContent.trim();
+        if (text) headings.push({ level: tag, text });
+      });
+    }
+
+    const contentSelectors = [
+      'article', 'main', '[role="main"]',
+      '.content', '.article', '.post',
+      '#content', '#main', '#article',
+    ];
+
+    let mainText = '';
+    for (const sel of contentSelectors) {
+      const el = document.querySelector(sel);
+      if (el) { mainText = el.innerText.trim(); break; }
+    }
+
+    if (!mainText) {
+      const clone = document.body.cloneNode(true);
+      for (const el of clone.querySelectorAll('script, style, nav, footer, header, aside, [role="navigation"]')) {
+        el.remove();
+      }
+      mainText = clone.innerText.trim();
+    }
+
+    const links = [];
+    document.querySelectorAll('a[href]').forEach((a) => {
+      const text = a.textContent.trim();
+      const href = a.href;
+      if (text && href && !href.startsWith('javascript:')) {
+        links.push({ text: text.slice(0, 100), href });
+      }
+    });
+
+    return { title, metaDesc, canonicalUrl, headings, mainText, links: links.slice(0, 50) };
   });
 }
 
@@ -131,7 +240,7 @@ export const definitions = [
   {
     name: 'browse_website',
     description:
-      'Navigate to a website URL and extract its content including title, headings, text, links, and metadata. Returns a structured summary of the page with navigation links. Handles JavaScript-rendered pages. After browsing, use the returned links to navigate deeper if needed.',
+      'Navigate to a URL and extract its content, headings, and links. The page stays open — subsequent calls to interact_with_page or extract_content reuse it instantly without reloading. Always returns navigation links so you can browse deeper.',
     input_schema: {
       type: 'object',
       properties: {
@@ -150,7 +259,7 @@ export const definitions = [
   {
     name: 'screenshot_website',
     description:
-      'Take a screenshot of a website and save it to disk. Returns the file path to the screenshot image. Supports full-page and viewport-only screenshots.',
+      'Take a screenshot of a website (or the current open page) and send it to chat. Reuses the open page if the URL matches.',
     input_schema: {
       type: 'object',
       properties: {
@@ -173,13 +282,13 @@ export const definitions = [
   {
     name: 'extract_content',
     description:
-      'Extract specific content from a webpage using CSS selectors. Returns the text or HTML content of matched elements. Useful for scraping structured data.',
+      'Extract specific content from the current page (or a new URL) using CSS selectors. Reuses the open page if URL matches. Great for pulling structured data like listings, prices, or tables.',
     input_schema: {
       type: 'object',
       properties: {
         url: {
           type: 'string',
-          description: 'The URL to extract content from',
+          description: 'The URL to extract content from (optional if a page is already open)',
         },
         selector: {
           type: 'string',
@@ -198,7 +307,7 @@ export const definitions = [
           description: 'Maximum number of elements to return (default: 20)',
         },
       },
-      required: ['url', 'selector'],
+      required: ['selector'],
     },
   },
   {
@@ -223,13 +332,13 @@ export const definitions = [
   {
     name: 'interact_with_page',
     description:
-      'Interact with a webpage by clicking elements, typing into inputs, scrolling, or executing JavaScript. Returns the page state after interaction.',
+      'Interact with the currently open page (or a new URL) — click elements, type into inputs, scroll, or run JS. The page stays open so you can chain multiple interactions. If no URL is given, operates on the page already open from browse_website. Returns page content after actions complete.',
     input_schema: {
       type: 'object',
       properties: {
         url: {
           type: 'string',
-          description: 'The URL to interact with',
+          description: 'URL to navigate to before interacting. Optional — omit to use the currently open page.',
         },
         actions: {
           type: 'array',
@@ -277,7 +386,7 @@ export const definitions = [
           description: 'Extract page content after performing actions (default: true)',
         },
       },
-      required: ['url', 'actions'],
+      required: ['actions'],
     },
   },
 ];
@@ -290,17 +399,18 @@ async function handleWebSearch(params) {
   }
 
   const numResults = Math.min(params.num_results || 8, 20);
+  const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(params.query)}`;
 
-  return withBrowser(async (browser) => {
-    const page = await browser.newPage();
-    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(params.query)}`;
+  let page;
+  try {
+    page = await getTempPage();
+    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+  } catch (err) {
+    if (page) await page.close().catch(() => {});
+    return { error: `Search failed: ${err.message}` };
+  }
 
-    try {
-      await navigateTo(page, searchUrl, 'domcontentloaded');
-    } catch (err) {
-      return { error: `Search failed: ${err.message}` };
-    }
-
+  try {
     const results = await page.evaluate((maxResults) => {
       const items = [];
       const resultElements = document.querySelectorAll('.result');
@@ -326,13 +436,10 @@ async function handleWebSearch(params) {
       return { success: true, query: params.query, results: [], message: 'No results found' };
     }
 
-    return {
-      success: true,
-      query: params.query,
-      result_count: results.length,
-      results,
-    };
-  });
+    return { success: true, query: params.query, result_count: results.length, results };
+  } finally {
+    await page.close().catch(() => {});
+  }
 }
 
 async function handleBrowse(params) {
@@ -340,99 +447,34 @@ async function handleBrowse(params) {
   if (!validation.valid) return { error: validation.error };
 
   const url = validation.url;
+  let page;
 
-  return withBrowser(async (browser) => {
-    const page = await browser.newPage();
+  try {
+    page = await getMainPage(url);
+  } catch (err) {
+    return handleNavError(err, url);
+  }
 
+  if (params.wait_for_selector) {
     try {
-      await navigateTo(page, url);
-    } catch (err) {
-      if (err.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
-        return { error: `Could not resolve hostname for: ${url}` };
-      }
-      if (err.message.includes('Timeout')) {
-        return { error: `Page load timed out after ${NAVIGATION_TIMEOUT / 1000}s: ${url}` };
-      }
-      return { error: `Navigation failed: ${err.message}` };
+      await page.waitForSelector(params.wait_for_selector, { timeout: 10000 });
+    } catch {
+      // Continue even if selector not found
     }
+  }
 
-    // Wait for optional selector
-    if (params.wait_for_selector) {
-      try {
-        await page.waitForSelector(params.wait_for_selector, { timeout: 10000 });
-      } catch {
-        // Continue even if selector not found
-      }
-    }
+  const content = await extractPageContent(page);
 
-    const content = await page.evaluate((includeLinks) => {
-      const title = document.title || '';
-      const metaDesc = document.querySelector('meta[name="description"]')?.content || '';
-      const canonicalUrl = document.querySelector('link[rel="canonical"]')?.href || window.location.href;
-
-      // Extract headings
-      const headings = [];
-      for (const tag of ['h1', 'h2', 'h3']) {
-        document.querySelectorAll(tag).forEach((el) => {
-          const text = el.textContent.trim();
-          if (text) headings.push({ level: tag, text });
-        });
-      }
-
-      // Extract main text content
-      // Prefer common article/content containers
-      const contentSelectors = [
-        'article', 'main', '[role="main"]',
-        '.content', '.article', '.post',
-        '#content', '#main', '#article',
-      ];
-
-      let mainText = '';
-      for (const sel of contentSelectors) {
-        const el = document.querySelector(sel);
-        if (el) {
-          mainText = el.innerText.trim();
-          break;
-        }
-      }
-
-      // Fall back to body text if no content container found
-      if (!mainText) {
-        // Remove script, style, nav, footer, header noise
-        const clone = document.body.cloneNode(true);
-        for (const el of clone.querySelectorAll('script, style, nav, footer, header, aside, [role="navigation"]')) {
-          el.remove();
-        }
-        mainText = clone.innerText.trim();
-      }
-
-      // Extract links if requested
-      let links = [];
-      if (includeLinks) {
-        document.querySelectorAll('a[href]').forEach((a) => {
-          const text = a.textContent.trim();
-          const href = a.href;
-          if (text && href && !href.startsWith('javascript:')) {
-            links.push({ text: text.slice(0, 100), href });
-          }
-        });
-        links = links.slice(0, 50);
-      }
-
-      return { title, metaDesc, canonicalUrl, headings, mainText, links };
-    }, true);
-
-    return {
-      success: true,
-      url: page.url(),
-      title: content.title,
-      meta_description: content.metaDesc,
-      canonical_url: content.canonicalUrl,
-      headings: content.headings.slice(0, 30),
-      content: truncate(content.mainText),
-      links: content.links || [],
-    };
-  });
+  return {
+    success: true,
+    url: page.url(),
+    title: content.title,
+    meta_description: content.metaDesc,
+    canonical_url: content.canonicalUrl,
+    headings: content.headings.slice(0, 30),
+    content: truncate(content.mainText),
+    links: content.links || [],
+  };
 }
 
 async function handleScreenshot(params, context) {
@@ -442,155 +484,144 @@ async function handleScreenshot(params, context) {
   const url = validation.url;
   await ensureScreenshotsDir();
 
-  return withBrowser(async (browser) => {
-    const page = await browser.newPage();
+  let page;
+  try {
+    page = await getMainPage(url);
+  } catch (err) {
+    return handleNavError(err, url);
+  }
 
+  const timestamp = Date.now();
+  const safeName = new URL(url).hostname.replace(/[^a-z0-9.-]/gi, '_');
+  const filename = `${safeName}_${timestamp}.png`;
+  const filepath = join(SCREENSHOTS_DIR, filename);
+
+  const screenshotOptions = { path: filepath, type: 'png' };
+
+  if (params.selector) {
     try {
-      await navigateTo(page, url);
+      const element = await page.$(params.selector);
+      if (!element) {
+        return { error: `Element not found for selector: ${params.selector}` };
+      }
+      await element.screenshot(screenshotOptions);
     } catch (err) {
-      if (err.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
-        return { error: `Could not resolve hostname for: ${url}` };
-      }
-      if (err.message.includes('Timeout')) {
-        return { error: `Page load timed out after ${NAVIGATION_TIMEOUT / 1000}s: ${url}` };
-      }
-      return { error: `Navigation failed: ${err.message}` };
+      return { error: `Failed to screenshot element: ${err.message}` };
     }
+  } else {
+    screenshotOptions.fullPage = params.full_page || false;
+    await page.screenshot(screenshotOptions);
+  }
 
-    const timestamp = Date.now();
-    const safeName = new URL(url).hostname.replace(/[^a-z0-9.-]/gi, '_');
-    const filename = `${safeName}_${timestamp}.png`;
-    const filepath = join(SCREENSHOTS_DIR, filename);
+  const title = await page.title();
 
-    const screenshotOptions = {
-      path: filepath,
-      type: 'png',
-    };
-
-    if (params.selector) {
-      try {
-        const element = await page.$(params.selector);
-        if (!element) {
-          return { error: `Element not found for selector: ${params.selector}` };
-        }
-        await element.screenshot(screenshotOptions);
-      } catch (err) {
-        return { error: `Failed to screenshot element: ${err.message}` };
-      }
-    } else {
-      screenshotOptions.fullPage = params.full_page || false;
-      await page.screenshot(screenshotOptions);
+  if (context?.sendPhoto) {
+    try {
+      await context.sendPhoto(filepath, `📸 ${title || url}`);
+    } catch {
+      // Photo sending is best-effort
     }
+  }
 
-    const title = await page.title();
-
-    // Send the screenshot directly to Telegram chat
-    if (context?.sendPhoto) {
-      try {
-        await context.sendPhoto(filepath, `📸 ${title || url}`);
-      } catch {
-        // Photo sending is best-effort; don't fail the tool
-      }
-    }
-
-    return {
-      success: true,
-      url: page.url(),
-      title,
-      screenshot_path: filepath,
-      filename,
-      sent_to_chat: !!context?.sendPhoto,
-    };
-  });
+  return {
+    success: true,
+    url: page.url(),
+    title,
+    screenshot_path: filepath,
+    filename,
+    sent_to_chat: !!context?.sendPhoto,
+  };
 }
 
 async function handleExtract(params) {
-  const validation = validateUrl(params.url);
-  if (!validation.valid) return { error: validation.error };
+  // URL is optional — if not given, use the current open page
+  let url = null;
+  if (params.url) {
+    const validation = validateUrl(params.url);
+    if (!validation.valid) return { error: validation.error };
+    url = validation.url;
+  }
 
-  const url = validation.url;
   const limit = Math.min(params.limit || 20, 100);
 
-  return withBrowser(async (browser) => {
-    const page = await browser.newPage();
+  let page;
+  try {
+    page = await getMainPage(url);
+  } catch (err) {
+    return handleNavError(err, url);
+  }
 
-    try {
-      await navigateTo(page, url);
-    } catch (err) {
-      if (err.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
-        return { error: `Could not resolve hostname for: ${url}` };
-      }
-      if (err.message.includes('Timeout')) {
-        return { error: `Page load timed out after ${NAVIGATION_TIMEOUT / 1000}s: ${url}` };
-      }
-      return { error: `Navigation failed: ${err.message}` };
-    }
+  // If no URL and no page was open, we can't extract
+  if (!url && page.url() === 'about:blank') {
+    return { error: 'No page is currently open. Provide a URL or use browse_website first.' };
+  }
 
-    const results = await page.evaluate(
-      (selector, attribute, includeHtml, maxItems) => {
-        const elements = document.querySelectorAll(selector);
-        if (elements.length === 0) return { found: 0, items: [] };
+  const results = await page.evaluate(
+    (selector, attribute, includeHtml, maxItems) => {
+      const elements = document.querySelectorAll(selector);
+      if (elements.length === 0) return { found: 0, items: [] };
 
-        const items = [];
-        for (let i = 0; i < Math.min(elements.length, maxItems); i++) {
-          const el = elements[i];
-          const item = {};
+      const items = [];
+      for (let i = 0; i < Math.min(elements.length, maxItems); i++) {
+        const el = elements[i];
+        const item = {};
 
-          if (attribute) {
-            item.value = el.getAttribute(attribute) || null;
-          } else {
-            item.text = el.innerText?.trim() || el.textContent?.trim() || '';
-          }
-
-          if (includeHtml) {
-            item.html = el.outerHTML;
-          }
-
-          item.tag = el.tagName.toLowerCase();
-          items.push(item);
+        if (attribute) {
+          item.value = el.getAttribute(attribute) || null;
+        } else {
+          item.text = el.innerText?.trim() || el.textContent?.trim() || '';
         }
 
-        return { found: elements.length, items };
-      },
-      params.selector,
-      params.attribute || null,
-      params.include_html || false,
-      limit
-    );
+        if (includeHtml) {
+          item.html = el.outerHTML;
+        }
 
-    if (results.found === 0) {
-      return {
-        success: true,
-        url: page.url(),
-        selector: params.selector,
-        found: 0,
-        items: [],
-        message: `No elements found matching selector: ${params.selector}`,
-      };
-    }
+        item.tag = el.tagName.toLowerCase();
+        items.push(item);
+      }
 
-    // Truncate individual items to prevent massive responses
-    for (const item of results.items) {
-      if (item.text) item.text = truncate(item.text, 2000);
-      if (item.html) item.html = truncate(item.html, 3000);
-    }
+      return { found: elements.length, items };
+    },
+    params.selector,
+    params.attribute || null,
+    params.include_html || false,
+    limit,
+  );
 
+  if (results.found === 0) {
     return {
       success: true,
       url: page.url(),
       selector: params.selector,
-      found: results.found,
-      returned: results.items.length,
-      items: results.items,
+      found: 0,
+      items: [],
+      message: `No elements found matching selector: ${params.selector}`,
     };
-  });
+  }
+
+  for (const item of results.items) {
+    if (item.text) item.text = truncate(item.text, 2000);
+    if (item.html) item.html = truncate(item.html, 3000);
+  }
+
+  return {
+    success: true,
+    url: page.url(),
+    selector: params.selector,
+    found: results.found,
+    returned: results.items.length,
+    items: results.items,
+  };
 }
 
 async function handleInteract(params) {
-  const validation = validateUrl(params.url);
-  if (!validation.valid) return { error: validation.error };
-
-  const url = validation.url;
+  // URL is optional — if not given, use the current open page
+  let url = null;
+  if (params.url) {
+    const validation = validateUrl(params.url);
+    if (!validation.valid) return { error: validation.error };
+    url = validation.url;
+  }
 
   if (!params.actions || params.actions.length === 0) {
     return { error: 'At least one action is required' };
@@ -600,7 +631,6 @@ async function handleInteract(params) {
     return { error: 'Maximum 10 actions per request' };
   }
 
-  // Block dangerous evaluate scripts
   for (const action of params.actions) {
     if (action.type === 'evaluate' && action.script) {
       const blocked = /fetch\s*\(|XMLHttpRequest|window\.location\s*=|document\.cookie|localStorage|sessionStorage/i;
@@ -610,105 +640,99 @@ async function handleInteract(params) {
     }
   }
 
-  return withBrowser(async (browser) => {
-    const page = await browser.newPage();
+  let page;
+  try {
+    page = await getMainPage(url);
+  } catch (err) {
+    return handleNavError(err, url);
+  }
 
+  if (!url && page.url() === 'about:blank') {
+    return { error: 'No page is currently open. Provide a URL or use browse_website first.' };
+  }
+
+  const actionResults = [];
+
+  for (const action of params.actions) {
     try {
-      await navigateTo(page, url);
+      switch (action.type) {
+        case 'click': {
+          if (!action.selector) {
+            actionResults.push({ action: 'click', error: 'selector is required' });
+            break;
+          }
+          await page.waitForSelector(action.selector, { timeout: 5000 });
+          await page.click(action.selector);
+          // Wait for navigation or rendering to settle
+          await page.waitForNetworkIdle({ timeout: 5000 }).catch(() => {});
+          actionResults.push({ action: 'click', selector: action.selector, success: true, navigated_to: page.url() });
+          break;
+        }
+
+        case 'type': {
+          if (!action.selector || !action.text) {
+            actionResults.push({ action: 'type', error: 'selector and text are required' });
+            break;
+          }
+          await page.waitForSelector(action.selector, { timeout: 5000 });
+          await page.type(action.selector, action.text);
+          actionResults.push({ action: 'type', selector: action.selector, success: true });
+          break;
+        }
+
+        case 'scroll': {
+          const direction = action.direction || 'down';
+          const pixels = Math.min(action.pixels || 500, 5000);
+          const scrollAmount = direction === 'up' ? -pixels : pixels;
+          await page.evaluate((amount) => window.scrollBy(0, amount), scrollAmount);
+          actionResults.push({ action: 'scroll', direction, pixels, success: true });
+          break;
+        }
+
+        case 'wait': {
+          const ms = Math.min(action.milliseconds || 1000, 10000);
+          await new Promise((r) => setTimeout(r, ms));
+          actionResults.push({ action: 'wait', milliseconds: ms, success: true });
+          break;
+        }
+
+        case 'evaluate': {
+          if (!action.script) {
+            actionResults.push({ action: 'evaluate', error: 'script is required' });
+            break;
+          }
+          const result = await page.evaluate(action.script);
+          actionResults.push({ action: 'evaluate', success: true, result: String(result).slice(0, 2000) });
+          break;
+        }
+
+        default:
+          actionResults.push({ action: action.type, error: `Unknown action type: ${action.type}` });
+      }
     } catch (err) {
-      if (err.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
-        return { error: `Could not resolve hostname for: ${url}` };
-      }
-      if (err.message.includes('Timeout')) {
-        return { error: `Page load timed out after ${NAVIGATION_TIMEOUT / 1000}s: ${url}` };
-      }
-      return { error: `Navigation failed: ${err.message}` };
+      actionResults.push({ action: action.type, error: err.message });
     }
+  }
 
-    const actionResults = [];
+  const response = {
+    success: true,
+    url: page.url(),
+    title: await page.title(),
+    actions: actionResults,
+  };
 
-    for (const action of params.actions) {
-      try {
-        switch (action.type) {
-          case 'click': {
-            if (!action.selector) {
-              actionResults.push({ action: 'click', error: 'selector is required' });
-              break;
-            }
-            await page.waitForSelector(action.selector, { timeout: 5000 });
-            await page.click(action.selector);
-            // Brief wait for any navigation or rendering
-            await new Promise((r) => setTimeout(r, 500));
-            actionResults.push({ action: 'click', selector: action.selector, success: true });
-            break;
-          }
-
-          case 'type': {
-            if (!action.selector || !action.text) {
-              actionResults.push({ action: 'type', error: 'selector and text are required' });
-              break;
-            }
-            await page.waitForSelector(action.selector, { timeout: 5000 });
-            await page.type(action.selector, action.text);
-            actionResults.push({ action: 'type', selector: action.selector, success: true });
-            break;
-          }
-
-          case 'scroll': {
-            const direction = action.direction || 'down';
-            const pixels = Math.min(action.pixels || 500, 5000);
-            const scrollAmount = direction === 'up' ? -pixels : pixels;
-            await page.evaluate((amount) => window.scrollBy(0, amount), scrollAmount);
-            actionResults.push({ action: 'scroll', direction, pixels, success: true });
-            break;
-          }
-
-          case 'wait': {
-            const ms = Math.min(action.milliseconds || 1000, 10000);
-            await new Promise((r) => setTimeout(r, ms));
-            actionResults.push({ action: 'wait', milliseconds: ms, success: true });
-            break;
-          }
-
-          case 'evaluate': {
-            if (!action.script) {
-              actionResults.push({ action: 'evaluate', error: 'script is required' });
-              break;
-            }
-            const result = await page.evaluate(action.script);
-            actionResults.push({ action: 'evaluate', success: true, result: String(result).slice(0, 2000) });
-            break;
-          }
-
-          default:
-            actionResults.push({ action: action.type, error: `Unknown action type: ${action.type}` });
-        }
-      } catch (err) {
-        actionResults.push({ action: action.type, error: err.message });
+  if (params.extract_after !== false) {
+    const text = await page.evaluate(() => {
+      const clone = document.body.cloneNode(true);
+      for (const el of clone.querySelectorAll('script, style, nav, footer, header')) {
+        el.remove();
       }
-    }
+      return clone.innerText.trim();
+    });
+    response.content = truncate(text);
+  }
 
-    const response = {
-      success: true,
-      url: page.url(),
-      title: await page.title(),
-      actions: actionResults,
-    };
-
-    // Extract content after interactions unless disabled
-    if (params.extract_after !== false) {
-      const text = await page.evaluate(() => {
-        const clone = document.body.cloneNode(true);
-        for (const el of clone.querySelectorAll('script, style, nav, footer, header')) {
-          el.remove();
-        }
-        return clone.innerText.trim();
-      });
-      response.content = truncate(text);
-    }
-
-    return response;
-  });
+  return response;
 }
 
 async function handleSendImage(params, context) {
@@ -716,7 +740,6 @@ async function handleSendImage(params, context) {
     return { error: 'file_path is required' };
   }
 
-  // Verify the file exists
   try {
     await access(params.file_path);
   } catch {
