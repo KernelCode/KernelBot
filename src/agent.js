@@ -386,8 +386,8 @@ export class Agent {
     const logger = getLogger();
 
     if (!this.personaManager || !user?.id) return;
-    // Skip very short messages unlikely to contain persona info
-    if (!userMessage || userMessage.trim().length < 10) return;
+    // Skip empty or trivially short messages (e.g. "ok", "y")
+    if (!userMessage || userMessage.trim().length < 3) return;
 
     const currentPersona = this.personaManager.load(user.id, user.username);
 
