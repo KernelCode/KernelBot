@@ -11,7 +11,7 @@ export const TOOL_CATEGORIES = {
   process: ['process_list', 'kill_process', 'service_control'],
   monitor: ['disk_usage', 'memory_usage', 'cpu_usage', 'system_logs'],
   network: ['check_port', 'curl_url', 'nginx_reload'],
-  browser: ['browse_website', 'screenshot_website', 'extract_content', 'send_image', 'interact_with_page'],
+  browser: ['web_search', 'browse_website', 'screenshot_website', 'extract_content', 'send_image', 'interact_with_page'],
   jira: ['jira_get_ticket', 'jira_search_tickets', 'jira_list_my_tickets', 'jira_get_project_tickets'],
 };
 
@@ -23,7 +23,7 @@ const CATEGORY_KEYWORDS = {
   process: ['process', 'kill', 'restart', 'service', 'daemon', 'systemctl', 'pid'],
   monitor: ['disk', 'memory', 'cpu', 'usage', 'monitor', 'logs', 'status', 'health', 'space'],
   network: ['port', 'curl', 'http', 'nginx', 'network', 'api', 'endpoint', 'request', 'url', 'fetch'],
-  browser: ['browse', 'screenshot', 'scrape', 'website', 'web page', 'webpage', 'extract content', 'html', 'css selector'],
+  browser: ['search', 'find', 'look up', 'browse', 'screenshot', 'scrape', 'website', 'web page', 'webpage', 'extract content', 'html', 'css selector'],
   jira: ['jira', 'ticket', 'issue', 'sprint', 'backlog', 'story', 'epic'],
 };
 

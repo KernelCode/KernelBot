@@ -110,9 +110,28 @@ async function navigateTo(page, url, waitUntil = 'networkidle2') {
 
 export const definitions = [
   {
+    name: 'web_search',
+    description:
+      'Search the web using DuckDuckGo and return a list of results with titles, snippets, and URLs. Use this FIRST when asked to search, find, or look up anything on the web. Then use browse_website to visit specific result URLs for details.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'The search query (e.g., "top cars haraj market", "best restaurants in dubai")',
+        },
+        num_results: {
+          type: 'number',
+          description: 'Number of results to return (default: 8, max: 20)',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
     name: 'browse_website',
     description:
-      'Navigate to a website URL and extract its content including title, headings, text, links, and metadata. Returns a structured summary of the page. Handles JavaScript-rendered pages.',
+      'Navigate to a website URL and extract its content including title, headings, text, links, and metadata. Returns a structured summary of the page with navigation links. Handles JavaScript-rendered pages. After browsing, use the returned links to navigate deeper if needed.',
     input_schema: {
       type: 'object',
       properties: {
@@ -123,10 +142,6 @@ export const definitions = [
         wait_for_selector: {
           type: 'string',
           description: 'Optional CSS selector to wait for before extracting content (useful for JS-heavy pages)',
-        },
-        include_links: {
-          type: 'boolean',
-          description: 'Include links found on the page (default: false)',
         },
       },
       required: ['url'],
@@ -269,6 +284,57 @@ export const definitions = [
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
+async function handleWebSearch(params) {
+  if (!params.query || typeof params.query !== 'string') {
+    return { error: 'query is required' };
+  }
+
+  const numResults = Math.min(params.num_results || 8, 20);
+
+  return withBrowser(async (browser) => {
+    const page = await browser.newPage();
+    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(params.query)}`;
+
+    try {
+      await navigateTo(page, searchUrl, 'domcontentloaded');
+    } catch (err) {
+      return { error: `Search failed: ${err.message}` };
+    }
+
+    const results = await page.evaluate((maxResults) => {
+      const items = [];
+      const resultElements = document.querySelectorAll('.result');
+      for (let i = 0; i < Math.min(resultElements.length, maxResults); i++) {
+        const el = resultElements[i];
+        const titleEl = el.querySelector('.result__title a, .result__a');
+        const snippetEl = el.querySelector('.result__snippet');
+        const urlEl = el.querySelector('.result__url');
+
+        if (titleEl) {
+          items.push({
+            title: titleEl.textContent.trim(),
+            url: titleEl.href || '',
+            snippet: snippetEl ? snippetEl.textContent.trim() : '',
+            displayed_url: urlEl ? urlEl.textContent.trim() : '',
+          });
+        }
+      }
+      return items;
+    }, numResults);
+
+    if (results.length === 0) {
+      return { success: true, query: params.query, results: [], message: 'No results found' };
+    }
+
+    return {
+      success: true,
+      query: params.query,
+      result_count: results.length,
+      results,
+    };
+  });
+}
+
 async function handleBrowse(params) {
   const validation = validateUrl(params.url);
   if (!validation.valid) return { error: validation.error };
@@ -354,7 +420,7 @@ async function handleBrowse(params) {
       }
 
       return { title, metaDesc, canonicalUrl, headings, mainText, links };
-    }, params.include_links || false);
+    }, true);
 
     return {
       success: true,
@@ -672,6 +738,7 @@ async function handleSendImage(params, context) {
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export const handlers = {
+  web_search: handleWebSearch,
   browse_website: handleBrowse,
   screenshot_website: handleScreenshot,
   extract_content: handleExtract,
