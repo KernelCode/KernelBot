@@ -145,9 +145,10 @@ export class OpenAICompatProvider extends BaseProvider {
       params.tools = convertedTools;
     }
 
-    if (signal) params.signal = signal;
+    const requestOpts = {};
+    if (signal) requestOpts.signal = signal;
 
-    const response = await this.client.chat.completions.create(params);
+    const response = await this.client.chat.completions.create(params, requestOpts);
     return this._normalizeResponse(response);
   }
 
