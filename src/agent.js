@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { createProvider } from './providers/index.js';
 import { toolDefinitions, executeTool, checkConfirmation } from './tools/index.js';
 import { getSystemPrompt } from './prompts/system.js';
 import { getLogger } from './utils/logger.js';
@@ -8,7 +8,7 @@ export class Agent {
   constructor({ config, conversationManager }) {
     this.config = config;
     this.conversationManager = conversationManager;
-    this.client = new Anthropic({ apiKey: config.anthropic.api_key });
+    this.provider = createProvider(config);
     this.systemPrompt = getSystemPrompt(config);
     this._pending = new Map(); // chatId -> pending state
   }
@@ -33,7 +33,7 @@ export class Agent {
       }
     }
 
-    const { max_tool_depth } = this.config.anthropic;
+    const { max_tool_depth } = this.config.brain;
 
     // Add user message to persistent history
     this.conversationManager.addMessage(chatId, 'user', userMessage);
@@ -160,7 +160,7 @@ export class Agent {
     }
 
     pending.messages.push({ role: 'user', content: pending.toolResults });
-    const { max_tool_depth } = this.config.anthropic;
+    const { max_tool_depth } = this.config.brain;
     return await this._runLoop(chatId, pending.messages, user, 0, max_tool_depth);
   }
 
@@ -203,56 +203,44 @@ export class Agent {
 
   async _runLoop(chatId, messages, user, startDepth, maxDepth) {
     const logger = getLogger();
-    const { model, max_tokens, temperature } = this.config.anthropic;
 
     for (let depth = startDepth; depth < maxDepth; depth++) {
       logger.debug(`Agent loop iteration ${depth + 1}/${maxDepth}`);
 
-      const response = await this.client.messages.create({
-        model,
-        max_tokens,
-        temperature,
+      const response = await this.provider.chat({
         system: this.systemPrompt,
-        tools: toolDefinitions,
         messages,
+        tools: toolDefinitions,
       });
 
-      if (response.stop_reason === 'end_turn') {
-        const textBlocks = response.content
-          .filter((b) => b.type === 'text')
-          .map((b) => b.text);
-        const reply = textBlocks.join('\n');
-
+      if (response.stopReason === 'end_turn') {
+        const reply = response.text || '';
         this.conversationManager.addMessage(chatId, 'assistant', reply);
         return reply;
       }
 
-      if (response.stop_reason === 'tool_use') {
-        messages.push({ role: 'assistant', content: response.content });
+      if (response.stopReason === 'tool_use') {
+        messages.push({ role: 'assistant', content: response.rawContent });
 
-        // Send Claude's thinking text to the user
-        const thinkingBlocks = response.content.filter((b) => b.type === 'text' && b.text.trim());
-        if (thinkingBlocks.length > 0) {
-          const thinking = thinkingBlocks.map((b) => b.text).join('\n');
-          logger.info(`Agent thinking: ${thinking.slice(0, 200)}`);
-          await this._sendUpdate(`💭 ${thinking}`);
+        // Send thinking text to the user
+        if (response.text && response.text.trim()) {
+          logger.info(`Agent thinking: ${response.text.slice(0, 200)}`);
+          await this._sendUpdate(`💭 ${response.text}`);
         }
 
-        const toolUseBlocks = response.content.filter((b) => b.type === 'tool_use');
         const toolResults = [];
 
-        for (let i = 0; i < toolUseBlocks.length; i++) {
-          const block = toolUseBlocks[i];
+        for (let i = 0; i < response.toolCalls.length; i++) {
+          const block = response.toolCalls[i];
+
+          // Build a block-like object for _checkPause (needs .type for remainingBlocks filter)
+          const blockObj = { type: 'tool_use', id: block.id, name: block.name, input: block.input };
 
           // Check if we need to pause (missing cred or dangerous action)
-          const pauseMsg = this._checkPause(
-            chatId,
-            block,
-            user,
-            toolResults,
-            toolUseBlocks.slice(i + 1),
-            messages,
-          );
+          const remaining = response.toolCalls.slice(i + 1).map((tc) => ({
+            type: 'tool_use', id: tc.id, name: tc.name, input: tc.input,
+          }));
+          const pauseMsg = this._checkPause(chatId, blockObj, user, toolResults, remaining, messages);
           if (pauseMsg) return pauseMsg;
 
           const summary = this._formatToolSummary(block.name, block.input);
@@ -278,14 +266,10 @@ export class Agent {
       }
 
       // Unexpected stop reason
-      logger.warn(`Unexpected stop_reason: ${response.stop_reason}`);
-      const fallbackText = response.content
-        .filter((b) => b.type === 'text')
-        .map((b) => b.text)
-        .join('\n');
-      if (fallbackText) {
-        this.conversationManager.addMessage(chatId, 'assistant', fallbackText);
-        return fallbackText;
+      logger.warn(`Unexpected stopReason: ${response.stopReason}`);
+      if (response.text) {
+        this.conversationManager.addMessage(chatId, 'assistant', response.text);
+        return response.text;
       }
       return 'Something went wrong — unexpected response from the model.';
     }

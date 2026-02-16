@@ -5,13 +5,15 @@ import { createInterface } from 'readline';
 import yaml from 'js-yaml';
 import dotenv from 'dotenv';
 import chalk from 'chalk';
+import { PROVIDERS } from '../providers/models.js';
 
 const DEFAULTS = {
   bot: {
     name: 'KernelBot',
     description: 'AI engineering agent with full OS control',
   },
-  anthropic: {
+  brain: {
+    provider: 'anthropic',
     model: 'claude-sonnet-4-20250514',
     max_tokens: 8192,
     temperature: 0.3,
@@ -90,9 +92,126 @@ function ask(rl, question) {
   return new Promise((res) => rl.question(question, res));
 }
 
+/**
+ * Migrate legacy `anthropic` config section → `brain` section.
+ */
+function migrateAnthropicConfig(config) {
+  if (config.anthropic && !config.brain) {
+    config.brain = {
+      provider: 'anthropic',
+      model: config.anthropic.model || DEFAULTS.brain.model,
+      max_tokens: config.anthropic.max_tokens || DEFAULTS.brain.max_tokens,
+      temperature: config.anthropic.temperature ?? DEFAULTS.brain.temperature,
+      max_tool_depth: config.anthropic.max_tool_depth || DEFAULTS.brain.max_tool_depth,
+    };
+    if (config.anthropic.api_key) {
+      config.brain.api_key = config.anthropic.api_key;
+    }
+  }
+  return config;
+}
+
+/**
+ * Interactive provider → model picker.
+ */
+export async function promptProviderSelection(rl) {
+  const providerKeys = Object.keys(PROVIDERS);
+
+  console.log(chalk.bold('\n  Select AI provider:\n'));
+  providerKeys.forEach((key, i) => {
+    console.log(`  ${chalk.cyan(`${i + 1}.`)} ${PROVIDERS[key].name}`);
+  });
+  console.log('');
+
+  let providerIdx;
+  while (true) {
+    const input = await ask(rl, chalk.cyan('  Provider (number): '));
+    providerIdx = parseInt(input.trim(), 10) - 1;
+    if (providerIdx >= 0 && providerIdx < providerKeys.length) break;
+    console.log(chalk.dim('  Invalid choice, try again.'));
+  }
+
+  const providerKey = providerKeys[providerIdx];
+  const provider = PROVIDERS[providerKey];
+
+  console.log(chalk.bold(`\n  Select model for ${provider.name}:\n`));
+  provider.models.forEach((m, i) => {
+    console.log(`  ${chalk.cyan(`${i + 1}.`)} ${m.label} (${m.id})`);
+  });
+  console.log('');
+
+  let modelIdx;
+  while (true) {
+    const input = await ask(rl, chalk.cyan('  Model (number): '));
+    modelIdx = parseInt(input.trim(), 10) - 1;
+    if (modelIdx >= 0 && modelIdx < provider.models.length) break;
+    console.log(chalk.dim('  Invalid choice, try again.'));
+  }
+
+  const model = provider.models[modelIdx];
+  return { providerKey, modelId: model.id };
+}
+
+/**
+ * Save provider and model to config.yaml.
+ */
+export function saveProviderToYaml(providerKey, modelId) {
+  const configDir = getConfigDir();
+  mkdirSync(configDir, { recursive: true });
+  const configPath = join(configDir, 'config.yaml');
+
+  let existing = {};
+  if (existsSync(configPath)) {
+    existing = yaml.load(readFileSync(configPath, 'utf-8')) || {};
+  }
+
+  existing.brain = {
+    ...(existing.brain || {}),
+    provider: providerKey,
+    model: modelId,
+  };
+
+  // Remove legacy anthropic section if migrating
+  delete existing.anthropic;
+
+  writeFileSync(configPath, yaml.dump(existing, { lineWidth: -1 }));
+  return configPath;
+}
+
+/**
+ * Full interactive flow: change brain model + optionally enter API key.
+ */
+export async function changeBrainModel(config, rl) {
+  const { providerKey, modelId } = await promptProviderSelection(rl);
+
+  const providerDef = PROVIDERS[providerKey];
+  const savedPath = saveProviderToYaml(providerKey, modelId);
+  console.log(chalk.dim(`\n  Saved to ${savedPath}`));
+
+  // Update live config
+  config.brain.provider = providerKey;
+  config.brain.model = modelId;
+
+  // Check if we have the API key for this provider
+  const envKey = providerDef.envKey;
+  const currentKey = process.env[envKey];
+  if (!currentKey) {
+    const key = await ask(rl, chalk.cyan(`\n  ${providerDef.name} API key (${envKey}): `));
+    if (key.trim()) {
+      saveCredential(config, envKey, key.trim());
+      config.brain.api_key = key.trim();
+      console.log(chalk.dim('  Saved.\n'));
+    }
+  } else {
+    config.brain.api_key = currentKey;
+  }
+
+  return config;
+}
+
 async function promptForMissing(config) {
   const missing = [];
-  if (!config.anthropic.api_key) missing.push('ANTHROPIC_API_KEY');
+  if (!config.brain.api_key) missing.push('brain_api_key');
   if (!config.telegram.bot_token) missing.push('TELEGRAM_BOT_TOKEN');
 
   if (missing.length === 0) return config;
@@ -110,10 +229,19 @@ async function promptForMissing(config) {
     existingEnv = readFileSync(envPath, 'utf-8');
   }
 
-  if (!mutableConfig.anthropic.api_key) {
-    const key = await ask(rl, chalk.cyan('  Anthropic API key: '));
-    mutableConfig.anthropic.api_key = key.trim();
-    envLines.push(`ANTHROPIC_API_KEY=${key.trim()}`);
+  if (!mutableConfig.brain.api_key) {
+    // Run provider selection flow
+    const { providerKey, modelId } = await promptProviderSelection(rl);
+    mutableConfig.brain.provider = providerKey;
+    mutableConfig.brain.model = modelId;
+    saveProviderToYaml(providerKey, modelId);
+
+    const providerDef = PROVIDERS[providerKey];
+    const envKey = providerDef.envKey;
+
+    const key = await ask(rl, chalk.cyan(`\n  ${providerDef.name} API key: `));
+    mutableConfig.brain.api_key = key.trim();
+    envLines.push(`${envKey}=${key.trim()}`);
   }
 
   if (!mutableConfig.telegram.bot_token) {
@@ -164,12 +292,21 @@ export function loadConfig() {
     fileConfig = yaml.load(raw) || {};
   }
 
+  // Backward compat: migrate anthropic → brain
+  migrateAnthropicConfig(fileConfig);
+
   const config = deepMerge(DEFAULTS, fileConfig);
 
-  // Overlay env vars for secrets
-  if (process.env.ANTHROPIC_API_KEY) {
-    config.anthropic.api_key = process.env.ANTHROPIC_API_KEY;
+  // Overlay env vars for brain API key based on provider
+  const providerDef = PROVIDERS[config.brain.provider];
+  if (providerDef && process.env[providerDef.envKey]) {
+    config.brain.api_key = process.env[providerDef.envKey];
   }
+  // Legacy fallback: ANTHROPIC_API_KEY for anthropic provider
+  if (config.brain.provider === 'anthropic' && !config.brain.api_key && process.env.ANTHROPIC_API_KEY) {
+    config.brain.api_key = process.env.ANTHROPIC_API_KEY;
+  }
+
   if (process.env.TELEGRAM_BOT_TOKEN) {
     config.telegram.bot_token = process.env.TELEGRAM_BOT_TOKEN;
   }
@@ -221,7 +358,16 @@ export function saveCredential(config, envKey, value) {
       config.github.token = value;
       break;
     case 'ANTHROPIC_API_KEY':
-      config.anthropic.api_key = value;
+      if (config.brain.provider === 'anthropic') config.brain.api_key = value;
+      break;
+    case 'OPENAI_API_KEY':
+      if (config.brain.provider === 'openai') config.brain.api_key = value;
+      break;
+    case 'GOOGLE_API_KEY':
+      if (config.brain.provider === 'google') config.brain.api_key = value;
+      break;
+    case 'GROQ_API_KEY':
+      if (config.brain.provider === 'groq') config.brain.api_key = value;
       break;
     case 'TELEGRAM_BOT_TOKEN':
       config.telegram.bot_token = value;

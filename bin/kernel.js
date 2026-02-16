@@ -9,7 +9,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import chalk from 'chalk';
-import { loadConfig, loadConfigInteractive } from '../src/utils/config.js';
+import { loadConfig, loadConfigInteractive, changeBrainModel } from '../src/utils/config.js';
 import { createLogger, getLogger } from '../src/utils/logger.js';
 import {
   showLogo,
@@ -21,16 +21,23 @@ import { createAuditLogger } from '../src/security/audit.js';
 import { ConversationManager } from '../src/conversation.js';
 import { Agent } from '../src/agent.js';
 import { startBot } from '../src/bot.js';
-import Anthropic from '@anthropic-ai/sdk';
+import { createProvider, PROVIDERS } from '../src/providers/index.js';
 
-function showMenu() {
+function showMenu(config) {
+  const providerDef = PROVIDERS[config.brain.provider];
+  const providerName = providerDef ? providerDef.name : config.brain.provider;
+  const modelId = config.brain.model;
+
+  console.log('');
+  console.log(chalk.dim(`  Current brain: ${providerName} / ${modelId}`));
   console.log('');
   console.log(chalk.bold('  What would you like to do?\n'));
   console.log(`  ${chalk.cyan('1.')} Start bot`);
   console.log(`  ${chalk.cyan('2.')} Check connections`);
   console.log(`  ${chalk.cyan('3.')} View logs`);
   console.log(`  ${chalk.cyan('4.')} View audit logs`);
-  console.log(`  ${chalk.cyan('5.')} Exit`);
+  console.log(`  ${chalk.cyan('5.')} Change brain model`);
+  console.log(`  ${chalk.cyan('6.')} Exit`);
   console.log('');
 }
 
@@ -70,21 +77,21 @@ function viewLog(filename) {
 }
 
 async function runCheck(config) {
-  await showStartupCheck('ANTHROPIC_API_KEY', async () => {
-    if (!config.anthropic.api_key) throw new Error('Not set');
+  const providerDef = PROVIDERS[config.brain.provider];
+  const providerLabel = providerDef ? providerDef.name : config.brain.provider;
+  const envKeyLabel = providerDef ? providerDef.envKey : 'API_KEY';
+
+  await showStartupCheck(envKeyLabel, async () => {
+    if (!config.brain.api_key) throw new Error('Not set');
   });
 
   await showStartupCheck('TELEGRAM_BOT_TOKEN', async () => {
     if (!config.telegram.bot_token) throw new Error('Not set');
   });
 
-  await showStartupCheck('Anthropic API connection', async () => {
-    const client = new Anthropic({ apiKey: config.anthropic.api_key });
-    await client.messages.create({
-      model: config.anthropic.model,
-      max_tokens: 16,
-      messages: [{ role: 'user', content: 'ping' }],
-    });
+  await showStartupCheck(`${providerLabel} API connection`, async () => {
+    const provider = createProvider(config);
+    await provider.ping();
   });
 
   await showStartupCheck('Telegram Bot API', async () => {
@@ -102,16 +109,15 @@ async function startBotFlow(config) {
   createAuditLogger();
   const logger = getLogger();
 
+  const providerDef = PROVIDERS[config.brain.provider];
+  const providerLabel = providerDef ? providerDef.name : config.brain.provider;
+
   const checks = [];
 
   checks.push(
-    await showStartupCheck('Anthropic API', async () => {
-      const client = new Anthropic({ apiKey: config.anthropic.api_key });
-      await client.messages.create({
-        model: config.anthropic.model,
-        max_tokens: 16,
-        messages: [{ role: 'user', content: 'ping' }],
-      });
+    await showStartupCheck(`${providerLabel} API`, async () => {
+      const provider = createProvider(config);
+      await provider.ping();
     }),
   );
 
@@ -148,7 +154,7 @@ async function main() {
 
   let running = true;
   while (running) {
-    showMenu();
+    showMenu(config);
     const choice = await ask(rl, chalk.cyan('  > '));
 
     switch (choice.trim()) {
@@ -168,6 +174,9 @@ async function main() {
         viewLog('kernel-audit.log');
         break;
       case '5':
+        await changeBrainModel(config, rl);
+        break;
+      case '6':
         running = false;
         break;
       default:

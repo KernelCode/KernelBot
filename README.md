@@ -2,12 +2,13 @@
 
 [kernelbot.io](https://kernelbot.io) | [npm](https://www.npmjs.com/package/kernelbot) | [GitHub](https://github.com/KernelCode/kernelbot)
 
-AI engineering agent — a Telegram bot backed by Claude with full OS control via tool use.
+AI engineering agent — a Telegram bot backed by Claude, GPT, Gemini, or Groq with full OS control via tool use.
 
 Send a message in Telegram, and KernelBot will read files, write code, run commands, browse the web, manage infrastructure, and respond with the results. It's your personal engineering assistant with direct access to your machine.
 
 ## Features
 
+- **Multi-model support** — choose your AI brain: Anthropic (Claude), OpenAI (GPT), Google (Gemini), or Groq (Llama/Mixtral). Switch models anytime from the CLI menu
 - **Autonomous agent loop** — send one message and KernelBot chains tool calls until the task is done, no hand-holding needed
 - **Full shell access** — run any command, install packages, build projects, run tests
 - **File management** — read, write, and create files with automatic directory creation
@@ -30,14 +31,14 @@ Send a message in Telegram, and KernelBot will read files, write code, run comma
 ## How It Works
 
 ```text
-You (Telegram) → KernelBot → Claude (Anthropic API)
+You (Telegram) → KernelBot → AI Brain (Claude / GPT / Gemini / Groq)
                                    ↕
                       Tools (shell, files, git, docker, browser, etc.)
                                    ↕
                       Claude Code CLI (coding tasks)
 ```
 
-KernelBot runs a **tool-use loop**: Claude decides which tools to call, KernelBot executes them on your OS, feeds results back, and Claude continues until the task is done. One message can trigger dozens of tool calls autonomously.
+KernelBot runs a **tool-use loop**: the AI decides which tools to call, KernelBot executes them on your OS, feeds results back, and the AI continues until the task is done. One message can trigger dozens of tool calls autonomously.
 
 For complex coding tasks, KernelBot can spawn **Claude Code CLI** as a sub-agent — giving it a dedicated coding environment with its own tool loop for writing, editing, and debugging code.
 
@@ -144,10 +145,13 @@ kernelbot
 
 That's it. On first run, KernelBot will:
 
-1. Detect missing credentials and prompt for them
-2. Save them to `~/.kernelbot/.env`
-3. Verify API connections
-4. Launch the Telegram bot
+1. Prompt you to select an AI provider and model
+2. Ask for your API key and Telegram bot token
+3. Save credentials to `~/.kernelbot/.env`
+4. Verify API connections
+5. Launch the Telegram bot
+
+You can change your AI provider/model anytime from the CLI menu (option 5).
 
 ## Configuration
 
@@ -158,7 +162,12 @@ KernelBot auto-detects config from the current directory or `~/.kernelbot/`. Eve
 Set these in `.env` or as system environment variables:
 
 ```text
-ANTHROPIC_API_KEY=sk-ant-...
+# AI provider key (only the one matching your provider is required)
+ANTHROPIC_API_KEY=sk-ant-...     # for Anthropic (Claude)
+OPENAI_API_KEY=sk-...            # for OpenAI (GPT)
+GOOGLE_API_KEY=AIza...           # for Google (Gemini)
+GROQ_API_KEY=gsk_...             # for Groq (Llama/Mixtral)
+
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 GITHUB_TOKEN=ghp_...                           # optional, for GitHub tools
 JIRA_BASE_URL=https://yourcompany.atlassian.net # optional, for JIRA tools
@@ -174,7 +183,8 @@ Drop a `config.yaml` in your working directory or `~/.kernelbot/` to customize b
 bot:
   name: KernelBot
 
-anthropic:
+brain:
+  provider: anthropic    # anthropic | openai | google | groq
   model: claude-sonnet-4-20250514
   max_tokens: 8192
   temperature: 0.3
@@ -256,12 +266,18 @@ KernelBot/
 ├── bin/
 │   └── kernel.js              # Entry point + CLI menu
 ├── src/
-│   ├── agent.js               # Claude tool-use loop
+│   ├── agent.js               # AI tool-use loop (provider-agnostic)
 │   ├── bot.js                 # Telegram bot (polling, auth, message handling)
 │   ├── coder.js               # Claude Code CLI spawner + smart output
 │   ├── conversation.js        # Per-chat conversation history
 │   ├── prompts/
 │   │   └── system.js          # System prompt
+│   ├── providers/
+│   │   ├── models.js          # Provider & model catalog
+│   │   ├── base.js            # Abstract provider interface
+│   │   ├── anthropic.js       # Anthropic (Claude) provider
+│   │   ├── openai-compat.js   # OpenAI / Gemini / Groq provider
+│   │   └── index.js           # Provider factory
 │   ├── security/
 │   │   ├── auth.js            # User allowlist
 │   │   ├── audit.js           # Tool call audit logging
@@ -290,7 +306,11 @@ KernelBot/
 ## Requirements
 
 - Node.js 18+
-- [Anthropic API key](https://console.anthropic.com/)
+- AI provider API key (one of):
+  - [Anthropic API key](https://console.anthropic.com/) (Claude)
+  - [OpenAI API key](https://platform.openai.com/api-keys) (GPT)
+  - [Google AI API key](https://aistudio.google.com/apikey) (Gemini)
+  - [Groq API key](https://console.groq.com/keys) (Llama/Mixtral)
 - [Telegram Bot Token](https://t.me/BotFather)
 - Chromium/Chrome (for browser tools — installed automatically by Puppeteer)
 - [GitHub Token](https://github.com/settings/tokens) (optional, for GitHub tools)

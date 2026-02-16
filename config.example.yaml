@@ -5,7 +5,8 @@ bot:
   name: KernelBot
   description: AI engineering agent with full OS control
 
-anthropic:
+brain:
+  provider: anthropic    # anthropic | openai | google | groq
   model: claude-sonnet-4-20250514
   max_tokens: 8192
   temperature: 0.3

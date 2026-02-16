@@ -1,6 +1,6 @@
 {
   "name": "kernelbot",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "description": "KernelBot — AI engineering agent with full OS control",
   "type": "module",
   "author": "Abdullah Al-Taheri <abdullah@altaheri.me>",
@@ -15,6 +15,9 @@
     "agent",
     "telegram",
     "anthropic",
+    "openai",
+    "gemini",
+    "groq",
     "tools"
   ],
   "repository": {
@@ -37,6 +40,7 @@
     "gradient-string": "^3.0.0",
     "js-yaml": "^4.1.0",
     "node-telegram-bot-api": "^0.66.0",
+    "openai": "^4.82.0",
     "ora": "^8.1.1",
     "puppeteer": "^24.37.3",
     "simple-git": "^3.31.1",
