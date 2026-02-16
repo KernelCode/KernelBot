@@ -376,16 +376,17 @@ export function startBot(config, agent, conversationManager) {
         };
 
         const sendPhoto = async (filePath, caption) => {
+          const fileOpts = { contentType: 'image/png' };
           try {
             await bot.sendPhoto(chatId, createReadStream(filePath), {
               caption: caption || '',
               parse_mode: 'Markdown',
-            });
+            }, fileOpts);
           } catch {
             try {
               await bot.sendPhoto(chatId, createReadStream(filePath), {
                 caption: caption || '',
-              });
+              }, fileOpts);
             } catch (err) {
               logger.error(`Failed to send photo: ${err.message}`);
             }

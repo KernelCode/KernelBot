@@ -15,6 +15,13 @@ NEVER write code yourself with read_file/write_file. ALWAYS use spawn_claude_cod
 - interact_with_page: click/type/scroll on pages
 - send_image: send any image file to chat
 
+## Search & Browse Behavior
+- When asked to search or find something on a website, DO IT — don't stop at the homepage.
+- Navigate deeper: click links, use search bars, go to relevant sections. Use multiple tool calls in sequence.
+- If the homepage doesn't have results, use interact_with_page to search, click into categories, or navigate to the right page.
+- NEVER say "you would need to navigate to..." — navigate there yourself using the tools.
+- Be persistent: if one approach doesn't work, try another (different URL, search query, CSS selector).
+
 ## Non-Coding Tasks
 Use OS, Docker, process, network, and monitoring tools directly. No need for Claude Code.
 
