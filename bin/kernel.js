@@ -22,6 +22,12 @@ import { ConversationManager } from '../src/conversation.js';
 import { Agent } from '../src/agent.js';
 import { startBot } from '../src/bot.js';
 import { createProvider, PROVIDERS } from '../src/providers/index.js';
+import {
+  loadCustomSkills,
+  getCustomSkills,
+  addCustomSkill,
+  deleteCustomSkill,
+} from '../src/skills/custom.js';
 
 function showMenu(config) {
   const providerDef = PROVIDERS[config.brain.provider];
@@ -37,7 +43,8 @@ function showMenu(config) {
   console.log(`  ${chalk.cyan('3.')} View logs`);
   console.log(`  ${chalk.cyan('4.')} View audit logs`);
   console.log(`  ${chalk.cyan('5.')} Change brain model`);
-  console.log(`  ${chalk.cyan('6.')} Exit`);
+  console.log(`  ${chalk.cyan('6.')} Manage custom skills`);
+  console.log(`  ${chalk.cyan('7.')} Exit`);
   console.log('');
 }
 
@@ -144,6 +151,90 @@ async function startBotFlow(config) {
   return true;
 }
 
+async function manageCustomSkills(rl) {
+  loadCustomSkills();
+
+  let managing = true;
+  while (managing) {
+    const customs = getCustomSkills();
+    console.log('');
+    console.log(chalk.bold('  Custom Skills\n'));
+    console.log(`  ${chalk.cyan('1.')} Create new skill`);
+    console.log(`  ${chalk.cyan('2.')} List skills (${customs.length})`);
+    console.log(`  ${chalk.cyan('3.')} Delete a skill`);
+    console.log(`  ${chalk.cyan('4.')} Back`);
+    console.log('');
+
+    const choice = await ask(rl, chalk.cyan('  > '));
+    switch (choice.trim()) {
+      case '1': {
+        const name = await ask(rl, chalk.cyan('  Skill name: '));
+        if (!name.trim()) {
+          console.log(chalk.dim('  Cancelled.\n'));
+          break;
+        }
+        console.log(chalk.dim('  Enter the system prompt (multi-line). Type END on a blank line to finish:\n'));
+        const lines = [];
+        while (true) {
+          const line = await ask(rl, '  ');
+          if (line.trim() === 'END') break;
+          lines.push(line);
+        }
+        const prompt = lines.join('\n').trim();
+        if (!prompt) {
+          console.log(chalk.dim('  Empty prompt — cancelled.\n'));
+          break;
+        }
+        const skill = addCustomSkill({ name: name.trim(), systemPrompt: prompt });
+        console.log(chalk.green(`\n  ✅ Created: ${skill.name} (${skill.id})\n`));
+        break;
+      }
+      case '2': {
+        const customs = getCustomSkills();
+        if (!customs.length) {
+          console.log(chalk.dim('\n  No custom skills yet.\n'));
+          break;
+        }
+        console.log('');
+        for (const s of customs) {
+          const preview = s.systemPrompt.slice(0, 60).replace(/\n/g, ' ');
+          console.log(`  🛠️  ${chalk.bold(s.name)} (${s.id})`);
+          console.log(chalk.dim(`     ${preview}${s.systemPrompt.length > 60 ? '...' : ''}`));
+        }
+        console.log('');
+        break;
+      }
+      case '3': {
+        const customs = getCustomSkills();
+        if (!customs.length) {
+          console.log(chalk.dim('\n  No custom skills to delete.\n'));
+          break;
+        }
+        console.log('');
+        customs.forEach((s, i) => {
+          console.log(`  ${chalk.cyan(`${i + 1}.`)} ${s.name} (${s.id})`);
+        });
+        console.log('');
+        const pick = await ask(rl, chalk.cyan('  Delete #: '));
+        const idx = parseInt(pick, 10) - 1;
+        if (idx >= 0 && idx < customs.length) {
+          const deleted = deleteCustomSkill(customs[idx].id);
+          if (deleted) console.log(chalk.green(`\n  🗑️  Deleted: ${customs[idx].name}\n`));
+          else console.log(chalk.dim('  Not found.\n'));
+        } else {
+          console.log(chalk.dim('  Cancelled.\n'));
+        }
+        break;
+      }
+      case '4':
+        managing = false;
+        break;
+      default:
+        console.log(chalk.dim('  Invalid choice.\n'));
+    }
+  }
+}
+
 async function main() {
   showLogo();
 
@@ -177,6 +268,9 @@ async function main() {
         await changeBrainModel(config, rl);
         break;
       case '6':
+        await manageCustomSkills(rl);
+        break;
+      case '7':
         running = false;
         break;
       default:

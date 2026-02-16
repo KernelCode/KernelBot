@@ -2,7 +2,7 @@ import { createProvider, PROVIDERS } from './providers/index.js';
 import { toolDefinitions, executeTool, checkConfirmation } from './tools/index.js';
 import { selectToolsForMessage, expandToolsForUsed } from './tools/categories.js';
 import { getSystemPrompt } from './prompts/system.js';
-import { getSkillById } from './skills/catalog.js';
+import { getUnifiedSkillById } from './skills/custom.js';
 import { detectIntent, generatePlan } from './intents/index.js';
 import { getLogger } from './utils/logger.js';
 import { getMissingCredential, saveCredential, saveProviderToYaml } from './utils/config.js';
@@ -25,7 +25,7 @@ export class Agent {
   _getSystemPrompt(chatId) {
     const skillId = this.conversationManager.getSkill(chatId);
     if (skillId) {
-      const skill = getSkillById(skillId);
+      const skill = getUnifiedSkillById(skillId);
       if (skill) return getSystemPrompt(this.config, skill.systemPrompt);
     }
     return getSystemPrompt(this.config);
@@ -41,7 +41,7 @@ export class Agent {
 
   getActiveSkill(chatId) {
     const skillId = this.conversationManager.getSkill(chatId);
-    return skillId ? getSkillById(skillId) : null;
+    return skillId ? getUnifiedSkillById(skillId) : null;
   }
 
   /** Return current brain info for display. */
@@ -400,10 +400,9 @@ export class Agent {
       if (response.stopReason === 'tool_use') {
         messages.push({ role: 'assistant', content: response.rawContent });
 
-        // Send thinking text to the user
+        // Log thinking text but don't send to user — tool summaries are enough
         if (response.text && response.text.trim()) {
           logger.info(`Agent thinking: ${response.text.slice(0, 200)}`);
-          await this._sendUpdate(`💭 ${response.text}`);
         }
 
         const toolResults = [];

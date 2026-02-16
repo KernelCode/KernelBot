@@ -1,9 +1,17 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { createReadStream } from 'fs';
+import { createReadStream, readFileSync } from 'fs';
 import { isAllowedUser, getUnauthorizedMessage } from './security/auth.js';
 import { getLogger } from './utils/logger.js';
 import { PROVIDERS } from './providers/models.js';
-import { getCategoryList, getSkillsByCategory, getSkillById } from './skills/catalog.js';
+import {
+  getUnifiedSkillById,
+  getUnifiedCategoryList,
+  getUnifiedSkillsByCategory,
+  loadCustomSkills,
+  addCustomSkill,
+  deleteCustomSkill,
+  getCustomSkills,
+} from './skills/custom.js';
 
 function splitMessage(text, maxLength = 4096) {
   if (text.length <= maxLength) return [text];
@@ -57,10 +65,16 @@ export function startBot(config, agent, conversationManager) {
     logger.info('Loaded previous conversations from disk');
   }
 
+  // Load custom skills from disk
+  loadCustomSkills();
+
   logger.info('Telegram bot started with polling');
 
   // Track pending brain API key input: chatId -> { providerKey, modelId }
   const pendingBrainKey = new Map();
+
+  // Track pending custom skill creation: chatId -> { step: 'name' | 'prompt', name?: string }
+  const pendingCustomSkill = new Map();
 
   // Handle inline keyboard callbacks for /brain
   bot.on('callback_query', async (query) => {
@@ -159,8 +173,8 @@ export function startBot(config, agent, conversationManager) {
       // ── Skill callbacks ──────────────────────────────────────────
       } else if (data.startsWith('skill_category:')) {
         const categoryKey = data.split(':')[1];
-        const skills = getSkillsByCategory(categoryKey);
-        const categories = getCategoryList();
+        const skills = getUnifiedSkillsByCategory(categoryKey);
+        const categories = getUnifiedCategoryList();
         const cat = categories.find((c) => c.key === categoryKey);
         if (!skills.length) {
           await bot.answerCallbackQuery(query.id, { text: 'No skills in this category' });
@@ -190,7 +204,7 @@ export function startBot(config, agent, conversationManager) {
 
       } else if (data.startsWith('skill_select:')) {
         const skillId = data.split(':')[1];
-        const skill = getSkillById(skillId);
+        const skill = getUnifiedSkillById(skillId);
         if (!skill) {
           await bot.answerCallbackQuery(query.id, { text: 'Unknown skill' });
           return;
@@ -215,14 +229,66 @@ export function startBot(config, agent, conversationManager) {
         });
         await bot.answerCallbackQuery(query.id);
 
+      } else if (data === 'skill_custom_add') {
+        pendingCustomSkill.set(chatId, { step: 'name' });
+        await bot.editMessageText(
+          '✏️ Send me a *name* for your custom skill:',
+          {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+          },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'skill_custom_manage') {
+        const customs = getCustomSkills();
+        if (!customs.length) {
+          await bot.answerCallbackQuery(query.id, { text: 'No custom skills yet' });
+          return;
+        }
+        const buttons = customs.map((s) => ([{
+          text: `🗑️ ${s.name}`,
+          callback_data: `skill_custom_delete:${s.id}`,
+        }]));
+        buttons.push([{ text: '« Back', callback_data: 'skill_back' }]);
+
+        await bot.editMessageText('🛠️ *Custom Skills* — tap to delete:', {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons },
+        });
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data.startsWith('skill_custom_delete:')) {
+        const skillId = data.slice('skill_custom_delete:'.length);
+        const activeSkill = agent.getActiveSkill(chatId);
+        if (activeSkill && activeSkill.id === skillId) {
+          agent.clearSkill(chatId);
+        }
+        const deleted = deleteCustomSkill(skillId);
+        const msg = deleted ? '🗑️ Custom skill deleted.' : 'Skill not found.';
+        await bot.editMessageText(msg, {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+        });
+        await bot.answerCallbackQuery(query.id);
+
       } else if (data === 'skill_back') {
         // Re-show category list
-        const categories = getCategoryList();
+        const categories = getUnifiedCategoryList();
         const activeSkill = agent.getActiveSkill(chatId);
         const buttons = categories.map((cat) => ([{
           text: `${cat.emoji} ${cat.name} (${cat.count})`,
           callback_data: `skill_category:${cat.key}`,
         }]));
+        // Custom skill management row
+        const customRow = [{ text: '➕ Add Custom', callback_data: 'skill_custom_add' }];
+        if (getCustomSkills().length > 0) {
+          customRow.push({ text: '🗑️ Manage Custom', callback_data: 'skill_custom_manage' });
+        }
+        buttons.push(customRow);
         const footerRow = [{ text: 'Cancel', callback_data: 'skill_cancel' }];
         if (activeSkill) {
           footerRow.unshift({ text: '🔄 Reset to Default', callback_data: 'skill_reset' });
@@ -290,18 +356,54 @@ export function startBot(config, agent, conversationManager) {
   }
 
   bot.on('message', async (msg) => {
-    if (!msg.text) return; // ignore non-text
-
     const chatId = msg.chat.id;
     const userId = msg.from.id;
     const username = msg.from.username || msg.from.first_name || 'unknown';
 
     // Auth check
     if (!isAllowedUser(userId, config)) {
-      logger.warn(`Unauthorized access attempt from ${username} (${userId})`);
-      await bot.sendMessage(chatId, getUnauthorizedMessage());
+      if (msg.text || msg.document) {
+        logger.warn(`Unauthorized access attempt from ${username} (${userId})`);
+        await bot.sendMessage(chatId, getUnauthorizedMessage());
+      }
       return;
     }
+
+    // Handle file upload for pending custom skill prompt step
+    if (msg.document && pendingCustomSkill.has(chatId)) {
+      const pending = pendingCustomSkill.get(chatId);
+      if (pending.step === 'prompt') {
+        const doc = msg.document;
+        const mime = doc.mime_type || '';
+        const fname = doc.file_name || '';
+        if (!fname.endsWith('.md') && mime !== 'text/markdown' && mime !== 'text/plain') {
+          await bot.sendMessage(chatId, 'Please upload a `.md` or plain text file, or type the prompt directly.');
+          return;
+        }
+        try {
+          const filePath = await bot.downloadFile(doc.file_id, '/tmp');
+          const content = readFileSync(filePath, 'utf-8').trim();
+          if (!content) {
+            await bot.sendMessage(chatId, 'The file appears to be empty. Please try again.');
+            return;
+          }
+          pendingCustomSkill.delete(chatId);
+          const skill = addCustomSkill({ name: pending.name, systemPrompt: content });
+          agent.setSkill(chatId, skill.id);
+          await bot.sendMessage(
+            chatId,
+            `✅ Custom skill *${skill.name}* created and activated!\n\n_Prompt loaded from file (${content.length} chars)_`,
+            { parse_mode: 'Markdown' },
+          );
+        } catch (err) {
+          logger.error(`Custom skill file upload error: ${err.message}`);
+          await bot.sendMessage(chatId, `Failed to read file: ${err.message}`);
+        }
+        return;
+      }
+    }
+
+    if (!msg.text) return; // ignore non-text (and non-document) messages
 
     let text = msg.text.trim();
 
@@ -335,6 +437,41 @@ export function startBot(config, agent, conversationManager) {
       return;
     }
 
+    // Handle pending custom skill creation (text input for name or prompt)
+    if (pendingCustomSkill.has(chatId)) {
+      const pending = pendingCustomSkill.get(chatId);
+
+      if (text.toLowerCase() === 'cancel') {
+        pendingCustomSkill.delete(chatId);
+        await bot.sendMessage(chatId, 'Custom skill creation cancelled.');
+        return;
+      }
+
+      if (pending.step === 'name') {
+        pending.name = text;
+        pending.step = 'prompt';
+        pendingCustomSkill.set(chatId, pending);
+        await bot.sendMessage(
+          chatId,
+          `Got it: *${text}*\n\nNow send the system prompt — type it out or upload a \`.md\` file:`,
+          { parse_mode: 'Markdown' },
+        );
+        return;
+      }
+
+      if (pending.step === 'prompt') {
+        pendingCustomSkill.delete(chatId);
+        const skill = addCustomSkill({ name: pending.name, systemPrompt: text });
+        agent.setSkill(chatId, skill.id);
+        await bot.sendMessage(
+          chatId,
+          `✅ Custom skill *${skill.name}* created and activated!`,
+          { parse_mode: 'Markdown' },
+        );
+        return;
+      }
+    }
+
     // Handle commands — these bypass batching entirely
     if (text === '/brain') {
       const info = agent.getBrainInfo();
@@ -363,12 +500,18 @@ export function startBot(config, agent, conversationManager) {
     }
 
     if (text === '/skills' || text === '/skill') {
-      const categories = getCategoryList();
+      const categories = getUnifiedCategoryList();
       const activeSkill = agent.getActiveSkill(chatId);
       const buttons = categories.map((cat) => ([{
         text: `${cat.emoji} ${cat.name} (${cat.count})`,
         callback_data: `skill_category:${cat.key}`,
       }]));
+      // Custom skill management row
+      const customRow = [{ text: '➕ Add Custom', callback_data: 'skill_custom_add' }];
+      if (getCustomSkills().length > 0) {
+        customRow.push({ text: '🗑️ Manage Custom', callback_data: 'skill_custom_manage' });
+      }
+      buttons.push(customRow);
       const footerRow = [{ text: 'Cancel', callback_data: 'skill_cancel' }];
       if (activeSkill) {
         footerRow.unshift({ text: '🔄 Reset to Default', callback_data: 'skill_reset' });
