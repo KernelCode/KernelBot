@@ -542,6 +542,45 @@ export function startBot(config, agent, conversationManager) {
       return;
     }
 
+    if (text === '/context') {
+      const info = agent.getBrainInfo();
+      const activeSkill = agent.getActiveSkill(chatId);
+      const msgCount = conversationManager.getMessageCount(chatId);
+      const history = conversationManager.getHistory(chatId);
+      const maxHistory = conversationManager.maxHistory;
+      const recentWindow = conversationManager.recentWindow;
+
+      // Build recent topics from last few user messages
+      const recentUserMsgs = history
+        .filter((m) => m.role === 'user')
+        .slice(-5)
+        .map((m) => {
+          const txt = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+          return txt.length > 80 ? txt.slice(0, 80) + '…' : txt;
+        });
+
+      const lines = [
+        '📋 *Conversation Context*',
+        '',
+        `🧠 *Brain:* ${info.providerName} / ${info.modelLabel}`,
+        activeSkill
+          ? `🎭 *Skill:* ${activeSkill.emoji} ${activeSkill.name}`
+          : '🎭 *Skill:* Default persona',
+        `💬 *Messages in memory:* ${msgCount} / ${maxHistory}`,
+        `📌 *Recent window:* ${recentWindow} messages`,
+      ];
+
+      if (recentUserMsgs.length > 0) {
+        lines.push('', '🕐 *Recent topics:*');
+        recentUserMsgs.forEach((msg) => lines.push(`  • ${msg}`));
+      } else {
+        lines.push('', '_No messages yet — start chatting!_');
+      }
+
+      await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
     if (text === '/help') {
       const activeSkill = agent.getActiveSkill(chatId);
       const skillLine = activeSkill
@@ -553,6 +592,7 @@ export function startBot(config, agent, conversationManager) {
         '/brain — Show current AI model and switch provider/model',
         '/skills — Browse and activate persona skills',
         '/skills reset — Clear active skill back to default',
+        '/context — Show current conversation context and brain info',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',
         '/browse <url> — Browse a website and get a summary',

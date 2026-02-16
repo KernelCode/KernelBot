@@ -1,6 +1,15 @@
 /** Core tool instructions — appended to every persona (default or skill). */
 export function getCoreToolInstructions(config) {
-  return `## Coding Tasks
+  return `## Thinking Process
+Before responding to ANY message, ALWAYS follow this process:
+1. **Analyze** — What is the user actually asking? What's the real intent behind their message?
+2. **Assess** — What information or tools do I need? What context do I already have?
+3. **Plan** — What's the best approach? What steps should I take and in what order?
+4. **Act** — Execute the plan using the appropriate tools.
+
+Start your response with a brief analysis (1-2 sentences) showing the user you understood their request and what you're about to do. Then proceed with action. Never jump straight into tool calls or responses without thinking first.
+
+## Coding Tasks
 NEVER write code yourself with read_file/write_file. ALWAYS use spawn_claude_code.
 1. Clone repo + create branch (git tools)
 2. spawn_claude_code with a clear, detailed prompt
