@@ -217,24 +217,23 @@ export class OrchestratorAgent {
     this.jobManager.on('job:completed', (job) => {
       const chatId = job.chatId;
       const workerDef = WORKER_TYPES[job.workerType] || {};
-      const emoji = workerDef.emoji || '✅';
       const label = workerDef.label || job.workerType;
 
       logger.info(`[Orchestrator] Job completed event: ${job.id} [${job.workerType}] in chat ${chatId} (${job.duration}s) — result length: ${(job.result || '').length} chars`);
 
-      // Truncate long results
+      // Store raw result in conversation history so orchestrator has full context
       let resultText = job.result || 'Done.';
       if (resultText.length > 3000) {
         resultText = resultText.slice(0, 3000) + '\n\n... [result truncated]';
       }
+      this.conversationManager.addMessage(chatId, 'user', `[Worker result: ${label} (${job.id}, ${job.duration}s)]\n\n${resultText}`);
 
-      const msg = `${emoji} **${label} finished** (\`${job.id}\`, ${job.duration}s)\n\n${resultText}`;
-
-      // Add to conversation history so orchestrator has context
-      this.conversationManager.addMessage(chatId, 'assistant', msg);
-
-      // Send to user
-      this._sendUpdate(chatId, msg);
+      // Trigger orchestrator to summarize the result for the user
+      this._summarizeJobResult(chatId, job).catch((err) => {
+        logger.error(`[Orchestrator] Failed to summarize job ${job.id}: ${err.message}`);
+        // Fallback: send a brief notification without the raw dump
+        this._sendUpdate(chatId, `✅ ${label} finished (\`${job.id}\`, ${job.duration}s). Ask me for the results!`);
+      });
     });
 
     this.jobManager.on('job:failed', (job) => {
@@ -245,7 +244,6 @@ export class OrchestratorAgent {
       logger.error(`[Orchestrator] Job failed event: ${job.id} [${job.workerType}] in chat ${chatId} — ${job.error}`);
 
       const msg = `❌ **${label} failed** (\`${job.id}\`): ${job.error}`;
-
       this.conversationManager.addMessage(chatId, 'assistant', msg);
       this._sendUpdate(chatId, msg);
     });
@@ -260,6 +258,40 @@ export class OrchestratorAgent {
       const msg = `🚫 **${label} cancelled** (\`${job.id}\`)`;
       this._sendUpdate(chatId, msg);
     });
+  }
+
+  /**
+   * Auto-summarize a completed job result via the orchestrator LLM.
+   * The orchestrator reads the worker's raw result and presents a clean summary to the user.
+   */
+  async _summarizeJobResult(chatId, job) {
+    const logger = getLogger();
+    const workerDef = WORKER_TYPES[job.workerType] || {};
+    const label = workerDef.label || job.workerType;
+
+    logger.info(`[Orchestrator] Summarizing job ${job.id} [${job.workerType}] result for user`);
+
+    // Build messages: give orchestrator the worker result and ask for a summary
+    const history = this.conversationManager.getSummarizedHistory(chatId);
+
+    const response = await this.orchestratorProvider.chat({
+      system: this._getSystemPrompt(chatId, null),
+      messages: [
+        ...history,
+        {
+          role: 'user',
+          content: `The ${label} worker just finished job \`${job.id}\` (took ${job.duration}s). Present the results to the user in a clean, well-formatted way. Don't mention "worker" or technical job details — just present the findings naturally as if you did the work yourself.`,
+        },
+      ],
+    });
+
+    const summary = response.text || '';
+    logger.info(`[Orchestrator] Job ${job.id} summary: "${summary.slice(0, 200)}"`);
+
+    if (summary) {
+      this.conversationManager.addMessage(chatId, 'assistant', summary);
+      this._sendUpdate(chatId, summary);
+    }
   }
 
   /**
