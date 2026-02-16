@@ -2,6 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { createReadStream } from 'fs';
 import { isAllowedUser, getUnauthorizedMessage } from './security/auth.js';
 import { getLogger } from './utils/logger.js';
+import { PROVIDERS } from './providers/models.js';
 
 function splitMessage(text, maxLength = 4096) {
   if (text.length <= maxLength) return [text];
@@ -34,6 +35,89 @@ export function startBot(config, agent, conversationManager) {
 
   logger.info('Telegram bot started with polling');
 
+  // Track pending brain API key input: chatId -> { providerKey, modelId }
+  const pendingBrainKey = new Map();
+
+  // Handle inline keyboard callbacks for /brain
+  bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const data = query.data;
+
+    if (!isAllowedUser(query.from.id, config)) {
+      await bot.answerCallbackQuery(query.id, { text: 'Unauthorized' });
+      return;
+    }
+
+    try {
+      if (data.startsWith('brain_provider:')) {
+        // User picked a provider — show model list
+        const providerKey = data.split(':')[1];
+        const providerDef = PROVIDERS[providerKey];
+        if (!providerDef) {
+          await bot.answerCallbackQuery(query.id, { text: 'Unknown provider' });
+          return;
+        }
+
+        const modelButtons = providerDef.models.map((m) => ([{
+          text: m.label,
+          callback_data: `brain_model:${providerKey}:${m.id}`,
+        }]));
+        modelButtons.push([{ text: 'Cancel', callback_data: 'brain_cancel' }]);
+
+        await bot.editMessageText(`Select a *${providerDef.name}* model:`, {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: modelButtons },
+        });
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data.startsWith('brain_model:')) {
+        // User picked a model — attempt switch
+        const [, providerKey, modelId] = data.split(':');
+        const providerDef = PROVIDERS[providerKey];
+        const modelEntry = providerDef?.models.find((m) => m.id === modelId);
+        const modelLabel = modelEntry ? modelEntry.label : modelId;
+
+        const missing = agent.switchBrain(providerKey, modelId);
+        if (missing) {
+          // API key missing — ask for it
+          pendingBrainKey.set(chatId, { providerKey, modelId });
+          await bot.editMessageText(
+            `🔑 *${providerDef.name}* API key is required.\n\nPlease send your \`${missing}\` now.\n\nOr send *cancel* to abort.`,
+            {
+              chat_id: chatId,
+              message_id: query.message.message_id,
+              parse_mode: 'Markdown',
+            },
+          );
+        } else {
+          const info = agent.getBrainInfo();
+          await bot.editMessageText(
+            `🧠 Brain switched to *${info.providerName}* / *${info.modelLabel}*`,
+            {
+              chat_id: chatId,
+              message_id: query.message.message_id,
+              parse_mode: 'Markdown',
+            },
+          );
+        }
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'brain_cancel') {
+        pendingBrainKey.delete(chatId);
+        await bot.editMessageText('Brain change cancelled.', {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+        });
+        await bot.answerCallbackQuery(query.id);
+      }
+    } catch (err) {
+      logger.error(`Callback query error: ${err.message}`);
+      await bot.answerCallbackQuery(query.id, { text: 'Error' });
+    }
+  });
+
   bot.on('message', async (msg) => {
     if (!msg.text) return; // ignore non-text
 
@@ -50,7 +134,47 @@ export function startBot(config, agent, conversationManager) {
 
     let text = msg.text.trim();
 
+    // Handle pending brain API key input
+    if (pendingBrainKey.has(chatId)) {
+      const pending = pendingBrainKey.get(chatId);
+      pendingBrainKey.delete(chatId);
+
+      if (text.toLowerCase() === 'cancel') {
+        await bot.sendMessage(chatId, 'Brain change cancelled.');
+        return;
+      }
+
+      agent.switchBrainWithKey(pending.providerKey, pending.modelId, text);
+      const info = agent.getBrainInfo();
+      await bot.sendMessage(
+        chatId,
+        `🧠 Brain switched to *${info.providerName}* / *${info.modelLabel}*\n\nAPI key saved.`,
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+
     // Handle commands
+    if (text === '/brain') {
+      const info = agent.getBrainInfo();
+      const providerKeys = Object.keys(PROVIDERS);
+      const buttons = providerKeys.map((key) => ([{
+        text: `${PROVIDERS[key].name}${key === info.provider ? ' ✓' : ''}`,
+        callback_data: `brain_provider:${key}`,
+      }]));
+      buttons.push([{ text: 'Cancel', callback_data: 'brain_cancel' }]);
+
+      await bot.sendMessage(
+        chatId,
+        `🧠 *Current brain:* ${info.providerName} / ${info.modelLabel}\n\nSelect a provider to switch:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons },
+        },
+      );
+      return;
+    }
+
     if (text === '/clean' || text === '/clear' || text === '/reset') {
       conversationManager.clear(chatId);
       logger.info(`Conversation cleared for chat ${chatId} by ${username}`);
@@ -68,6 +192,7 @@ export function startBot(config, agent, conversationManager) {
       await bot.sendMessage(chatId, [
         '*KernelBot Commands*',
         '',
+        '/brain — Show current AI model and switch provider/model',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',
         '/browse <url> — Browse a website and get a summary',

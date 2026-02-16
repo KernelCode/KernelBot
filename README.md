@@ -219,11 +219,12 @@ conversation:
 
 ## Telegram Commands
 
-| Command    | Description                        |
-| ---------- | ---------------------------------- |
-| `/clean`   | Clear conversation and start fresh |
-| `/history` | Show message count in memory       |
-| `/help`    | Show help message                  |
+| Command    | Description                                    |
+| ---------- | ---------------------------------------------- |
+| `/brain`   | Show current AI model and switch provider/model |
+| `/clean`   | Clear conversation and start fresh             |
+| `/history` | Show message count in memory                   |
+| `/help`    | Show help message                              |
 
 ## Security
 

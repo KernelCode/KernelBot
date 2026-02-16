@@ -1,8 +1,8 @@
-import { createProvider } from './providers/index.js';
+import { createProvider, PROVIDERS } from './providers/index.js';
 import { toolDefinitions, executeTool, checkConfirmation } from './tools/index.js';
 import { getSystemPrompt } from './prompts/system.js';
 import { getLogger } from './utils/logger.js';
-import { getMissingCredential, saveCredential } from './utils/config.js';
+import { getMissingCredential, saveCredential, saveProviderToYaml } from './utils/config.js';
 
 export class Agent {
   constructor({ config, conversationManager }) {
@@ -11,6 +11,66 @@ export class Agent {
     this.provider = createProvider(config);
     this.systemPrompt = getSystemPrompt(config);
     this._pending = new Map(); // chatId -> pending state
+  }
+
+  /** Return current brain info for display. */
+  getBrainInfo() {
+    const { provider, model } = this.config.brain;
+    const providerDef = PROVIDERS[provider];
+    const providerName = providerDef ? providerDef.name : provider;
+    const modelEntry = providerDef?.models.find((m) => m.id === model);
+    const modelLabel = modelEntry ? modelEntry.label : model;
+    return { provider, providerName, model, modelLabel };
+  }
+
+  /**
+   * Switch to a different provider/model at runtime.
+   * Resolves the API key from process.env automatically.
+   * Returns null on success, or an error string if the key is missing.
+   */
+  switchBrain(providerKey, modelId) {
+    const logger = getLogger();
+    const providerDef = PROVIDERS[providerKey];
+    if (!providerDef) return `Unknown provider: ${providerKey}`;
+
+    const envKey = providerDef.envKey;
+    const apiKey = process.env[envKey];
+    if (!apiKey) {
+      return envKey; // caller handles prompting
+    }
+
+    this.config.brain.provider = providerKey;
+    this.config.brain.model = modelId;
+    this.config.brain.api_key = apiKey;
+
+    // Recreate the provider instance
+    this.provider = createProvider(this.config);
+
+    // Persist to config.yaml
+    saveProviderToYaml(providerKey, modelId);
+
+    logger.info(`Brain switched to ${providerDef.name} / ${modelId}`);
+    return null;
+  }
+
+  /**
+   * Finalize brain switch after API key was provided via chat.
+   */
+  switchBrainWithKey(providerKey, modelId, apiKey) {
+    const logger = getLogger();
+    const providerDef = PROVIDERS[providerKey];
+
+    // Save the key
+    saveCredential(this.config, providerDef.envKey, apiKey);
+
+    this.config.brain.provider = providerKey;
+    this.config.brain.model = modelId;
+    this.config.brain.api_key = apiKey;
+
+    this.provider = createProvider(this.config);
+    saveProviderToYaml(providerKey, modelId);
+
+    logger.info(`Brain switched to ${providerDef.name} / ${modelId} (new key saved)`);
   }
 
   async processMessage(chatId, userMessage, user, onUpdate, sendPhoto) {
