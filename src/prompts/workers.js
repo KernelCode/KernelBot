@@ -77,7 +77,7 @@ export function getWorkerPrompt(workerType, config, skillPrompt = null) {
 ## Self-Management
 - You decide when you're done. There is no hard limit on tool calls — use as many as you need.
 - BUT be smart about it: don't loop endlessly. If you have enough data, stop and report.
-- If a page isn't loading or a tool keeps failing, move on after 2-3 retries.
+- NEVER retry a failing URL/site more than twice. If it times out or errors twice, MOVE ON to a different site or approach immediately.
 - When you've gathered sufficient results, STOP calling tools and return your findings.
 - Aim for quality results, not exhaustive coverage. 5 good results beat 50 incomplete ones.`;
 

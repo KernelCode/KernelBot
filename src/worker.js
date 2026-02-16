@@ -1,5 +1,6 @@
 import { createProvider } from './providers/index.js';
 import { executeTool } from './tools/index.js';
+import { closeSession } from './tools/browser.js';
 import { getMissingCredential } from './utils/config.js';
 import { getWorkerPrompt } from './prompts/workers.js';
 import { getUnifiedSkillById } from './skills/custom.js';
@@ -82,6 +83,10 @@ export class WorkerAgent {
       }
       logger.error(`[Worker ${this.jobId}] Run failed: ${err.message}`);
       if (this.callbacks.onError) this.callbacks.onError(err);
+    } finally {
+      // Clean up browser session for this worker (frees the Puppeteer page)
+      closeSession(this.jobId).catch(() => {});
+      logger.info(`[Worker ${this.jobId}] Browser session cleaned up`);
     }
   }
 
@@ -144,6 +149,7 @@ export class WorkerAgent {
             personaManager: null,
             onUpdate: this.callbacks.onUpdate || null, // Real bot onUpdate (returns message_id for coder.js smart output)
             sendPhoto: this.callbacks.sendPhoto || null,
+            sessionId: this.jobId, // Per-worker browser session isolation
           });
 
           const resultStr = this._truncateResult(block.name, result);

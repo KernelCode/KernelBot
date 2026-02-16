@@ -41,7 +41,7 @@ const BROWSER_ARGS = [
 // ── Persistent Browser Session ──────────────────────────────────────────────
 
 let _browser = null;
-let _page = null; // persistent main page
+const _pages = new Map(); // sessionId → page (per-worker isolation)
 let _sessionTimer = null;
 
 async function ensureBrowser() {
@@ -59,10 +59,25 @@ function resetSessionTimer() {
 
 async function closeBrowserSession() {
   if (_sessionTimer) { clearTimeout(_sessionTimer); _sessionTimer = null; }
+  // Close all session pages
+  for (const [id, page] of _pages) {
+    await page.close().catch(() => {});
+  }
+  _pages.clear();
   if (_browser) {
     await _browser.close().catch(() => {});
     _browser = null;
-    _page = null;
+  }
+}
+
+/**
+ * Close a specific session's page. Called when a worker finishes.
+ */
+export async function closeSession(sessionId) {
+  const page = _pages.get(sessionId);
+  if (page) {
+    _pages.delete(sessionId);
+    await page.close().catch(() => {});
   }
 }
 
@@ -74,35 +89,37 @@ async function setupPage(page) {
 }
 
 /**
- * Get the persistent main page. If url is provided and differs from
- * the current page URL, navigate to it. Reuses the same tab.
+ * Get the persistent page for a session. If url is provided and differs from
+ * the current page URL, navigate to it. Each session (worker) gets its own tab.
  */
-async function getMainPage(url) {
+async function getMainPage(url, sessionId = 'default') {
   resetSessionTimer();
   const browser = await ensureBrowser();
 
-  if (_page) {
+  const existing = _pages.get(sessionId);
+  if (existing) {
     try {
-      await _page.title(); // probe — throws if page closed/crashed
+      await existing.title(); // probe — throws if page closed/crashed
       if (url) {
-        const current = _page.url();
+        const current = existing.url();
         if (current !== url) {
-          await _page.goto(url, { waitUntil: 'networkidle2', timeout: NAVIGATION_TIMEOUT });
+          await existing.goto(url, { waitUntil: 'networkidle2', timeout: NAVIGATION_TIMEOUT });
         }
       }
-      return _page;
+      return existing;
     } catch {
       // Page is stale, recreate
-      _page = null;
+      _pages.delete(sessionId);
     }
   }
 
-  _page = await browser.newPage();
-  await setupPage(_page);
+  const page = await browser.newPage();
+  await setupPage(page);
+  _pages.set(sessionId, page);
   if (url) {
-    await _page.goto(url, { waitUntil: 'networkidle2', timeout: NAVIGATION_TIMEOUT });
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: NAVIGATION_TIMEOUT });
   }
-  return _page;
+  return page;
 }
 
 /**
@@ -442,15 +459,16 @@ async function handleWebSearch(params) {
   }
 }
 
-async function handleBrowse(params) {
+async function handleBrowse(params, context) {
   const validation = validateUrl(params.url);
   if (!validation.valid) return { error: validation.error };
 
   const url = validation.url;
+  const sessionId = context?.sessionId || 'default';
   let page;
 
   try {
-    page = await getMainPage(url);
+    page = await getMainPage(url, sessionId);
   } catch (err) {
     return handleNavError(err, url);
   }
@@ -489,11 +507,12 @@ async function handleScreenshot(params, context) {
   if (!validation.valid) return { error: validation.error };
 
   const url = validation.url;
+  const sessionId = context?.sessionId || 'default';
   await ensureScreenshotsDir();
 
   let page;
   try {
-    page = await getMainPage(url);
+    page = await getMainPage(url, sessionId);
   } catch (err) {
     return handleNavError(err, url);
   }
@@ -540,7 +559,7 @@ async function handleScreenshot(params, context) {
   };
 }
 
-async function handleExtract(params) {
+async function handleExtract(params, context) {
   // URL is optional — if not given, use the current open page
   let url = null;
   if (params.url) {
@@ -549,11 +568,12 @@ async function handleExtract(params) {
     url = validation.url;
   }
 
+  const sessionId = context?.sessionId || 'default';
   const limit = Math.min(params.limit || 20, 100);
 
   let page;
   try {
-    page = await getMainPage(url);
+    page = await getMainPage(url, sessionId);
   } catch (err) {
     return handleNavError(err, url);
   }
@@ -621,7 +641,7 @@ async function handleExtract(params) {
   };
 }
 
-async function handleInteract(params) {
+async function handleInteract(params, context) {
   // URL is optional — if not given, use the current open page
   let url = null;
   if (params.url) {
@@ -647,9 +667,10 @@ async function handleInteract(params) {
     }
   }
 
+  const sessionId = context?.sessionId || 'default';
   let page;
   try {
-    page = await getMainPage(url);
+    page = await getMainPage(url, sessionId);
   } catch (err) {
     return handleNavError(err, url);
   }

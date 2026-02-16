@@ -147,6 +147,10 @@ export class JobManager extends EventEmitter {
         const elapsed = now - job.startedAt;
         if (elapsed > this.jobTimeoutMs) {
           getLogger().warn(`[JobManager] Job ${job.id} [${job.workerType}] timed out — elapsed: ${Math.round(elapsed / 1000)}s, limit: ${this.jobTimeoutMs / 1000}s`);
+          // Cancel the worker first so it stops executing & frees resources
+          if (job.worker && typeof job.worker.cancel === 'function') {
+            job.worker.cancel();
+          }
           this.failJob(job.id, `Timed out after ${this.jobTimeoutMs / 1000}s`);
         }
       }

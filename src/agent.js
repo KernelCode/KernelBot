@@ -402,11 +402,24 @@ export class OrchestratorAgent {
     for (let depth = startDepth; depth < maxDepth; depth++) {
       logger.info(`[Orchestrator] LLM call ${depth + 1}/${maxDepth} for chat ${chatId} — sending ${messages.length} messages`);
 
-      const response = await this.orchestratorProvider.chat({
-        system: this._getSystemPrompt(chatId, user),
-        messages,
-        tools: orchestratorToolDefinitions,
-      });
+      let response;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          response = await this.orchestratorProvider.chat({
+            system: this._getSystemPrompt(chatId, user),
+            messages,
+            tools: orchestratorToolDefinitions,
+          });
+          break;
+        } catch (err) {
+          if (attempt < 2 && (err.message?.includes('Connection error') || err.message?.includes('ECONNRESET') || err.message?.includes('socket hang up'))) {
+            logger.warn(`[Orchestrator] LLM call failed (attempt ${attempt}): ${err.message} — retrying...`);
+            await new Promise(r => setTimeout(r, 1000));
+            continue;
+          }
+          throw err;
+        }
+      }
 
       logger.info(`[Orchestrator] LLM response: stopReason=${response.stopReason}, text=${(response.text || '').length} chars, toolCalls=${(response.toolCalls || []).length}`);
 
