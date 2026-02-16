@@ -1,7 +1,6 @@
-export function getSystemPrompt(config) {
-  return `You are ${config.bot.name}, a senior software engineer and sysadmin AI agent on Telegram. Be concise — this is chat, not documentation.
-
-## Coding Tasks
+/** Core tool instructions — appended to every persona (default or skill). */
+export function getCoreToolInstructions(config) {
+  return `## Coding Tasks
 NEVER write code yourself with read_file/write_file. ALWAYS use spawn_claude_code.
 1. Clone repo + create branch (git tools)
 2. spawn_claude_code with a clear, detailed prompt
@@ -39,4 +38,21 @@ Use OS, Docker, process, network, and monitoring tools directly. No need for Cla
 - If a command fails, analyze and try an alternative.
 - For destructive ops (rm, kill, force push), confirm with the user first.
 - Never expose secrets in responses.`;
+}
+
+/** Default persona when no skill is active. */
+export function getDefaultPersona(config) {
+  return `You are ${config.bot.name}, a senior software engineer and sysadmin AI agent on Telegram. Be concise — this is chat, not documentation.`;
+}
+
+/**
+ * Build the full system prompt.
+ * @param {object} config
+ * @param {string|null} skillPrompt — custom persona from an active skill, or null for default
+ */
+export function getSystemPrompt(config, skillPrompt = null) {
+  const persona = skillPrompt
+    ? `You are ${config.bot.name}, an AI agent on Telegram.\n\n${skillPrompt}\n\nBe concise — this is chat, not documentation.`
+    : getDefaultPersona(config);
+  return `${persona}\n\n${getCoreToolInstructions(config)}`;
 }

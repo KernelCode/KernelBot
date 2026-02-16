@@ -2,8 +2,13 @@ import { createProvider, PROVIDERS } from './providers/index.js';
 import { toolDefinitions, executeTool, checkConfirmation } from './tools/index.js';
 import { selectToolsForMessage, expandToolsForUsed } from './tools/categories.js';
 import { getSystemPrompt } from './prompts/system.js';
+import { getSkillById } from './skills/catalog.js';
+import { detectIntent, generatePlan } from './intents/index.js';
 import { getLogger } from './utils/logger.js';
 import { getMissingCredential, saveCredential, saveProviderToYaml } from './utils/config.js';
+
+// Browser tools — used by completion gate to check if the model did enough work
+const BROWSER_TOOLS = new Set(['web_search', 'browse_website', 'interact_with_page', 'extract_content', 'screenshot_website']);
 
 const MAX_RESULT_LENGTH = 3000;
 const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
@@ -13,8 +18,30 @@ export class Agent {
     this.config = config;
     this.conversationManager = conversationManager;
     this.provider = createProvider(config);
-    this.systemPrompt = getSystemPrompt(config);
     this._pending = new Map(); // chatId -> pending state
+  }
+
+  /** Build the system prompt dynamically based on the chat's active skill. */
+  _getSystemPrompt(chatId) {
+    const skillId = this.conversationManager.getSkill(chatId);
+    if (skillId) {
+      const skill = getSkillById(skillId);
+      if (skill) return getSystemPrompt(this.config, skill.systemPrompt);
+    }
+    return getSystemPrompt(this.config);
+  }
+
+  setSkill(chatId, skillId) {
+    this.conversationManager.setSkill(chatId, skillId);
+  }
+
+  clearSkill(chatId) {
+    this.conversationManager.clearSkill(chatId);
+  }
+
+  getActiveSkill(chatId) {
+    const skillId = this.conversationManager.getSkill(chatId);
+    return skillId ? getSkillById(skillId) : null;
   }
 
   /** Return current brain info for display. */
@@ -143,17 +170,32 @@ export class Agent {
 
     const { max_tool_depth } = this.config.brain;
 
-    // Add user message to persistent history
+    // Detect search/browse intent
+    const intent = detectIntent(userMessage);
+    if (intent) {
+      logger.info(`Detected intent: ${intent.type} for message: ${userMessage.slice(0, 100)}`);
+    }
+
+    // Add ORIGINAL user message to persistent history
     this.conversationManager.addMessage(chatId, 'user', userMessage);
 
     // Build working messages from compressed history
     const messages = [...this.conversationManager.getSummarizedHistory(chatId)];
 
+    // If intent detected, replace last message with the planned version
+    // History stores the original; the model sees the plan
+    if (intent) {
+      const plan = generatePlan(intent);
+      if (plan) {
+        messages[messages.length - 1] = { role: 'user', content: plan };
+      }
+    }
+
     // Select relevant tools based on user message
     const tools = selectToolsForMessage(userMessage, toolDefinitions);
     logger.debug(`Selected ${tools.length}/${toolDefinitions.length} tools for message`);
 
-    return await this._runLoop(chatId, messages, user, 0, max_tool_depth, tools);
+    return await this._runLoop(chatId, messages, user, 0, max_tool_depth, tools, !!intent);
   }
 
   _formatToolSummary(name, input) {
@@ -181,8 +223,9 @@ export class Agent {
       check_port: 'port',
       screenshot_website: 'url',
       send_image: 'file_path',
+      web_search: 'query',
       browse_website: 'url',
-      extract_content: 'url',
+      extract_content: 'selector',
       interact_with_page: 'url',
     }[name];
     const val = key && input[key] ? String(input[key]).slice(0, 120) : JSON.stringify(input).slice(0, 120);
@@ -313,21 +356,43 @@ export class Agent {
     return null;
   }
 
-  async _runLoop(chatId, messages, user, startDepth, maxDepth, tools) {
+  /**
+   * Completion gate — check if the model did enough work for a web intent.
+   * Requires at least 2 distinct browser tools used (e.g., browse + interact).
+   * A single browse_website call is NOT enough for a search/browse intent.
+   */
+  _isIntentSatisfied(allUsedTools) {
+    const uniqueBrowserTools = new Set(allUsedTools.filter((t) => BROWSER_TOOLS.has(t)));
+    return uniqueBrowserTools.size >= 2;
+  }
+
+  async _runLoop(chatId, messages, user, startDepth, maxDepth, tools, hasIntent = false) {
     const logger = getLogger();
     let currentTools = tools || toolDefinitions;
+    const allUsedTools = []; // track tools across all iterations
+    let gateTriggered = false; // completion gate pushes only once
 
     for (let depth = startDepth; depth < maxDepth; depth++) {
       logger.debug(`Agent loop iteration ${depth + 1}/${maxDepth}`);
 
       const response = await this.provider.chat({
-        system: this.systemPrompt,
+        system: this._getSystemPrompt(chatId),
         messages,
         tools: currentTools,
       });
 
       if (response.stopReason === 'end_turn') {
         const reply = response.text || '';
+
+        // Completion gate: if an intent is active and the model hasn't done enough, push once
+        if (hasIntent && !gateTriggered && !this._isIntentSatisfied(allUsedTools)) {
+          gateTriggered = true;
+          logger.info(`Completion gate: model stopped too early (used ${allUsedTools.length} tools), pushing to continue`);
+          messages.push({ role: 'assistant', content: response.rawContent || [{ type: 'text', text: reply }] });
+          messages.push({ role: 'user', content: 'Continue with the task. Navigate into the relevant section, search or click within the site, and show me the actual results.' });
+          continue;
+        }
+
         this.conversationManager.addMessage(chatId, 'assistant', reply);
         return reply;
       }
@@ -369,6 +434,7 @@ export class Agent {
           });
 
           usedToolNames.push(block.name);
+          allUsedTools.push(block.name);
 
           toolResults.push({
             type: 'tool_result',

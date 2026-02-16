@@ -465,7 +465,7 @@ async function handleBrowse(params) {
 
   const content = await extractPageContent(page);
 
-  return {
+  const result = {
     success: true,
     url: page.url(),
     title: content.title,
@@ -475,6 +475,13 @@ async function handleBrowse(params) {
     content: truncate(content.mainText),
     links: content.links || [],
   };
+
+  // Nudge the model to navigate deeper when links are available
+  if (content.links.length > 0) {
+    result._next = 'Page is open. Use interact_with_page (no URL needed) to click links or type in search boxes, then read the results.';
+  }
+
+  return result;
 }
 
 async function handleScreenshot(params, context) {

@@ -3,6 +3,7 @@ import { createReadStream } from 'fs';
 import { isAllowedUser, getUnauthorizedMessage } from './security/auth.js';
 import { getLogger } from './utils/logger.js';
 import { PROVIDERS } from './providers/models.js';
+import { getCategoryList, getSkillsByCategory, getSkillById } from './skills/catalog.js';
 
 function splitMessage(text, maxLength = 4096) {
   if (text.length <= maxLength) return [text];
@@ -154,6 +155,98 @@ export function startBot(config, agent, conversationManager) {
           message_id: query.message.message_id,
         });
         await bot.answerCallbackQuery(query.id);
+
+      // ── Skill callbacks ──────────────────────────────────────────
+      } else if (data.startsWith('skill_category:')) {
+        const categoryKey = data.split(':')[1];
+        const skills = getSkillsByCategory(categoryKey);
+        const categories = getCategoryList();
+        const cat = categories.find((c) => c.key === categoryKey);
+        if (!skills.length) {
+          await bot.answerCallbackQuery(query.id, { text: 'No skills in this category' });
+          return;
+        }
+
+        const activeSkill = agent.getActiveSkill(chatId);
+        const buttons = skills.map((s) => ([{
+          text: `${s.emoji} ${s.name}${activeSkill && activeSkill.id === s.id ? ' ✓' : ''}`,
+          callback_data: `skill_select:${s.id}`,
+        }]));
+        buttons.push([
+          { text: '« Back', callback_data: 'skill_back' },
+          { text: 'Cancel', callback_data: 'skill_cancel' },
+        ]);
+
+        await bot.editMessageText(
+          `${cat ? cat.emoji : ''} *${cat ? cat.name : categoryKey}* — select a skill:`,
+          {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: buttons },
+          },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data.startsWith('skill_select:')) {
+        const skillId = data.split(':')[1];
+        const skill = getSkillById(skillId);
+        if (!skill) {
+          await bot.answerCallbackQuery(query.id, { text: 'Unknown skill' });
+          return;
+        }
+
+        agent.setSkill(chatId, skillId);
+        await bot.editMessageText(
+          `${skill.emoji} *${skill.name}* activated!\n\n_${skill.description}_\n\nThe agent will now respond as this persona. Use /skills reset to return to default.`,
+          {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+          },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'skill_reset') {
+        agent.clearSkill(chatId);
+        await bot.editMessageText('🔄 Skill cleared — back to default persona.', {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+        });
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'skill_back') {
+        // Re-show category list
+        const categories = getCategoryList();
+        const activeSkill = agent.getActiveSkill(chatId);
+        const buttons = categories.map((cat) => ([{
+          text: `${cat.emoji} ${cat.name} (${cat.count})`,
+          callback_data: `skill_category:${cat.key}`,
+        }]));
+        const footerRow = [{ text: 'Cancel', callback_data: 'skill_cancel' }];
+        if (activeSkill) {
+          footerRow.unshift({ text: '🔄 Reset to Default', callback_data: 'skill_reset' });
+        }
+        buttons.push(footerRow);
+
+        const header = activeSkill
+          ? `🎭 *Active skill:* ${activeSkill.emoji} ${activeSkill.name}\n\nSelect a category:`
+          : '🎭 *Skills* — select a category:';
+
+        await bot.editMessageText(header, {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons },
+        });
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'skill_cancel') {
+        await bot.editMessageText('Skill selection cancelled.', {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+        });
+        await bot.answerCallbackQuery(query.id);
       }
     } catch (err) {
       logger.error(`Callback query error: ${err.message}`);
@@ -263,6 +356,36 @@ export function startBot(config, agent, conversationManager) {
       return;
     }
 
+    if (text === '/skills reset' || text === '/skill reset') {
+      agent.clearSkill(chatId);
+      await bot.sendMessage(chatId, '🔄 Skill cleared — back to default persona.');
+      return;
+    }
+
+    if (text === '/skills' || text === '/skill') {
+      const categories = getCategoryList();
+      const activeSkill = agent.getActiveSkill(chatId);
+      const buttons = categories.map((cat) => ([{
+        text: `${cat.emoji} ${cat.name} (${cat.count})`,
+        callback_data: `skill_category:${cat.key}`,
+      }]));
+      const footerRow = [{ text: 'Cancel', callback_data: 'skill_cancel' }];
+      if (activeSkill) {
+        footerRow.unshift({ text: '🔄 Reset to Default', callback_data: 'skill_reset' });
+      }
+      buttons.push(footerRow);
+
+      const header = activeSkill
+        ? `🎭 *Active skill:* ${activeSkill.emoji} ${activeSkill.name}\n\nSelect a category:`
+        : '🎭 *Skills* — select a category:';
+
+      await bot.sendMessage(chatId, header, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons },
+      });
+      return;
+    }
+
     if (text === '/clean' || text === '/clear' || text === '/reset') {
       conversationManager.clear(chatId);
       logger.info(`Conversation cleared for chat ${chatId} by ${username}`);
@@ -277,10 +400,16 @@ export function startBot(config, agent, conversationManager) {
     }
 
     if (text === '/help') {
+      const activeSkill = agent.getActiveSkill(chatId);
+      const skillLine = activeSkill
+        ? `\n🎭 *Active skill:* ${activeSkill.emoji} ${activeSkill.name}\n`
+        : '';
       await bot.sendMessage(chatId, [
         '*KernelBot Commands*',
-        '',
+        skillLine,
         '/brain — Show current AI model and switch provider/model',
+        '/skills — Browse and activate persona skills',
+        '/skills reset — Clear active skill back to default',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',
         '/browse <url> — Browse a website and get a summary',

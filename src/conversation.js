@@ -13,6 +13,7 @@ export class ConversationManager {
     this.maxHistory = config.conversation.max_history;
     this.recentWindow = config.conversation.recent_window || 10;
     this.conversations = new Map();
+    this.activeSkills = new Map();
     this.filePath = getConversationsPath();
   }
 
@@ -21,7 +22,16 @@ export class ConversationManager {
     try {
       const raw = readFileSync(this.filePath, 'utf-8');
       const data = JSON.parse(raw);
+
+      // Restore per-chat skills
+      if (data._skills && typeof data._skills === 'object') {
+        for (const [chatId, skillId] of Object.entries(data._skills)) {
+          this.activeSkills.set(String(chatId), skillId);
+        }
+      }
+
       for (const [chatId, messages] of Object.entries(data)) {
+        if (chatId === '_skills') continue;
         this.conversations.set(String(chatId), messages);
       }
       return this.conversations.size > 0;
@@ -35,6 +45,14 @@ export class ConversationManager {
       const data = {};
       for (const [chatId, messages] of this.conversations) {
         data[chatId] = messages;
+      }
+      // Persist active skills under a reserved key
+      if (this.activeSkills.size > 0) {
+        const skills = {};
+        for (const [chatId, skillId] of this.activeSkills) {
+          skills[chatId] = skillId;
+        }
+        data._skills = skills;
       }
       writeFileSync(this.filePath, JSON.stringify(data, null, 2));
     } catch {
@@ -104,6 +122,7 @@ export class ConversationManager {
 
   clear(chatId) {
     this.conversations.delete(String(chatId));
+    this.activeSkills.delete(String(chatId));
     this.save();
   }
 
@@ -115,5 +134,19 @@ export class ConversationManager {
   getMessageCount(chatId) {
     const history = this.getHistory(chatId);
     return history.length;
+  }
+
+  setSkill(chatId, skillId) {
+    this.activeSkills.set(String(chatId), skillId);
+    this.save();
+  }
+
+  getSkill(chatId) {
+    return this.activeSkills.get(String(chatId)) || null;
+  }
+
+  clearSkill(chatId) {
+    this.activeSkills.delete(String(chatId));
+    this.save();
   }
 }
