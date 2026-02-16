@@ -68,11 +68,14 @@ export function getDefaultPersona(config) {
  * @param {string|null} userPersona — markdown persona for the current user, or null
  */
 export function getSystemPrompt(config, skillPrompt = null, userPersona = null) {
-  const persona = skillPrompt
-    ? `You are ${config.bot.name}, an AI agent on Telegram.\n\n${skillPrompt}\n\nBe concise — this is chat, not documentation.`
-    : getDefaultPersona(config);
+  // Always include core personality — skills add expertise, never replace who she is
+  let prompt = getDefaultPersona(config);
 
-  let prompt = `${persona}\n\n${getCoreToolInstructions(config)}`;
+  if (skillPrompt) {
+    prompt += `\n\n## Active Skill\nYou are currently operating with the following specialized skill. Use this expertise while maintaining your personality.\n\n${skillPrompt}`;
+  }
+
+  prompt += `\n\n${getCoreToolInstructions(config)}`;
 
   if (userPersona) {
     prompt += `\n\n## About This User\n${userPersona}\n\nWhen you learn something new and meaningful about this user (expertise, preferences, projects, communication style), use the update_user_persona tool to save it. Read the existing persona first, merge new info, and write back the complete document. Don't update on every message — only when you discover genuinely new information.`;
