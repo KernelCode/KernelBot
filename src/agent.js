@@ -41,6 +41,7 @@ export class OrchestratorAgent {
 
   /** Build the orchestrator system prompt. */
   _getSystemPrompt(chatId, user) {
+    const logger = getLogger();
     const skillId = this.conversationManager.getSkill(chatId);
     const skillPrompt = skillId ? getUnifiedSkillById(skillId)?.systemPrompt : null;
 
@@ -49,6 +50,7 @@ export class OrchestratorAgent {
       userPersona = this.personaManager.load(user.id, user.username);
     }
 
+    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skill=${skillId || 'none'} | persona=${userPersona ? 'yes' : 'none'}`);
     return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona);
   }
 
@@ -151,6 +153,8 @@ export class OrchestratorAgent {
   async processMessage(chatId, userMessage, user, onUpdate, sendPhoto) {
     const logger = getLogger();
 
+    logger.info(`Orchestrator processing message for chat ${chatId} from ${user?.username || user?.id || 'unknown'}: "${userMessage.slice(0, 120)}"`);
+
     // Store callbacks so workers can use them later
     this._chatCallbacks.set(chatId, { onUpdate, sendPhoto });
 
@@ -158,6 +162,7 @@ export class OrchestratorAgent {
     const pending = this._pending.get(chatId);
     if (pending) {
       this._pending.delete(chatId);
+      logger.debug(`Orchestrator handling pending ${pending.type} response for chat ${chatId}`);
 
       if (pending.type === 'credential') {
         return await this._handleCredentialResponse(chatId, userMessage, user, pending, onUpdate);
@@ -171,8 +176,11 @@ export class OrchestratorAgent {
 
     // Build working messages from compressed history
     const messages = [...this.conversationManager.getSummarizedHistory(chatId)];
+    logger.debug(`Orchestrator conversation context: ${messages.length} messages, max_depth=${max_tool_depth}`);
 
     const reply = await this._runLoop(chatId, messages, user, 0, max_tool_depth);
+
+    logger.info(`Orchestrator reply for chat ${chatId}: "${(reply || '').slice(0, 150)}"`);
 
     // Background persona extraction
     this._extractPersonaBackground(userMessage, reply, user).catch(() => {});
@@ -212,6 +220,8 @@ export class OrchestratorAgent {
       const emoji = workerDef.emoji || '✅';
       const label = workerDef.label || job.workerType;
 
+      logger.info(`[Orchestrator] Job completed event: ${job.id} [${job.workerType}] in chat ${chatId} (${job.duration}s) — result length: ${(job.result || '').length} chars`);
+
       // Truncate long results
       let resultText = job.result || 'Done.';
       if (resultText.length > 3000) {
@@ -232,6 +242,8 @@ export class OrchestratorAgent {
       const workerDef = WORKER_TYPES[job.workerType] || {};
       const label = workerDef.label || job.workerType;
 
+      logger.error(`[Orchestrator] Job failed event: ${job.id} [${job.workerType}] in chat ${chatId} — ${job.error}`);
+
       const msg = `❌ **${label} failed** (\`${job.id}\`): ${job.error}`;
 
       this.conversationManager.addMessage(chatId, 'assistant', msg);
@@ -242,6 +254,8 @@ export class OrchestratorAgent {
       const chatId = job.chatId;
       const workerDef = WORKER_TYPES[job.workerType] || {};
       const label = workerDef.label || job.workerType;
+
+      logger.info(`[Orchestrator] Job cancelled event: ${job.id} [${job.workerType}] in chat ${chatId}`);
 
       const msg = `🚫 **${label} cancelled** (\`${job.id}\`)`;
       this._sendUpdate(chatId, msg);
@@ -258,6 +272,8 @@ export class OrchestratorAgent {
     const callbacks = this._chatCallbacks.get(chatId) || {};
     const onUpdate = callbacks.onUpdate;
     const sendPhoto = callbacks.sendPhoto;
+
+    logger.info(`[Orchestrator] Spawning worker for job ${job.id} [${job.workerType}] in chat ${chatId} — task: "${job.task.slice(0, 120)}"`);
 
     const workerDef = WORKER_TYPES[job.workerType] || {};
     const abortController = new AbortController();
@@ -305,6 +321,7 @@ export class OrchestratorAgent {
     // Get scoped tools and skill
     const tools = getToolsForWorker(job.workerType);
     const skillId = this.conversationManager.getSkill(chatId);
+    logger.debug(`[Orchestrator] Worker ${job.id} config: ${tools.length} tools, skill=${skillId || 'none'}, brain=${this.config.brain.provider}/${this.config.brain.model}`);
 
     const worker = new WorkerAgent({
       config: this.config,
@@ -316,6 +333,7 @@ export class OrchestratorAgent {
         onProgress: (text) => addActivity(text),
         onUpdate, // Real bot onUpdate for tools (coder.js smart output needs message_id)
         onComplete: (result) => {
+          logger.info(`[Worker ${job.id}] Completed — result: "${(result || '').slice(0, 150)}"`);
           // Final status message update
           if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
           if (statusMsgId && onUpdate) {
@@ -324,6 +342,7 @@ export class OrchestratorAgent {
           this.jobManager.completeJob(job.id, result);
         },
         onError: (err) => {
+          logger.error(`[Worker ${job.id}] Error — ${err.message || String(err)}`);
           if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
           if (statusMsgId && onUpdate) {
             onUpdate(buildStatusText('error'), { editMessageId: statusMsgId }).catch(() => {});
@@ -349,7 +368,7 @@ export class OrchestratorAgent {
     const logger = getLogger();
 
     for (let depth = startDepth; depth < maxDepth; depth++) {
-      logger.debug(`Orchestrator loop iteration ${depth + 1}/${maxDepth}`);
+      logger.info(`[Orchestrator] LLM call ${depth + 1}/${maxDepth} for chat ${chatId} — sending ${messages.length} messages`);
 
       const response = await this.orchestratorProvider.chat({
         system: this._getSystemPrompt(chatId, user),
@@ -357,8 +376,11 @@ export class OrchestratorAgent {
         tools: orchestratorToolDefinitions,
       });
 
+      logger.info(`[Orchestrator] LLM response: stopReason=${response.stopReason}, text=${(response.text || '').length} chars, toolCalls=${(response.toolCalls || []).length}`);
+
       if (response.stopReason === 'end_turn') {
         const reply = response.text || '';
+        logger.info(`[Orchestrator] End turn — final reply: "${reply.slice(0, 200)}"`);
         this.conversationManager.addMessage(chatId, 'assistant', reply);
         return reply;
       }
@@ -367,14 +389,15 @@ export class OrchestratorAgent {
         messages.push({ role: 'assistant', content: response.rawContent });
 
         if (response.text && response.text.trim()) {
-          logger.info(`Orchestrator thinking: ${response.text.slice(0, 200)}`);
+          logger.info(`[Orchestrator] Thinking: "${response.text.slice(0, 200)}"`);
         }
 
         const toolResults = [];
 
         for (const block of response.toolCalls) {
           const summary = this._formatToolSummary(block.name, block.input);
-          logger.info(`Orchestrator tool: ${summary}`);
+          logger.info(`[Orchestrator] Calling tool: ${block.name} — ${summary}`);
+          logger.debug(`[Orchestrator] Tool input: ${JSON.stringify(block.input).slice(0, 300)}`);
           await this._sendUpdate(chatId, `⚡ ${summary}`);
 
           const result = await executeOrchestratorTool(block.name, block.input, {
@@ -383,6 +406,8 @@ export class OrchestratorAgent {
             config: this.config,
             spawnWorker: (job) => this._spawnWorker(job),
           });
+
+          logger.info(`[Orchestrator] Tool result for ${block.name}: ${JSON.stringify(result).slice(0, 200)}`);
 
           toolResults.push({
             type: 'tool_result',
@@ -396,7 +421,7 @@ export class OrchestratorAgent {
       }
 
       // Unexpected stop reason
-      logger.warn(`Unexpected stopReason: ${response.stopReason}`);
+      logger.warn(`[Orchestrator] Unexpected stopReason: ${response.stopReason}`);
       if (response.text) {
         this.conversationManager.addMessage(chatId, 'assistant', response.text);
         return response.text;
@@ -404,6 +429,7 @@ export class OrchestratorAgent {
       return 'Something went wrong — unexpected response from the model.';
     }
 
+    logger.warn(`[Orchestrator] Reached max depth (${maxDepth}) for chat ${chatId}`);
     const depthWarning = `Reached maximum orchestrator depth (${maxDepth}).`;
     this.conversationManager.addMessage(chatId, 'assistant', depthWarning);
     return depthWarning;

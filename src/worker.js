@@ -47,29 +47,39 @@ export class WorkerAgent {
 
     // Max tool depth from config
     this.maxDepth = config.brain.max_tool_depth || 12;
+
+    const logger = getLogger();
+    logger.info(`[Worker ${jobId}] Created: type=${workerType}, provider=${config.brain.provider}/${config.brain.model}, tools=${tools.length}, maxDepth=${this.maxDepth}, skill=${skillId || 'none'}`);
   }
 
   /** Cancel this worker. */
   cancel() {
     this._cancelled = true;
     this.abortController.abort();
-    getLogger().info(`Worker ${this.jobId} [${this.workerType}] cancelled`);
+    getLogger().info(`[Worker ${this.jobId}] Cancel signal sent — aborting ${this.workerType} worker`);
   }
 
   /** Run the worker loop with the given task. */
   async run(task) {
     const logger = getLogger();
-    logger.info(`Worker ${this.jobId} [${this.workerType}] starting: ${task.slice(0, 100)}`);
+    logger.info(`[Worker ${this.jobId}] Starting task: "${task.slice(0, 150)}"`);
 
     const messages = [{ role: 'user', content: task }];
 
     try {
       const result = await this._runLoop(messages);
-      if (this._cancelled) return; // don't report if cancelled
+      if (this._cancelled) {
+        logger.info(`[Worker ${this.jobId}] Run completed but worker was cancelled — skipping callbacks`);
+        return;
+      }
+      logger.info(`[Worker ${this.jobId}] Run finished successfully — result: "${(result || '').slice(0, 150)}"`);
       if (this.callbacks.onComplete) this.callbacks.onComplete(result);
     } catch (err) {
-      if (this._cancelled) return;
-      logger.error(`Worker ${this.jobId} error: ${err.message}`);
+      if (this._cancelled) {
+        logger.info(`[Worker ${this.jobId}] Run threw error but worker was cancelled — ignoring: ${err.message}`);
+        return;
+      }
+      logger.error(`[Worker ${this.jobId}] Run failed: ${err.message}`);
       if (this.callbacks.onError) this.callbacks.onError(err);
     }
   }
@@ -78,9 +88,12 @@ export class WorkerAgent {
     const logger = getLogger();
 
     for (let depth = 0; depth < this.maxDepth; depth++) {
-      if (this._cancelled) throw new Error('Worker cancelled');
+      if (this._cancelled) {
+        logger.info(`[Worker ${this.jobId}] Cancelled before iteration ${depth + 1}`);
+        throw new Error('Worker cancelled');
+      }
 
-      logger.debug(`Worker ${this.jobId} loop iteration ${depth + 1}/${this.maxDepth}`);
+      logger.info(`[Worker ${this.jobId}] LLM call ${depth + 1}/${this.maxDepth} — sending ${messages.length} messages`);
 
       const response = await this.provider.chat({
         system: this.systemPrompt,
@@ -89,10 +102,16 @@ export class WorkerAgent {
         signal: this.abortController.signal,
       });
 
-      if (this._cancelled) throw new Error('Worker cancelled');
+      logger.info(`[Worker ${this.jobId}] LLM response: stopReason=${response.stopReason}, text=${(response.text || '').length} chars, toolCalls=${(response.toolCalls || []).length}`);
+
+      if (this._cancelled) {
+        logger.info(`[Worker ${this.jobId}] Cancelled after LLM response`);
+        throw new Error('Worker cancelled');
+      }
 
       // End turn — return the text
       if (response.stopReason === 'end_turn') {
+        logger.info(`[Worker ${this.jobId}] End turn — final response: "${(response.text || '').slice(0, 200)}"`);
         return response.text || 'Task completed.';
       }
 
@@ -102,16 +121,20 @@ export class WorkerAgent {
 
         // Log thinking text
         if (response.text && response.text.trim()) {
-          logger.debug(`Worker ${this.jobId} thinking: ${response.text.slice(0, 200)}`);
+          logger.info(`[Worker ${this.jobId}] Thinking: "${response.text.slice(0, 200)}"`);
         }
 
         const toolResults = [];
 
         for (const block of response.toolCalls) {
-          if (this._cancelled) throw new Error('Worker cancelled');
+          if (this._cancelled) {
+            logger.info(`[Worker ${this.jobId}] Cancelled before executing tool ${block.name}`);
+            throw new Error('Worker cancelled');
+          }
 
           const summary = this._formatToolSummary(block.name, block.input);
-          logger.info(`Worker ${this.jobId} tool: ${summary}`);
+          logger.info(`[Worker ${this.jobId}] Executing tool: ${block.name} — ${summary}`);
+          logger.debug(`[Worker ${this.jobId}] Tool input: ${JSON.stringify(block.input).slice(0, 300)}`);
           this._reportProgress(`🔧 ${summary}`);
 
           const result = await executeTool(block.name, block.input, {
@@ -122,10 +145,13 @@ export class WorkerAgent {
             sendPhoto: this.callbacks.sendPhoto || null,
           });
 
+          const resultStr = this._truncateResult(block.name, result);
+          logger.info(`[Worker ${this.jobId}] Tool ${block.name} result: ${resultStr.slice(0, 200)}`);
+
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
-            content: this._truncateResult(block.name, result),
+            content: resultStr,
           });
         }
 
@@ -134,10 +160,11 @@ export class WorkerAgent {
       }
 
       // Unexpected stop reason
-      logger.warn(`Worker ${this.jobId} unexpected stopReason: ${response.stopReason}`);
+      logger.warn(`[Worker ${this.jobId}] Unexpected stopReason: ${response.stopReason}`);
       return response.text || 'Worker finished with unexpected response.';
     }
 
+    logger.warn(`[Worker ${this.jobId}] Reached max tool depth (${this.maxDepth})`);
     return `Worker reached maximum tool depth (${this.maxDepth}). Partial results may be available.`;
   }
 

@@ -87,6 +87,8 @@ export function startBot(config, agent, conversationManager, jobManager) {
     }
 
     try {
+      logger.info(`[Bot] Callback query from chat ${chatId}: ${data}`);
+
       if (data.startsWith('brain_provider:')) {
         // User picked a provider — show model list
         const providerKey = data.split(':')[1];
@@ -126,9 +128,11 @@ export function startBot(config, agent, conversationManager, jobManager) {
           },
         );
 
+        logger.info(`[Bot] Brain switch request: ${providerKey}/${modelId} from chat ${chatId}`);
         const result = await agent.switchBrain(providerKey, modelId);
         if (result && typeof result === 'object' && result.error) {
           // Validation failed — keep current model
+          logger.warn(`[Bot] Brain switch failed: ${result.error}`);
           const current = agent.getBrainInfo();
           await bot.editMessageText(
             `❌ Failed to switch: ${result.error}\n\nKeeping *${current.providerName}* / *${current.modelLabel}*`,
@@ -140,6 +144,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
           );
         } else if (result) {
           // API key missing — ask for it
+          logger.info(`[Bot] Brain switch needs API key: ${result} for ${providerKey}/${modelId}`);
           pendingBrainKey.set(chatId, { providerKey, modelId });
           await bot.editMessageText(
             `🔑 *${providerDef.name}* API key is required.\n\nPlease send your \`${result}\` now.\n\nOr send *cancel* to abort.`,
@@ -151,6 +156,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
           );
         } else {
           const info = agent.getBrainInfo();
+          logger.info(`[Bot] Brain switched successfully to ${info.providerName}/${info.modelLabel}`);
           await bot.editMessageText(
             `🧠 Brain switched to *${info.providerName}* / *${info.modelLabel}*`,
             {
@@ -206,10 +212,12 @@ export function startBot(config, agent, conversationManager, jobManager) {
         const skillId = data.split(':')[1];
         const skill = getUnifiedSkillById(skillId);
         if (!skill) {
+          logger.warn(`[Bot] Unknown skill selected: ${skillId}`);
           await bot.answerCallbackQuery(query.id, { text: 'Unknown skill' });
           return;
         }
 
+        logger.info(`[Bot] Skill activated: ${skill.name} (${skillId}) for chat ${chatId}`);
         agent.setSkill(chatId, skillId);
         await bot.editMessageText(
           `${skill.emoji} *${skill.name}* activated!\n\n_${skill.description}_\n\nThe agent will now respond as this persona. Use /skills reset to return to default.`,
@@ -222,6 +230,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
         await bot.answerCallbackQuery(query.id);
 
       } else if (data === 'skill_reset') {
+        logger.info(`[Bot] Skill reset for chat ${chatId}`);
         agent.clearSkill(chatId);
         await bot.editMessageText('🔄 Skill cleared — back to default persona.', {
           chat_id: chatId,
@@ -263,8 +272,10 @@ export function startBot(config, agent, conversationManager, jobManager) {
 
       } else if (data.startsWith('skill_custom_delete:')) {
         const skillId = data.slice('skill_custom_delete:'.length);
+        logger.info(`[Bot] Custom skill delete request: ${skillId} from chat ${chatId}`);
         const activeSkill = agent.getActiveSkill(chatId);
         if (activeSkill && activeSkill.id === skillId) {
+          logger.info(`[Bot] Clearing active skill before deletion: ${skillId}`);
           agent.clearSkill(chatId);
         }
         const deleted = deleteCustomSkill(skillId);
@@ -317,8 +328,10 @@ export function startBot(config, agent, conversationManager, jobManager) {
       // ── Job cancellation callbacks ────────────────────────────────
       } else if (data.startsWith('cancel_job:')) {
         const jobId = data.slice('cancel_job:'.length);
+        logger.info(`[Bot] Job cancel request via callback: ${jobId} from chat ${chatId}`);
         const job = jobManager.cancelJob(jobId);
         if (job) {
+          logger.info(`[Bot] Job cancelled via callback: ${jobId} [${job.workerType}]`);
           await bot.editMessageText(`🚫 Cancelled job \`${jobId}\` (${job.workerType})`, {
             chat_id: chatId,
             message_id: query.message.message_id,
@@ -334,6 +347,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
         await bot.answerCallbackQuery(query.id);
 
       } else if (data === 'cancel_all_jobs') {
+        logger.info(`[Bot] Cancel all jobs request via callback from chat ${chatId}`);
         const cancelled = jobManager.cancelAllForChat(chatId);
         const msg = cancelled.length > 0
           ? `🚫 Cancelled ${cancelled.length} job(s).`
@@ -345,7 +359,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
         await bot.answerCallbackQuery(query.id);
       }
     } catch (err) {
-      logger.error(`Callback query error: ${err.message}`);
+      logger.error(`[Bot] Callback query error for "${data}" in chat ${chatId}: ${err.message}`);
       await bot.answerCallbackQuery(query.id, { text: 'Error' });
     }
   });
@@ -375,6 +389,10 @@ export function startBot(config, agent, conversationManager, jobManager) {
         const merged = batch.messages.length === 1
           ? batch.messages[0]
           : batch.messages.map((m, i) => `[${i + 1}]: ${m}`).join('\n\n');
+
+        if (batch.messages.length > 1) {
+          logger.info(`[Bot] Batch merged ${batch.messages.length} messages for chat ${key}`);
+        }
 
         // First resolver gets the merged text, rest get null (skip)
         batch.resolvers[0](merged);
@@ -419,6 +437,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
           }
           pendingCustomSkill.delete(chatId);
           const skill = addCustomSkill({ name: pending.name, systemPrompt: content });
+          logger.info(`[Bot] Custom skill created from file: "${skill.name}" (${skill.id}) — ${content.length} chars, by ${username} in chat ${chatId}`);
           agent.setSkill(chatId, skill.id);
           await bot.sendMessage(
             chatId,
@@ -443,10 +462,12 @@ export function startBot(config, agent, conversationManager, jobManager) {
       pendingBrainKey.delete(chatId);
 
       if (text.toLowerCase() === 'cancel') {
+        logger.info(`[Bot] Brain key input cancelled by ${username} in chat ${chatId}`);
         await bot.sendMessage(chatId, 'Brain change cancelled.');
         return;
       }
 
+      logger.info(`[Bot] Brain key received for ${pending.providerKey}/${pending.modelId} from ${username} in chat ${chatId}`);
       await bot.sendMessage(chatId, '⏳ Verifying API key...');
       const switchResult = await agent.switchBrainWithKey(pending.providerKey, pending.modelId, text);
       if (switchResult && switchResult.error) {
@@ -492,6 +513,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
       if (pending.step === 'prompt') {
         pendingCustomSkill.delete(chatId);
         const skill = addCustomSkill({ name: pending.name, systemPrompt: text });
+        logger.info(`[Bot] Custom skill created: "${skill.name}" (${skill.id}) by ${username} in chat ${chatId}`);
         agent.setSkill(chatId, skill.id);
         await bot.sendMessage(
           chatId,
@@ -504,6 +526,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
 
     // Handle commands — these bypass batching entirely
     if (text === '/brain') {
+      logger.info(`[Bot] /brain command from ${username} (${userId}) in chat ${chatId}`);
       const info = agent.getBrainInfo();
       const providerKeys = Object.keys(PROVIDERS);
       const buttons = providerKeys.map((key) => ([{
@@ -524,12 +547,14 @@ export function startBot(config, agent, conversationManager, jobManager) {
     }
 
     if (text === '/skills reset' || text === '/skill reset') {
+      logger.info(`[Bot] /skills reset from ${username} (${userId}) in chat ${chatId}`);
       agent.clearSkill(chatId);
       await bot.sendMessage(chatId, '🔄 Skill cleared — back to default persona.');
       return;
     }
 
     if (text === '/skills' || text === '/skill') {
+      logger.info(`[Bot] /skills command from ${username} (${userId}) in chat ${chatId}`);
       const categories = getUnifiedCategoryList();
       const activeSkill = agent.getActiveSkill(chatId);
       const buttons = categories.map((cat) => ([{
@@ -612,6 +637,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
     }
 
     if (text === '/jobs') {
+      logger.info(`[Bot] /jobs command from ${username} (${userId}) in chat ${chatId}`);
       const jobs = jobManager.getJobsForChat(chatId);
       if (jobs.length === 0) {
         await bot.sendMessage(chatId, 'No jobs for this chat.');
@@ -629,12 +655,15 @@ export function startBot(config, agent, conversationManager, jobManager) {
     }
 
     if (text === '/cancel') {
+      logger.info(`[Bot] /cancel command from ${username} (${userId}) in chat ${chatId}`);
       const running = jobManager.getRunningJobsForChat(chatId);
       if (running.length === 0) {
+        logger.debug(`[Bot] /cancel — no running jobs for chat ${chatId}`);
         await bot.sendMessage(chatId, 'No running jobs to cancel.');
         return;
       }
       if (running.length === 1) {
+        logger.info(`[Bot] /cancel — single job ${running[0].id}, cancelling directly`);
         const job = jobManager.cancelJob(running[0].id);
         if (job) {
           await bot.sendMessage(chatId, `🚫 Cancelled \`${job.id}\` (${job.workerType})`, { parse_mode: 'Markdown' });
@@ -642,6 +671,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
         return;
       }
       // Multiple running — show inline keyboard
+      logger.info(`[Bot] /cancel — ${running.length} running jobs, showing picker`);
       const buttons = running.map((j) => ([{
         text: `🚫 ${j.workerType} (${j.id})`,
         callback_data: `cancel_job:${j.id}`,
@@ -780,6 +810,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
           }
         };
 
+        logger.debug(`[Bot] Sending to orchestrator: chat ${chatId}, text="${mergedText.slice(0, 80)}"`);
         const reply = await agent.processMessage(chatId, mergedText, {
           id: userId,
           username,
@@ -787,6 +818,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
 
         clearInterval(typingInterval);
 
+        logger.info(`[Bot] Reply for chat ${chatId}: ${(reply || '').length} chars`);
         const chunks = splitMessage(reply || 'Done.');
         for (const chunk of chunks) {
           try {
@@ -798,7 +830,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
         }
       } catch (err) {
         clearInterval(typingInterval);
-        logger.error(`Error processing message: ${err.message}`);
+        logger.error(`[Bot] Error processing message in chat ${chatId}: ${err.message}`);
         await bot.sendMessage(chatId, `Error: ${err.message}`);
       }
     });

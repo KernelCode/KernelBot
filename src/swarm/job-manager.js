@@ -23,7 +23,9 @@ export class JobManager extends EventEmitter {
   createJob(chatId, workerType, task) {
     const job = new Job({ chatId, workerType, task });
     this.jobs.set(job.id, job);
-    getLogger().info(`Job created: ${job.id} [${workerType}] for chat ${chatId}`);
+    const logger = getLogger();
+    logger.info(`[JobManager] Job created: ${job.id} [${workerType}] for chat ${chatId} — "${task.slice(0, 100)}"`);
+    logger.debug(`[JobManager] Total jobs tracked: ${this.jobs.size}`);
     return job;
   }
 
@@ -31,7 +33,7 @@ export class JobManager extends EventEmitter {
   startJob(jobId) {
     const job = this._get(jobId);
     job.transition('running');
-    getLogger().info(`Job started: ${job.id}`);
+    getLogger().info(`[JobManager] Job ${job.id} [${job.workerType}] → running`);
   }
 
   /** Move a job to completed with a result. */
@@ -39,7 +41,7 @@ export class JobManager extends EventEmitter {
     const job = this._get(jobId);
     job.transition('completed');
     job.result = result;
-    getLogger().info(`Job completed: ${job.id} (${job.duration}s)`);
+    getLogger().info(`[JobManager] Job ${job.id} [${job.workerType}] → completed (${job.duration}s) — result: ${(result || '').length} chars`);
     this.emit('job:completed', job);
   }
 
@@ -48,55 +50,71 @@ export class JobManager extends EventEmitter {
     const job = this._get(jobId);
     job.transition('failed');
     job.error = typeof error === 'string' ? error : error?.message || String(error);
-    getLogger().error(`Job failed: ${job.id} — ${job.error}`);
+    getLogger().error(`[JobManager] Job ${job.id} [${job.workerType}] → failed (${job.duration}s) — ${job.error}`);
     this.emit('job:failed', job);
   }
 
   /** Cancel a specific job. Returns the job or null if not found / already terminal. */
   cancelJob(jobId) {
+    const logger = getLogger();
     const job = this.jobs.get(jobId);
-    if (!job || job.isTerminal) return null;
+    if (!job) {
+      logger.warn(`[JobManager] Cancel: job ${jobId} not found`);
+      return null;
+    }
+    if (job.isTerminal) {
+      logger.warn(`[JobManager] Cancel: job ${jobId} already in terminal state (${job.status})`);
+      return null;
+    }
 
+    const prevStatus = job.status;
     job.transition('cancelled');
     // Abort the worker if it's running
     if (job.worker && typeof job.worker.cancel === 'function') {
+      logger.info(`[JobManager] Job ${job.id} [${job.workerType}] → cancelled (was: ${prevStatus}) — sending cancel to worker`);
       job.worker.cancel();
+    } else {
+      logger.info(`[JobManager] Job ${job.id} [${job.workerType}] → cancelled (was: ${prevStatus}) — no active worker to abort`);
     }
-    getLogger().info(`Job cancelled: ${job.id}`);
     this.emit('job:cancelled', job);
     return job;
   }
 
   /** Cancel all non-terminal jobs for a chat. Returns array of cancelled jobs. */
   cancelAllForChat(chatId) {
+    const logger = getLogger();
+    const allForChat = [...this.jobs.values()].filter(j => j.chatId === chatId && !j.isTerminal);
+    logger.info(`[JobManager] Cancel all for chat ${chatId} — ${allForChat.length} active jobs found`);
+
     const cancelled = [];
-    for (const job of this.jobs.values()) {
-      if (job.chatId === chatId && !job.isTerminal) {
-        job.transition('cancelled');
-        if (job.worker && typeof job.worker.cancel === 'function') {
-          job.worker.cancel();
-        }
-        this.emit('job:cancelled', job);
-        cancelled.push(job);
+    for (const job of allForChat) {
+      const prevStatus = job.status;
+      job.transition('cancelled');
+      if (job.worker && typeof job.worker.cancel === 'function') {
+        job.worker.cancel();
       }
-    }
-    if (cancelled.length) {
-      getLogger().info(`Cancelled ${cancelled.length} jobs for chat ${chatId}`);
+      logger.info(`[JobManager] Job ${job.id} [${job.workerType}] → cancelled (was: ${prevStatus})`);
+      this.emit('job:cancelled', job);
+      cancelled.push(job);
     }
     return cancelled;
   }
 
   /** Get all jobs for a chat (most recent first). */
   getJobsForChat(chatId) {
-    return [...this.jobs.values()]
+    const jobs = [...this.jobs.values()]
       .filter((j) => j.chatId === chatId)
       .sort((a, b) => b.createdAt - a.createdAt);
+    getLogger().debug(`[JobManager] getJobsForChat(${chatId}): ${jobs.length} jobs`);
+    return jobs;
   }
 
   /** Get only running jobs for a chat. */
   getRunningJobsForChat(chatId) {
-    return [...this.jobs.values()]
+    const running = [...this.jobs.values()]
       .filter((j) => j.chatId === chatId && j.status === 'running');
+    getLogger().debug(`[JobManager] getRunningJobsForChat(${chatId}): ${running.length} running`);
+    return running;
   }
 
   /** Get a job by id. */
@@ -114,17 +132,27 @@ export class JobManager extends EventEmitter {
         removed++;
       }
     }
-    if (removed) getLogger().info(`JobManager cleanup: removed ${removed} old jobs`);
+    if (removed) {
+      getLogger().info(`[JobManager] Cleanup: removed ${removed} old jobs — ${this.jobs.size} remaining`);
+    }
   }
 
   /** Enforce timeout on running jobs. Called periodically. */
   enforceTimeouts() {
     const now = Date.now();
+    let checkedCount = 0;
     for (const job of this.jobs.values()) {
-      if (job.status === 'running' && job.startedAt && now - job.startedAt > this.jobTimeoutMs) {
-        getLogger().warn(`Job ${job.id} timed out after ${this.jobTimeoutMs / 1000}s`);
-        this.failJob(job.id, `Timed out after ${this.jobTimeoutMs / 1000}s`);
+      if (job.status === 'running' && job.startedAt) {
+        checkedCount++;
+        const elapsed = now - job.startedAt;
+        if (elapsed > this.jobTimeoutMs) {
+          getLogger().warn(`[JobManager] Job ${job.id} [${job.workerType}] timed out — elapsed: ${Math.round(elapsed / 1000)}s, limit: ${this.jobTimeoutMs / 1000}s`);
+          this.failJob(job.id, `Timed out after ${this.jobTimeoutMs / 1000}s`);
+        }
       }
+    }
+    if (checkedCount > 0) {
+      getLogger().debug(`[JobManager] Timeout check: ${checkedCount} running jobs checked`);
     }
   }
 
