@@ -199,7 +199,12 @@ export class Agent {
     const tools = selectToolsForMessage(userMessage, toolDefinitions);
     logger.debug(`Selected ${tools.length}/${toolDefinitions.length} tools for message`);
 
-    return await this._runLoop(chatId, messages, user, 0, max_tool_depth, tools, !!intent);
+    const reply = await this._runLoop(chatId, messages, user, 0, max_tool_depth, tools, !!intent);
+
+    // Background persona extraction — fire-and-forget, never blocks the reply
+    this._extractPersonaBackground(userMessage, reply, user).catch(() => {});
+
+    return reply;
   }
 
   _formatToolSummary(name, input) {
@@ -370,6 +375,63 @@ export class Agent {
   _isIntentSatisfied(allUsedTools) {
     const uniqueBrowserTools = new Set(allUsedTools.filter((t) => BROWSER_TOOLS.has(t)));
     return uniqueBrowserTools.size >= 2;
+  }
+
+  /**
+   * Background persona extraction — runs a lightweight LLM call after each
+   * message to extract user profile information automatically.
+   * Fire-and-forget; failures are silently logged and never surface to the user.
+   */
+  async _extractPersonaBackground(userMessage, reply, user) {
+    const logger = getLogger();
+
+    if (!this.personaManager || !user?.id) return;
+    // Skip very short messages unlikely to contain persona info
+    if (!userMessage || userMessage.trim().length < 10) return;
+
+    const currentPersona = this.personaManager.load(user.id, user.username);
+
+    const system = [
+      'You are a user-profile extractor. Analyze the user\'s message and extract any NEW personal information.',
+      '',
+      'Look for: name, location, timezone, language, technical skills, expertise level,',
+      'projects they\'re working on, tool/framework preferences, job title, role, company,',
+      'interests, hobbies, communication style, or any other personal details.',
+      '',
+      'RULES:',
+      '- Only extract FACTUAL information explicitly stated or strongly implied',
+      '- Do NOT infer personality traits from a single message',
+      '- Do NOT add information already in the profile',
+      '- If there IS new info, return the COMPLETE updated profile in the EXACT same markdown format',
+      '- If there is NO new info, respond with exactly: NONE',
+    ].join('\n');
+
+    const userPrompt = [
+      'Current profile:',
+      '```',
+      currentPersona,
+      '```',
+      '',
+      `User's message: "${userMessage}"`,
+      '',
+      'Return the updated profile markdown or NONE.',
+    ].join('\n');
+
+    try {
+      const response = await this.provider.chat({
+        system,
+        messages: [{ role: 'user', content: userPrompt }],
+      });
+
+      const text = (response.text || '').trim();
+
+      if (text && text !== 'NONE' && text.includes('# User Profile')) {
+        this.personaManager.save(user.id, text);
+        logger.info(`Auto-extracted persona update for user ${user.id} (${user.username})`);
+      }
+    } catch (err) {
+      logger.debug(`Persona extraction skipped: ${err.message}`);
+    }
   }
 
   async _runLoop(chatId, messages, user, startDepth, maxDepth, tools, hasIntent = false) {

@@ -8,14 +8,19 @@ export class AnthropicProvider extends BaseProvider {
   }
 
   async chat({ system, messages, tools }) {
-    const response = await this.client.messages.create({
+    const params = {
       model: this.model,
       max_tokens: this.maxTokens,
       temperature: this.temperature,
       system,
-      tools,
       messages,
-    });
+    };
+
+    if (tools && tools.length > 0) {
+      params.tools = tools;
+    }
+
+    const response = await this.client.messages.create(params);
 
     const stopReason = response.stop_reason === 'end_turn' ? 'end_turn' : 'tool_use';
 
