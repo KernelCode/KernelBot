@@ -208,38 +208,71 @@ export class Agent {
   }
 
   _formatToolSummary(name, input) {
-    const key = {
-      execute_command: 'command',
-      read_file: 'path',
-      write_file: 'path',
-      list_directory: 'path',
-      git_clone: 'repo',
-      git_checkout: 'branch',
-      git_commit: 'message',
-      git_push: 'dir',
-      git_diff: 'dir',
-      github_create_pr: 'title',
-      github_create_repo: 'name',
-      github_list_prs: 'repo',
-      github_get_pr_diff: 'repo',
-      github_post_review: 'repo',
-      spawn_claude_code: 'prompt',
-      kill_process: 'pid',
-      docker_exec: 'container',
-      docker_logs: 'container',
-      docker_compose: 'action',
-      curl_url: 'url',
-      check_port: 'port',
-      screenshot_website: 'url',
-      send_image: 'file_path',
-      web_search: 'query',
-      browse_website: 'url',
-      extract_content: 'selector',
-      interact_with_page: 'url',
-      update_user_persona: 'content',
-    }[name];
-    const val = key && input[key] ? String(input[key]).slice(0, 120) : JSON.stringify(input).slice(0, 120);
-    return `${name}: ${val}`;
+    const _short = (s, len = 80) => s && s.length > len ? s.slice(0, len) + '...' : s;
+    const _host = (url) => { try { return new URL(url).hostname; } catch { return url; } };
+
+    // Describe interact_with_page actions in plain English
+    const _describeActions = (actions) => {
+      if (!Array.isArray(actions) || actions.length === 0) return 'interacting with page';
+      return actions.map((a) => {
+        if (a.type === 'click') {
+          // Extract readable target from selector
+          const sel = a.selector || '';
+          const href = sel.match(/href=['"](.*?)['"]/)?.[1];
+          if (href) return `clicking link to ${_short(href, 50)}`;
+          const text = sel.match(/text\(\)=['"](.*?)['"]/)?.[1] || a.text;
+          if (text) return `clicking "${_short(text, 40)}"`;
+          return `clicking ${_short(sel, 50)}`;
+        }
+        if (a.type === 'type') return `typing "${_short(a.text || '', 40)}"`;
+        if (a.type === 'scroll') return `scrolling ${a.direction || 'down'}`;
+        if (a.type === 'wait') return 'waiting...';
+        if (a.type === 'evaluate') return 'running script';
+        return a.type || 'interacting';
+      }).join(', ');
+    };
+
+    switch (name) {
+      // Web & browser
+      case 'web_search':        return `Searching: "${_short(input.query, 60)}"`;
+      case 'browse_website':    return `Opening ${_host(input.url)}`;
+      case 'interact_with_page': return _describeActions(input.actions);
+      case 'extract_content':   return `Extracting content from page`;
+      case 'screenshot_website': return `Taking screenshot of ${_host(input.url)}`;
+      case 'curl_url':          return `Fetching ${_host(input.url)}`;
+
+      // Files & system
+      case 'execute_command':   return `Running: ${_short(input.command, 60)}`;
+      case 'read_file':         return `Reading ${_short(input.path)}`;
+      case 'write_file':        return `Writing ${_short(input.path)}`;
+      case 'list_directory':    return `Listing ${_short(input.path || '.')}`;
+      case 'check_port':        return `Checking port ${input.port}`;
+      case 'kill_process':      return `Killing process ${input.pid}`;
+      case 'send_image':        return `Sending image`;
+
+      // Git & GitHub
+      case 'git_clone':         return `Cloning ${_short(input.repo)}`;
+      case 'git_checkout':      return `Switching to branch ${input.branch}`;
+      case 'git_commit':        return `Committing: "${_short(input.message, 50)}"`;
+      case 'git_push':          return `Pushing changes`;
+      case 'git_diff':          return `Checking diff`;
+      case 'github_create_pr':  return `Creating PR: "${_short(input.title, 50)}"`;
+      case 'github_create_repo': return `Creating repo ${input.name}`;
+      case 'github_list_prs':   return `Listing PRs for ${_short(input.repo)}`;
+      case 'github_get_pr_diff': return `Getting PR diff`;
+      case 'github_post_review': return `Posting review`;
+
+      // Docker
+      case 'docker_exec':       return `Running in container ${_short(input.container)}`;
+      case 'docker_logs':       return `Fetching logs from ${_short(input.container)}`;
+      case 'docker_compose':    return `Docker compose ${input.action}`;
+
+      // Agent
+      case 'spawn_claude_code': return `Coding: ${_short(input.prompt, 60)}`;
+      case 'update_user_persona': return `Updating your profile`;
+
+      default:                  return `${name}`;
+    }
   }
 
   async _sendUpdate(text) {
@@ -491,7 +524,7 @@ export class Agent {
 
           const summary = this._formatToolSummary(block.name, block.input);
           logger.info(`Tool call: ${summary}`);
-          await this._sendUpdate(`🔧 \`${summary}\``);
+          await this._sendUpdate(`🔧 ${summary}`);
 
           const result = await executeTool(block.name, block.input, {
             config: this.config,
