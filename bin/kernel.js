@@ -19,6 +19,7 @@ import {
 } from '../src/utils/display.js';
 import { createAuditLogger } from '../src/security/audit.js';
 import { ConversationManager } from '../src/conversation.js';
+import { UserPersonaManager } from '../src/persona.js';
 import { Agent } from '../src/agent.js';
 import { startBot } from '../src/bot.js';
 import { createProvider, PROVIDERS } from '../src/providers/index.js';
@@ -144,7 +145,8 @@ async function startBotFlow(config) {
   }
 
   const conversationManager = new ConversationManager(config);
-  const agent = new Agent({ config, conversationManager });
+  const personaManager = new UserPersonaManager();
+  const agent = new Agent({ config, conversationManager, personaManager });
 
   startBot(config, agent, conversationManager);
   showStartupComplete();

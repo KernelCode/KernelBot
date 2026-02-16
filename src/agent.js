@@ -14,21 +14,25 @@ const MAX_RESULT_LENGTH = 3000;
 const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
 
 export class Agent {
-  constructor({ config, conversationManager }) {
+  constructor({ config, conversationManager, personaManager }) {
     this.config = config;
     this.conversationManager = conversationManager;
+    this.personaManager = personaManager;
     this.provider = createProvider(config);
     this._pending = new Map(); // chatId -> pending state
   }
 
-  /** Build the system prompt dynamically based on the chat's active skill. */
-  _getSystemPrompt(chatId) {
+  /** Build the system prompt dynamically based on the chat's active skill and user persona. */
+  _getSystemPrompt(chatId, user) {
     const skillId = this.conversationManager.getSkill(chatId);
-    if (skillId) {
-      const skill = getUnifiedSkillById(skillId);
-      if (skill) return getSystemPrompt(this.config, skill.systemPrompt);
+    const skillPrompt = skillId ? getUnifiedSkillById(skillId)?.systemPrompt : null;
+
+    let userPersona = null;
+    if (this.personaManager && user?.id) {
+      userPersona = this.personaManager.load(user.id, user.username);
     }
-    return getSystemPrompt(this.config);
+
+    return getSystemPrompt(this.config, skillPrompt || null, userPersona);
   }
 
   setSkill(chatId, skillId) {
@@ -227,6 +231,7 @@ export class Agent {
       browse_website: 'url',
       extract_content: 'selector',
       interact_with_page: 'url',
+      update_user_persona: 'content',
     }[name];
     const val = key && input[key] ? String(input[key]).slice(0, 120) : JSON.stringify(input).slice(0, 120);
     return `${name}: ${val}`;
@@ -260,6 +265,7 @@ export class Agent {
     const result = await executeTool(pending.block.name, pending.block.input, {
       config: this.config,
       user,
+      personaManager: this.personaManager,
       onUpdate: this._onUpdate,
       sendPhoto: this._sendPhoto,
     });
@@ -306,7 +312,7 @@ export class Agent {
       const pauseMsg = await this._checkPause(chatId, block, user, pending.toolResults, pending.remainingBlocks.filter((b) => b !== block), pending.messages);
       if (pauseMsg) return pauseMsg;
 
-      const r = await executeTool(block.name, block.input, { config: this.config, user, onUpdate: this._onUpdate, sendPhoto: this._sendPhoto });
+      const r = await executeTool(block.name, block.input, { config: this.config, user, personaManager: this.personaManager, onUpdate: this._onUpdate, sendPhoto: this._sendPhoto });
       pending.toolResults.push({
         type: 'tool_result',
         tool_use_id: block.id,
@@ -330,7 +336,7 @@ export class Agent {
         type: 'credential',
         block,
         credential: missing,
-        context: { config: this.config, user },
+        context: { config: this.config, user, personaManager: this.personaManager },
         toolResults,
         remainingBlocks,
         messages,
@@ -345,7 +351,7 @@ export class Agent {
       this._pending.set(chatId, {
         type: 'confirmation',
         block,
-        context: { config: this.config, user },
+        context: { config: this.config, user, personaManager: this.personaManager },
         toolResults,
         remainingBlocks,
         messages,
@@ -376,7 +382,7 @@ export class Agent {
       logger.debug(`Agent loop iteration ${depth + 1}/${maxDepth}`);
 
       const response = await this.provider.chat({
-        system: this._getSystemPrompt(chatId),
+        system: this._getSystemPrompt(chatId, user),
         messages,
         tools: currentTools,
       });
@@ -428,6 +434,7 @@ export class Agent {
           const result = await executeTool(block.name, block.input, {
             config: this.config,
             user,
+            personaManager: this.personaManager,
             onUpdate: this._onUpdate,
             sendPhoto: this._sendPhoto,
           });

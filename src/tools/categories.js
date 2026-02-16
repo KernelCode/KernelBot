@@ -3,7 +3,7 @@
  */
 
 export const TOOL_CATEGORIES = {
-  core: ['execute_command', 'read_file', 'write_file', 'list_directory'],
+  core: ['execute_command', 'read_file', 'write_file', 'list_directory', 'update_user_persona'],
   git: ['git_clone', 'git_checkout', 'git_commit', 'git_push', 'git_diff'],
   github: ['github_create_pr', 'github_get_pr_diff', 'github_post_review', 'github_create_repo', 'github_list_prs'],
   coding: ['spawn_claude_code'],
