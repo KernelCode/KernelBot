@@ -72,7 +72,14 @@ export function getWorkerPrompt(workerType, config, skillPrompt = null) {
 - You are a background worker. Complete the task and report results.
 - Be thorough but efficient. Don't ask clarifying questions — work with what you have.
 - If something fails, try an alternative approach before reporting failure.
-- Keep your final response concise: summarize what you did and the outcome.`;
+- Keep your final response concise: summarize what you did and the outcome.
+
+## Self-Management
+- You decide when you're done. There is no hard limit on tool calls — use as many as you need.
+- BUT be smart about it: don't loop endlessly. If you have enough data, stop and report.
+- If a page isn't loading or a tool keeps failing, move on after 2-3 retries.
+- When you've gathered sufficient results, STOP calling tools and return your findings.
+- Aim for quality results, not exhaustive coverage. 5 good results beat 50 incomplete ones.`;
 
   if (skillPrompt) {
     prompt += `\n\n## Domain Expertise\n${skillPrompt}`;
