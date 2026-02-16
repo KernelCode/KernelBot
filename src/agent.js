@@ -30,9 +30,10 @@ export class Agent {
   /**
    * Switch to a different provider/model at runtime.
    * Resolves the API key from process.env automatically.
-   * Returns null on success, or an error string if the key is missing.
+   * Returns null on success, the envKey string if the key is missing,
+   * or an object { error: string } if the provider fails validation.
    */
-  switchBrain(providerKey, modelId) {
+  async switchBrain(providerKey, modelId) {
     const logger = getLogger();
     const providerDef = PROVIDERS[providerKey];
     if (!providerDef) return `Unknown provider: ${providerKey}`;
@@ -43,38 +44,58 @@ export class Agent {
       return envKey; // caller handles prompting
     }
 
-    this.config.brain.provider = providerKey;
-    this.config.brain.model = modelId;
-    this.config.brain.api_key = apiKey;
+    // Validate the new provider before committing changes
+    try {
+      // Build a temporary config to test
+      const testConfig = { ...this.config, brain: { ...this.config.brain, provider: providerKey, model: modelId, api_key: apiKey } };
+      const testProvider = createProvider(testConfig);
+      await testProvider.ping();
 
-    // Recreate the provider instance
-    this.provider = createProvider(this.config);
+      // Ping succeeded — commit changes
+      this.config.brain.provider = providerKey;
+      this.config.brain.model = modelId;
+      this.config.brain.api_key = apiKey;
+      this.provider = testProvider;
+      saveProviderToYaml(providerKey, modelId);
 
-    // Persist to config.yaml
-    saveProviderToYaml(providerKey, modelId);
-
-    logger.info(`Brain switched to ${providerDef.name} / ${modelId}`);
-    return null;
+      logger.info(`Brain switched to ${providerDef.name} / ${modelId}`);
+      return null;
+    } catch (err) {
+      // Validation failed — keep everything as-is
+      logger.error(`Brain switch failed for ${providerDef.name} / ${modelId}: ${err.message}`);
+      return { error: err.message };
+    }
   }
 
   /**
    * Finalize brain switch after API key was provided via chat.
+   * Returns null on success, or { error: string } on failure.
    */
-  switchBrainWithKey(providerKey, modelId, apiKey) {
+  async switchBrainWithKey(providerKey, modelId, apiKey) {
     const logger = getLogger();
     const providerDef = PROVIDERS[providerKey];
 
-    // Save the key
-    saveCredential(this.config, providerDef.envKey, apiKey);
+    try {
+      // Build a temporary config to validate before saving anything
+      const testConfig = { ...this.config, brain: { ...this.config.brain, provider: providerKey, model: modelId, api_key: apiKey } };
+      const testProvider = createProvider(testConfig);
+      await testProvider.ping();
 
-    this.config.brain.provider = providerKey;
-    this.config.brain.model = modelId;
-    this.config.brain.api_key = apiKey;
+      // Ping succeeded — save the key and commit changes
+      saveCredential(this.config, providerDef.envKey, apiKey);
+      this.config.brain.provider = providerKey;
+      this.config.brain.model = modelId;
+      this.config.brain.api_key = apiKey;
+      this.provider = testProvider;
+      saveProviderToYaml(providerKey, modelId);
 
-    this.provider = createProvider(this.config);
-    saveProviderToYaml(providerKey, modelId);
-
-    logger.info(`Brain switched to ${providerDef.name} / ${modelId} (new key saved)`);
+      logger.info(`Brain switched to ${providerDef.name} / ${modelId} (new key saved)`);
+      return null;
+    } catch (err) {
+      // Validation failed — don't save anything
+      logger.error(`Brain switch failed for ${providerDef.name} / ${modelId}: ${err.message}`);
+      return { error: err.message };
+    }
   }
 
   /**

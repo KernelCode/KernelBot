@@ -184,30 +184,50 @@ export function saveProviderToYaml(providerKey, modelId) {
  * Full interactive flow: change brain model + optionally enter API key.
  */
 export async function changeBrainModel(config, rl) {
+  const { createProvider } = await import('../providers/index.js');
   const { providerKey, modelId } = await promptProviderSelection(rl);
 
   const providerDef = PROVIDERS[providerKey];
-  const savedPath = saveProviderToYaml(providerKey, modelId);
-  console.log(chalk.dim(`\n  Saved to ${savedPath}`));
 
-  // Update live config
-  config.brain.provider = providerKey;
-  config.brain.model = modelId;
-
-  // Check if we have the API key for this provider
+  // Resolve API key
   const envKey = providerDef.envKey;
-  const currentKey = process.env[envKey];
-  if (!currentKey) {
+  let apiKey = process.env[envKey];
+  if (!apiKey) {
     const key = await ask(rl, chalk.cyan(`\n  ${providerDef.name} API key (${envKey}): `));
-    if (key.trim()) {
-      saveCredential(config, envKey, key.trim());
-      config.brain.api_key = key.trim();
-      console.log(chalk.dim('  Saved.\n'));
+    if (!key.trim()) {
+      console.log(chalk.yellow('\n  No API key provided. Brain not changed.\n'));
+      return config;
     }
-  } else {
-    config.brain.api_key = currentKey;
+    apiKey = key.trim();
   }
 
+  // Validate the new provider before saving anything
+  console.log(chalk.dim(`\n  Verifying ${providerDef.name} / ${modelId}...`));
+  const testConfig = { ...config, brain: { ...config.brain, provider: providerKey, model: modelId, api_key: apiKey } };
+  try {
+    const testProvider = createProvider(testConfig);
+    await testProvider.ping();
+  } catch (err) {
+    console.log(chalk.red(`\n  ✖ Verification failed: ${err.message}`));
+    console.log(chalk.yellow(`  Brain not changed. Keeping current model.\n`));
+    return config;
+  }
+
+  // Validation passed — save everything
+  const savedPath = saveProviderToYaml(providerKey, modelId);
+  console.log(chalk.dim(`  Saved to ${savedPath}`));
+
+  config.brain.provider = providerKey;
+  config.brain.model = modelId;
+  config.brain.api_key = apiKey;
+
+  // Save the key if it was newly entered
+  if (!process.env[envKey]) {
+    saveCredential(config, envKey, apiKey);
+    console.log(chalk.dim('  API key saved.\n'));
+  }
+
+  console.log(chalk.green(`  ✔ Brain switched to ${providerDef.name} / ${modelId}\n`));
   return config;
 }
 

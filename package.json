@@ -1,6 +1,6 @@
 {
   "name": "kernelbot",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "description": "KernelBot — AI engineering agent with full OS control",
   "type": "module",
   "author": "Abdullah Al-Taheri <abdullah@altaheri.me>",

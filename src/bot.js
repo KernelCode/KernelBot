@@ -102,12 +102,32 @@ export function startBot(config, agent, conversationManager) {
         const modelEntry = providerDef?.models.find((m) => m.id === modelId);
         const modelLabel = modelEntry ? modelEntry.label : modelId;
 
-        const missing = agent.switchBrain(providerKey, modelId);
-        if (missing) {
+        await bot.editMessageText(
+          `⏳ Verifying *${providerDef.name}* / *${modelLabel}*...`,
+          {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+          },
+        );
+
+        const result = await agent.switchBrain(providerKey, modelId);
+        if (result && typeof result === 'object' && result.error) {
+          // Validation failed — keep current model
+          const current = agent.getBrainInfo();
+          await bot.editMessageText(
+            `❌ Failed to switch: ${result.error}\n\nKeeping *${current.providerName}* / *${current.modelLabel}*`,
+            {
+              chat_id: chatId,
+              message_id: query.message.message_id,
+              parse_mode: 'Markdown',
+            },
+          );
+        } else if (result) {
           // API key missing — ask for it
           pendingBrainKey.set(chatId, { providerKey, modelId });
           await bot.editMessageText(
-            `🔑 *${providerDef.name}* API key is required.\n\nPlease send your \`${missing}\` now.\n\nOr send *cancel* to abort.`,
+            `🔑 *${providerDef.name}* API key is required.\n\nPlease send your \`${result}\` now.\n\nOr send *cancel* to abort.`,
             {
               chat_id: chatId,
               message_id: query.message.message_id,
@@ -202,13 +222,23 @@ export function startBot(config, agent, conversationManager) {
         return;
       }
 
-      agent.switchBrainWithKey(pending.providerKey, pending.modelId, text);
-      const info = agent.getBrainInfo();
-      await bot.sendMessage(
-        chatId,
-        `🧠 Brain switched to *${info.providerName}* / *${info.modelLabel}*\n\nAPI key saved.`,
-        { parse_mode: 'Markdown' },
-      );
+      await bot.sendMessage(chatId, '⏳ Verifying API key...');
+      const switchResult = await agent.switchBrainWithKey(pending.providerKey, pending.modelId, text);
+      if (switchResult && switchResult.error) {
+        const current = agent.getBrainInfo();
+        await bot.sendMessage(
+          chatId,
+          `❌ Failed to switch: ${switchResult.error}\n\nKeeping *${current.providerName}* / *${current.modelLabel}*`,
+          { parse_mode: 'Markdown' },
+        );
+      } else {
+        const info = agent.getBrainInfo();
+        await bot.sendMessage(
+          chatId,
+          `🧠 Brain switched to *${info.providerName}* / *${info.modelLabel}*\n\nAPI key saved.`,
+          { parse_mode: 'Markdown' },
+        );
+      }
       return;
     }
 
