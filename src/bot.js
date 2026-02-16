@@ -23,9 +23,32 @@ function splitMessage(text, maxLength = 4096) {
   return chunks;
 }
 
+/**
+ * Simple per-chat queue to serialize agent processing.
+ * Each chat gets its own promise chain so messages are processed in order.
+ */
+class ChatQueue {
+  constructor() {
+    this.queues = new Map();
+  }
+
+  enqueue(chatId, fn) {
+    const key = String(chatId);
+    const prev = this.queues.get(key) || Promise.resolve();
+    const next = prev.then(() => fn()).catch(() => {});
+    this.queues.set(key, next);
+    return next;
+  }
+}
+
 export function startBot(config, agent, conversationManager) {
   const logger = getLogger();
   const bot = new TelegramBot(config.telegram.bot_token, { polling: true });
+  const chatQueue = new ChatQueue();
+  const batchWindowMs = config.telegram.batch_window_ms || 3000;
+
+  // Per-chat message batching: chatId -> { messages[], timer, resolve }
+  const chatBatches = new Map();
 
   // Load previous conversations from disk
   const loaded = conversationManager.load();
@@ -118,6 +141,41 @@ export function startBot(config, agent, conversationManager) {
     }
   });
 
+  /**
+   * Batch messages for a chat. Returns the merged text for the first message,
+   * or null for subsequent messages (they get merged into the first).
+   */
+  function batchMessage(chatId, text) {
+    return new Promise((resolve) => {
+      const key = String(chatId);
+      let batch = chatBatches.get(key);
+
+      if (!batch) {
+        batch = { messages: [], timer: null, resolvers: [] };
+        chatBatches.set(key, batch);
+      }
+
+      batch.messages.push(text);
+      batch.resolvers.push(resolve);
+
+      // Reset timer on each new message
+      if (batch.timer) clearTimeout(batch.timer);
+
+      batch.timer = setTimeout(() => {
+        chatBatches.delete(key);
+        const merged = batch.messages.length === 1
+          ? batch.messages[0]
+          : batch.messages.map((m, i) => `[${i + 1}]: ${m}`).join('\n\n');
+
+        // First resolver gets the merged text, rest get null (skip)
+        batch.resolvers[0](merged);
+        for (let i = 1; i < batch.resolvers.length; i++) {
+          batch.resolvers[i](null);
+        }
+      }, batchWindowMs);
+    });
+  }
+
   bot.on('message', async (msg) => {
     if (!msg.text) return; // ignore non-text
 
@@ -154,7 +212,7 @@ export function startBot(config, agent, conversationManager) {
       return;
     }
 
-    // Handle commands
+    // Handle commands — these bypass batching entirely
     if (text === '/brain') {
       const info = agent.getBrainInfo();
       const providerKeys = Object.keys(PROVIDERS);
@@ -231,91 +289,101 @@ export function startBot(config, agent, conversationManager) {
       text = `Extract content from ${extractUrl} using the CSS selector: ${extractSelector}`;
     }
 
-    logger.info(`Message from ${username} (${userId}): ${text.slice(0, 100)}`);
+    // Batch messages — wait for the batch window to close
+    const mergedText = await batchMessage(chatId, text);
+    if (mergedText === null) {
+      // This message was merged into another batch — skip
+      return;
+    }
 
-    // Show typing and keep refreshing it
-    const typingInterval = setInterval(() => {
+    logger.info(`Message from ${username} (${userId}): ${mergedText.slice(0, 100)}`);
+
+    // Enqueue into per-chat queue for serialized processing
+    chatQueue.enqueue(chatId, async () => {
+      // Show typing and keep refreshing it
+      const typingInterval = setInterval(() => {
+        bot.sendChatAction(chatId, 'typing').catch(() => {});
+      }, 4000);
       bot.sendChatAction(chatId, 'typing').catch(() => {});
-    }, 4000);
-    bot.sendChatAction(chatId, 'typing').catch(() => {});
 
-    try {
-      const onUpdate = async (update, opts = {}) => {
-        // Edit an existing message instead of sending a new one
-        if (opts.editMessageId) {
-          try {
-            const edited = await bot.editMessageText(update, {
-              chat_id: chatId,
-              message_id: opts.editMessageId,
-              parse_mode: 'Markdown',
-            });
-            return edited.message_id;
-          } catch {
+      try {
+        const onUpdate = async (update, opts = {}) => {
+          // Edit an existing message instead of sending a new one
+          if (opts.editMessageId) {
             try {
               const edited = await bot.editMessageText(update, {
                 chat_id: chatId,
                 message_id: opts.editMessageId,
+                parse_mode: 'Markdown',
               });
               return edited.message_id;
             } catch {
-              return opts.editMessageId;
+              try {
+                const edited = await bot.editMessageText(update, {
+                  chat_id: chatId,
+                  message_id: opts.editMessageId,
+                });
+                return edited.message_id;
+              } catch {
+                return opts.editMessageId;
+              }
             }
           }
-        }
 
-        // Send new message(s)
-        const parts = splitMessage(update);
-        let lastMsgId = null;
-        for (const part of parts) {
-          try {
-            const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
-            lastMsgId = sent.message_id;
-          } catch {
-            const sent = await bot.sendMessage(chatId, part);
-            lastMsgId = sent.message_id;
+          // Send new message(s)
+          const parts = splitMessage(update);
+          let lastMsgId = null;
+          for (const part of parts) {
+            try {
+              const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
+              lastMsgId = sent.message_id;
+            } catch {
+              const sent = await bot.sendMessage(chatId, part);
+              lastMsgId = sent.message_id;
+            }
           }
-        }
-        return lastMsgId;
-      };
+          return lastMsgId;
+        };
 
-      const sendPhoto = async (filePath, caption) => {
-        try {
-          await bot.sendPhoto(chatId, createReadStream(filePath), {
-            caption: caption || '',
-            parse_mode: 'Markdown',
-          });
-        } catch {
+        const sendPhoto = async (filePath, caption) => {
           try {
             await bot.sendPhoto(chatId, createReadStream(filePath), {
               caption: caption || '',
+              parse_mode: 'Markdown',
             });
-          } catch (err) {
-            logger.error(`Failed to send photo: ${err.message}`);
+          } catch {
+            try {
+              await bot.sendPhoto(chatId, createReadStream(filePath), {
+                caption: caption || '',
+              });
+            } catch (err) {
+              logger.error(`Failed to send photo: ${err.message}`);
+            }
+          }
+        };
+
+        const reply = await agent.processMessage(chatId, mergedText, {
+          id: userId,
+          username,
+        }, onUpdate, sendPhoto);
+
+        clearInterval(typingInterval);
+
+        const chunks = splitMessage(reply || 'Done.');
+        for (const chunk of chunks) {
+          try {
+            await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+          } catch {
+            // Fallback to plain text if Markdown fails
+            await bot.sendMessage(chatId, chunk);
           }
         }
-      };
-
-      const reply = await agent.processMessage(chatId, text, {
-        id: userId,
-        username,
-      }, onUpdate, sendPhoto);
-
-      clearInterval(typingInterval);
-
-      const chunks = splitMessage(reply || 'Done.');
-      for (const chunk of chunks) {
-        try {
-          await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
-        } catch {
-          // Fallback to plain text if Markdown fails
-          await bot.sendMessage(chatId, chunk);
-        }
+      } catch (err) {
+        clearInterval(typingInterval);
+        logger.error(`Error processing message: ${err.message}`);
+        await bot.sendMessage(chatId, `Error: ${err.message}`);
       }
-    } catch (err) {
-      clearInterval(typingInterval);
-      logger.error(`Error processing message: ${err.message}`);
-      await bot.sendMessage(chatId, `Error: ${err.message}`);
-    }
+    });
   });
 
   bot.on('polling_error', (err) => {

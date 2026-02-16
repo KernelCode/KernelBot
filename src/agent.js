@@ -1,8 +1,12 @@
 import { createProvider, PROVIDERS } from './providers/index.js';
 import { toolDefinitions, executeTool, checkConfirmation } from './tools/index.js';
+import { selectToolsForMessage, expandToolsForUsed } from './tools/categories.js';
 import { getSystemPrompt } from './prompts/system.js';
 import { getLogger } from './utils/logger.js';
 import { getMissingCredential, saveCredential, saveProviderToYaml } from './utils/config.js';
+
+const MAX_RESULT_LENGTH = 3000;
+const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
 
 export class Agent {
   constructor({ config, conversationManager }) {
@@ -73,6 +77,29 @@ export class Agent {
     logger.info(`Brain switched to ${providerDef.name} / ${modelId} (new key saved)`);
   }
 
+  /**
+   * Truncate a tool result to stay within token budget.
+   */
+  _truncateResult(name, result) {
+    let str = JSON.stringify(result);
+    if (str.length <= MAX_RESULT_LENGTH) return str;
+
+    // Try truncating known large fields first
+    if (result && typeof result === 'object') {
+      const truncated = { ...result };
+      for (const field of LARGE_FIELDS) {
+        if (typeof truncated[field] === 'string' && truncated[field].length > 500) {
+          truncated[field] = truncated[field].slice(0, 500) + `\n... [truncated ${truncated[field].length - 500} chars]`;
+        }
+      }
+      str = JSON.stringify(truncated);
+      if (str.length <= MAX_RESULT_LENGTH) return str;
+    }
+
+    // Hard truncate
+    return str.slice(0, MAX_RESULT_LENGTH) + `\n... [truncated, total ${str.length} chars]`;
+  }
+
   async processMessage(chatId, userMessage, user, onUpdate, sendPhoto) {
     const logger = getLogger();
 
@@ -98,10 +125,14 @@ export class Agent {
     // Add user message to persistent history
     this.conversationManager.addMessage(chatId, 'user', userMessage);
 
-    // Build working messages from history
-    const messages = [...this.conversationManager.getHistory(chatId)];
+    // Build working messages from compressed history
+    const messages = [...this.conversationManager.getSummarizedHistory(chatId)];
 
-    return await this._runLoop(chatId, messages, user, 0, max_tool_depth);
+    // Select relevant tools based on user message
+    const tools = selectToolsForMessage(userMessage, toolDefinitions);
+    logger.debug(`Selected ${tools.length}/${toolDefinitions.length} tools for message`);
+
+    return await this._runLoop(chatId, messages, user, 0, max_tool_depth, tools);
   }
 
   _formatToolSummary(name, input) {
@@ -152,7 +183,7 @@ export class Agent {
       pending.toolResults.push({
         type: 'tool_result',
         tool_use_id: pending.block.id,
-        content: JSON.stringify({ error: `${pending.credential.label} not provided. Operation skipped.` }),
+        content: this._truncateResult(pending.block.name, { error: `${pending.credential.label} not provided. Operation skipped.` }),
       });
       return await this._resumeAfterPause(chatId, user, pending);
     }
@@ -172,7 +203,7 @@ export class Agent {
     pending.toolResults.push({
       type: 'tool_result',
       tool_use_id: pending.block.id,
-      content: JSON.stringify(result),
+      content: this._truncateResult(pending.block.name, result),
     });
 
     return await this._resumeAfterPause(chatId, user, pending);
@@ -189,14 +220,14 @@ export class Agent {
       pending.toolResults.push({
         type: 'tool_result',
         tool_use_id: pending.block.id,
-        content: JSON.stringify(result),
+        content: this._truncateResult(pending.block.name, result),
       });
     } else {
       logger.info(`User denied dangerous tool: ${pending.block.name}`);
       pending.toolResults.push({
         type: 'tool_result',
         tool_use_id: pending.block.id,
-        content: JSON.stringify({ error: 'User denied this operation.' }),
+        content: this._truncateResult(pending.block.name, { error: 'User denied this operation.' }),
       });
     }
 
@@ -215,13 +246,13 @@ export class Agent {
       pending.toolResults.push({
         type: 'tool_result',
         tool_use_id: block.id,
-        content: JSON.stringify(r),
+        content: this._truncateResult(block.name, r),
       });
     }
 
     pending.messages.push({ role: 'user', content: pending.toolResults });
     const { max_tool_depth } = this.config.brain;
-    return await this._runLoop(chatId, pending.messages, user, 0, max_tool_depth);
+    return await this._runLoop(chatId, pending.messages, user, 0, max_tool_depth, pending.tools || toolDefinitions);
   }
 
   _checkPause(chatId, block, user, toolResults, remainingBlocks, messages) {
@@ -261,8 +292,9 @@ export class Agent {
     return null;
   }
 
-  async _runLoop(chatId, messages, user, startDepth, maxDepth) {
+  async _runLoop(chatId, messages, user, startDepth, maxDepth, tools) {
     const logger = getLogger();
+    let currentTools = tools || toolDefinitions;
 
     for (let depth = startDepth; depth < maxDepth; depth++) {
       logger.debug(`Agent loop iteration ${depth + 1}/${maxDepth}`);
@@ -270,7 +302,7 @@ export class Agent {
       const response = await this.provider.chat({
         system: this.systemPrompt,
         messages,
-        tools: toolDefinitions,
+        tools: currentTools,
       });
 
       if (response.stopReason === 'end_turn') {
@@ -289,6 +321,7 @@ export class Agent {
         }
 
         const toolResults = [];
+        const usedToolNames = [];
 
         for (let i = 0; i < response.toolCalls.length; i++) {
           const block = response.toolCalls[i];
@@ -314,12 +347,17 @@ export class Agent {
             sendPhoto: this._sendPhoto,
           });
 
+          usedToolNames.push(block.name);
+
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
-            content: JSON.stringify(result),
+            content: this._truncateResult(block.name, result),
           });
         }
+
+        // Expand tools based on what was actually used
+        currentTools = expandToolsForUsed(usedToolNames, currentTools, toolDefinitions);
 
         messages.push({ role: 'user', content: toolResults });
         continue;

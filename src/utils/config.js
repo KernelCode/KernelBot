@@ -15,12 +15,13 @@ const DEFAULTS = {
   brain: {
     provider: 'anthropic',
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 8192,
+    max_tokens: 4096,
     temperature: 0.3,
-    max_tool_depth: 25,
+    max_tool_depth: 12,
   },
   telegram: {
     allowed_users: [],
+    batch_window_ms: 3000,
   },
   claude_code: {
     model: 'claude-opus-4-6',
@@ -46,6 +47,7 @@ const DEFAULTS = {
   },
   conversation: {
     max_history: 50,
+    recent_window: 10,
   },
 };
 

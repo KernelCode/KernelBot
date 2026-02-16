@@ -11,6 +11,7 @@ function getConversationsPath() {
 export class ConversationManager {
   constructor(config) {
     this.maxHistory = config.conversation.max_history;
+    this.recentWindow = config.conversation.recent_window || 10;
     this.conversations = new Map();
     this.filePath = getConversationsPath();
   }
@@ -47,6 +48,41 @@ export class ConversationManager {
       this.conversations.set(key, []);
     }
     return this.conversations.get(key);
+  }
+
+  /**
+   * Get history with older messages compressed into a summary.
+   * Keeps the last `recentWindow` messages verbatim and summarizes older ones.
+   */
+  getSummarizedHistory(chatId) {
+    const history = this.getHistory(chatId);
+
+    if (history.length <= this.recentWindow) {
+      return [...history];
+    }
+
+    const olderMessages = history.slice(0, history.length - this.recentWindow);
+    const recentMessages = history.slice(history.length - this.recentWindow);
+
+    // Compress older messages into a single summary
+    const summaryLines = olderMessages.map((msg) => {
+      const content = typeof msg.content === 'string'
+        ? msg.content.slice(0, 200)
+        : JSON.stringify(msg.content).slice(0, 200);
+      return `[${msg.role}]: ${content}`;
+    });
+
+    const summaryMessage = {
+      role: 'user',
+      content: `[CONVERSATION SUMMARY - ${olderMessages.length} earlier messages]\n${summaryLines.join('\n')}`,
+    };
+
+    // Ensure result starts with user role
+    const result = [summaryMessage, ...recentMessages];
+
+    // If the first real message after summary is assistant, that's fine since
+    // our summary is role:user. But ensure recent starts correctly.
+    return result;
   }
 
   addMessage(chatId, role, content) {
