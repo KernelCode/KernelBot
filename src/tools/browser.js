@@ -46,8 +46,8 @@ let _sessionTimer = null;
 
 async function ensureBrowser() {
   if (_browser && _browser.connected) return _browser;
-  // Old browser died — clean up references
-  _page = null;
+  // Old browser died — clean up all session pages
+  _pages.clear();
   _browser = await puppeteer.launch({ headless: true, args: BROWSER_ARGS });
   return _browser;
 }

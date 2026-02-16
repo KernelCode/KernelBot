@@ -92,6 +92,7 @@ export class WorkerAgent {
 
   async _runLoop(messages) {
     const logger = getLogger();
+    let consecutiveAllFailIterations = 0; // Track iterations where ALL tool calls fail
 
     for (let depth = 0; depth < this.maxIterations; depth++) {
       if (this._cancelled) {
@@ -160,6 +161,32 @@ export class WorkerAgent {
             tool_use_id: block.id,
             content: resultStr,
           });
+        }
+
+        // Track consecutive all-fail iterations (circuit breaker)
+        const allFailed = toolResults.every(tr => {
+          try { const parsed = JSON.parse(tr.content); return !!parsed.error; } catch { return false; }
+        });
+        if (allFailed) {
+          consecutiveAllFailIterations++;
+          logger.warn(`[Worker ${this.jobId}] All ${toolResults.length} tool calls failed (streak: ${consecutiveAllFailIterations})`);
+          if (consecutiveAllFailIterations >= 3) {
+            logger.warn(`[Worker ${this.jobId}] Circuit breaker: 3 consecutive all-fail iterations — forcing stop`);
+            messages.push({ role: 'user', content: toolResults });
+            messages.push({
+              role: 'user',
+              content: 'STOP: All your tool calls have failed 3 times in a row. Do NOT call any more tools. Summarize whatever you have found so far, or explain what went wrong.',
+            });
+            const bailResponse = await this.provider.chat({
+              system: this.systemPrompt,
+              messages,
+              tools: [], // No tools — force text response
+              signal: this.abortController.signal,
+            });
+            return bailResponse.text || 'All tool calls failed repeatedly. Could not complete the task.';
+          }
+        } else {
+          consecutiveAllFailIterations = 0;
         }
 
         messages.push({ role: 'user', content: toolResults });
