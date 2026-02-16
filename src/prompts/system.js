@@ -1,3 +1,10 @@
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PERSONA_MD = readFileSync(join(__dirname, 'persona.md'), 'utf-8').trim();
+
 /** Core tool instructions — appended to every persona (default or skill). */
 export function getCoreToolInstructions(config) {
   return `## Thinking Process
@@ -51,7 +58,7 @@ Use OS, Docker, process, network, and monitoring tools directly. No need for Cla
 
 /** Default persona when no skill is active. */
 export function getDefaultPersona(config) {
-  return `You are ${config.bot.name}, a senior software engineer and sysadmin AI agent on Telegram. Be concise — this is chat, not documentation.`;
+  return `You are ${config.bot.name}, an AI assistant on Telegram.\n\n${PERSONA_MD}`;
 }
 
 /**
