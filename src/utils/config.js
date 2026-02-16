@@ -12,12 +12,23 @@ const DEFAULTS = {
     name: 'KernelBot',
     description: 'AI engineering agent with full OS control',
   },
+  orchestrator: {
+    model: 'claude-opus-4-6',
+    max_tokens: 2048,
+    temperature: 0.3,
+    max_tool_depth: 5,
+  },
   brain: {
     provider: 'anthropic',
     model: 'claude-sonnet-4-20250514',
     max_tokens: 4096,
     temperature: 0.3,
     max_tool_depth: 12,
+  },
+  swarm: {
+    max_concurrent_jobs: 3,
+    job_timeout_seconds: 300,
+    cleanup_interval_minutes: 30,
   },
   telegram: {
     allowed_users: [],
@@ -318,6 +329,11 @@ export function loadConfig() {
   migrateAnthropicConfig(fileConfig);
 
   const config = deepMerge(DEFAULTS, fileConfig);
+
+  // Orchestrator always uses Anthropic — resolve its API key
+  if (process.env.ANTHROPIC_API_KEY) {
+    config.orchestrator.api_key = process.env.ANTHROPIC_API_KEY;
+  }
 
   // Overlay env vars for brain API key based on provider
   const providerDef = PROVIDERS[config.brain.provider];

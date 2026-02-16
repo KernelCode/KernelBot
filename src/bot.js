@@ -50,7 +50,7 @@ class ChatQueue {
   }
 }
 
-export function startBot(config, agent, conversationManager) {
+export function startBot(config, agent, conversationManager, jobManager) {
   const logger = getLogger();
   const bot = new TelegramBot(config.telegram.bot_token, { polling: true });
   const chatQueue = new ChatQueue();
@@ -309,6 +309,36 @@ export function startBot(config, agent, conversationManager) {
 
       } else if (data === 'skill_cancel') {
         await bot.editMessageText('Skill selection cancelled.', {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+        });
+        await bot.answerCallbackQuery(query.id);
+
+      // ── Job cancellation callbacks ────────────────────────────────
+      } else if (data.startsWith('cancel_job:')) {
+        const jobId = data.slice('cancel_job:'.length);
+        const job = jobManager.cancelJob(jobId);
+        if (job) {
+          await bot.editMessageText(`🚫 Cancelled job \`${jobId}\` (${job.workerType})`, {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+          });
+        } else {
+          await bot.editMessageText(`Job \`${jobId}\` not found or already finished.`, {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+          });
+        }
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'cancel_all_jobs') {
+        const cancelled = jobManager.cancelAllForChat(chatId);
+        const msg = cancelled.length > 0
+          ? `🚫 Cancelled ${cancelled.length} job(s).`
+          : 'No running jobs to cancel.';
+        await bot.editMessageText(msg, {
           chat_id: chatId,
           message_id: query.message.message_id,
         });
@@ -581,6 +611,49 @@ export function startBot(config, agent, conversationManager) {
       return;
     }
 
+    if (text === '/jobs') {
+      const jobs = jobManager.getJobsForChat(chatId);
+      if (jobs.length === 0) {
+        await bot.sendMessage(chatId, 'No jobs for this chat.');
+        return;
+      }
+      const lines = ['*Jobs*', ''];
+      for (const job of jobs.slice(0, 15)) {
+        lines.push(job.toSummary());
+      }
+      if (jobs.length > 15) {
+        lines.push(`\n_... and ${jobs.length - 15} more_`);
+      }
+      await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
+    if (text === '/cancel') {
+      const running = jobManager.getRunningJobsForChat(chatId);
+      if (running.length === 0) {
+        await bot.sendMessage(chatId, 'No running jobs to cancel.');
+        return;
+      }
+      if (running.length === 1) {
+        const job = jobManager.cancelJob(running[0].id);
+        if (job) {
+          await bot.sendMessage(chatId, `🚫 Cancelled \`${job.id}\` (${job.workerType})`, { parse_mode: 'Markdown' });
+        }
+        return;
+      }
+      // Multiple running — show inline keyboard
+      const buttons = running.map((j) => ([{
+        text: `🚫 ${j.workerType} (${j.id})`,
+        callback_data: `cancel_job:${j.id}`,
+      }]));
+      buttons.push([{ text: '🚫 Cancel All', callback_data: 'cancel_all_jobs' }]);
+      await bot.sendMessage(chatId, `*${running.length} running jobs* — select one to cancel:`, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons },
+      });
+      return;
+    }
+
     if (text === '/help') {
       const activeSkill = agent.getActiveSkill(chatId);
       const skillLine = activeSkill
@@ -592,6 +665,8 @@ export function startBot(config, agent, conversationManager) {
         '/brain — Show current AI model and switch provider/model',
         '/skills — Browse and activate persona skills',
         '/skills reset — Clear active skill back to default',
+        '/jobs — List running and recent jobs',
+        '/cancel — Cancel running job(s)',
         '/context — Show current conversation context and brain info',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',

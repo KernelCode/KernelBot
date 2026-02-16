@@ -7,7 +7,7 @@ export class AnthropicProvider extends BaseProvider {
     this.client = new Anthropic({ apiKey: this.apiKey });
   }
 
-  async chat({ system, messages, tools }) {
+  async chat({ system, messages, tools, signal }) {
     const params = {
       model: this.model,
       max_tokens: this.maxTokens,
@@ -20,7 +20,10 @@ export class AnthropicProvider extends BaseProvider {
       params.tools = tools;
     }
 
-    const response = await this.client.messages.create(params);
+    const requestOpts = {};
+    if (signal) requestOpts.signal = signal;
+
+    const response = await this.client.messages.create(params, requestOpts);
 
     const stopReason = response.stop_reason === 'end_turn' ? 'end_turn' : 'tool_use';
 

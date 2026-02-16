@@ -128,7 +128,7 @@ export class OpenAICompatProvider extends BaseProvider {
 
   // ── Public API ──
 
-  async chat({ system, messages, tools }) {
+  async chat({ system, messages, tools, signal }) {
     const params = {
       model: this.model,
       messages: this._convertMessages(system, messages),
@@ -144,6 +144,8 @@ export class OpenAICompatProvider extends BaseProvider {
     if (convertedTools) {
       params.tools = convertedTools;
     }
+
+    if (signal) params.signal = signal;
 
     const response = await this.client.chat.completions.create(params);
     return this._normalizeResponse(response);

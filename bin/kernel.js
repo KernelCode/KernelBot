@@ -21,6 +21,7 @@ import { createAuditLogger } from '../src/security/audit.js';
 import { ConversationManager } from '../src/conversation.js';
 import { UserPersonaManager } from '../src/persona.js';
 import { Agent } from '../src/agent.js';
+import { JobManager } from '../src/swarm/job-manager.js';
 import { startBot } from '../src/bot.js';
 import { createProvider, PROVIDERS } from '../src/providers/index.js';
 import {
@@ -122,8 +123,27 @@ async function startBotFlow(config) {
 
   const checks = [];
 
+  // Orchestrator always needs Anthropic API key
   checks.push(
-    await showStartupCheck(`${providerLabel} API`, async () => {
+    await showStartupCheck('Orchestrator (Anthropic) API', async () => {
+      const orchestratorKey = config.orchestrator.api_key || process.env.ANTHROPIC_API_KEY;
+      if (!orchestratorKey) throw new Error('ANTHROPIC_API_KEY is required for the orchestrator');
+      const provider = createProvider({
+        brain: {
+          provider: 'anthropic',
+          model: config.orchestrator.model,
+          max_tokens: config.orchestrator.max_tokens,
+          temperature: config.orchestrator.temperature,
+          api_key: orchestratorKey,
+        },
+      });
+      await provider.ping();
+    }),
+  );
+
+  // Worker brain check
+  checks.push(
+    await showStartupCheck(`Worker (${providerLabel}) API`, async () => {
       const provider = createProvider(config);
       await provider.ping();
     }),
@@ -146,9 +166,22 @@ async function startBotFlow(config) {
 
   const conversationManager = new ConversationManager(config);
   const personaManager = new UserPersonaManager();
-  const agent = new Agent({ config, conversationManager, personaManager });
+  const jobManager = new JobManager({
+    jobTimeoutSeconds: config.swarm.job_timeout_seconds,
+    cleanupIntervalMinutes: config.swarm.cleanup_interval_minutes,
+  });
 
-  startBot(config, agent, conversationManager);
+  const agent = new Agent({ config, conversationManager, personaManager, jobManager });
+
+  startBot(config, agent, conversationManager, jobManager);
+
+  // Periodic job cleanup and timeout enforcement
+  const cleanupMs = (config.swarm.cleanup_interval_minutes || 30) * 60 * 1000;
+  setInterval(() => {
+    jobManager.cleanup();
+    jobManager.enforceTimeouts();
+  }, Math.min(cleanupMs, 60_000)); // enforce timeouts every minute at most
+
   showStartupComplete();
   return true;
 }

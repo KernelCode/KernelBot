@@ -1,0 +1,67 @@
+import { randomBytes } from 'crypto';
+
+/** Valid job statuses and allowed transitions. */
+const TRANSITIONS = {
+  queued:    ['running', 'cancelled'],
+  running:   ['completed', 'failed', 'cancelled'],
+  completed: [],
+  failed:    [],
+  cancelled: [],
+};
+
+/**
+ * A single unit of work dispatched from the orchestrator to a worker.
+ */
+export class Job {
+  constructor({ chatId, workerType, task }) {
+    this.id = randomBytes(4).toString('hex');        // short 8-char hex id
+    this.chatId = chatId;
+    this.workerType = workerType;
+    this.task = task;
+    this.status = 'queued';
+    this.result = null;
+    this.error = null;
+    this.worker = null;                               // WorkerAgent ref
+    this.statusMessageId = null;                      // Telegram message for progress edits
+    this.createdAt = Date.now();
+    this.startedAt = null;
+    this.completedAt = null;
+  }
+
+  /** Transition to a new status. Throws if the transition is invalid. */
+  transition(newStatus) {
+    const allowed = TRANSITIONS[this.status];
+    if (!allowed || !allowed.includes(newStatus)) {
+      throw new Error(`Invalid job transition: ${this.status} -> ${newStatus}`);
+    }
+    this.status = newStatus;
+    if (newStatus === 'running') this.startedAt = Date.now();
+    if (['completed', 'failed', 'cancelled'].includes(newStatus)) this.completedAt = Date.now();
+  }
+
+  /** Duration in seconds (or null if not started). */
+  get duration() {
+    if (!this.startedAt) return null;
+    const end = this.completedAt || Date.now();
+    return Math.round((end - this.startedAt) / 1000);
+  }
+
+  /** Whether this job is in a terminal state. */
+  get isTerminal() {
+    return ['completed', 'failed', 'cancelled'].includes(this.status);
+  }
+
+  /** Human-readable one-line summary. */
+  toSummary() {
+    const statusEmoji = {
+      queued: '🔜',
+      running: '⚙️',
+      completed: '✅',
+      failed: '❌',
+      cancelled: '🚫',
+    };
+    const emoji = statusEmoji[this.status] || '❓';
+    const dur = this.duration != null ? ` (${this.duration}s)` : '';
+    return `${emoji} \`${this.id}\` [${this.workerType}] ${this.task.slice(0, 60)}${this.task.length > 60 ? '...' : ''}${dur}`;
+  }
+}

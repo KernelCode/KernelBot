@@ -1,28 +1,45 @@
 import { createProvider, PROVIDERS } from './providers/index.js';
-import { toolDefinitions, executeTool, checkConfirmation } from './tools/index.js';
-import { selectToolsForMessage, expandToolsForUsed } from './tools/categories.js';
-import { getSystemPrompt } from './prompts/system.js';
+import { orchestratorToolDefinitions, executeOrchestratorTool } from './tools/orchestrator-tools.js';
+import { getToolsForWorker } from './swarm/worker-registry.js';
+import { WORKER_TYPES } from './swarm/worker-registry.js';
+import { getOrchestratorPrompt } from './prompts/orchestrator.js';
+import { getWorkerPrompt } from './prompts/workers.js';
 import { getUnifiedSkillById } from './skills/custom.js';
-import { detectIntent, generatePlan } from './intents/index.js';
+import { WorkerAgent } from './worker.js';
 import { getLogger } from './utils/logger.js';
 import { getMissingCredential, saveCredential, saveProviderToYaml } from './utils/config.js';
-
-// Browser tools — used by completion gate to check if the model did enough work
-const BROWSER_TOOLS = new Set(['web_search', 'browse_website', 'interact_with_page', 'extract_content', 'screenshot_website']);
 
 const MAX_RESULT_LENGTH = 3000;
 const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
 
-export class Agent {
-  constructor({ config, conversationManager, personaManager }) {
+export class OrchestratorAgent {
+  constructor({ config, conversationManager, personaManager, jobManager }) {
     this.config = config;
     this.conversationManager = conversationManager;
     this.personaManager = personaManager;
-    this.provider = createProvider(config);
+    this.jobManager = jobManager;
     this._pending = new Map(); // chatId -> pending state
+    this._chatCallbacks = new Map(); // chatId -> { onUpdate, sendPhoto }
+
+    // Orchestrator always uses Anthropic
+    this.orchestratorProvider = createProvider({
+      brain: {
+        provider: 'anthropic',
+        model: config.orchestrator.model,
+        max_tokens: config.orchestrator.max_tokens,
+        temperature: config.orchestrator.temperature,
+        api_key: config.orchestrator.api_key || process.env.ANTHROPIC_API_KEY,
+      },
+    });
+
+    // Worker provider uses user's chosen brain
+    this.workerProvider = createProvider(config);
+
+    // Set up job lifecycle event listeners
+    this._setupJobListeners();
   }
 
-  /** Build the system prompt dynamically based on the chat's active skill and user persona. */
+  /** Build the orchestrator system prompt. */
   _getSystemPrompt(chatId, user) {
     const skillId = this.conversationManager.getSkill(chatId);
     const skillPrompt = skillId ? getUnifiedSkillById(skillId)?.systemPrompt : null;
@@ -32,7 +49,7 @@ export class Agent {
       userPersona = this.personaManager.load(user.id, user.username);
     }
 
-    return getSystemPrompt(this.config, skillPrompt || null, userPersona);
+    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona);
   }
 
   setSkill(chatId, skillId) {
@@ -48,7 +65,7 @@ export class Agent {
     return skillId ? getUnifiedSkillById(skillId) : null;
   }
 
-  /** Return current brain info for display. */
+  /** Return current worker brain info for display. */
   getBrainInfo() {
     const { provider, model } = this.config.brain;
     const providerDef = PROVIDERS[provider];
@@ -58,12 +75,7 @@ export class Agent {
     return { provider, providerName, model, modelLabel };
   }
 
-  /**
-   * Switch to a different provider/model at runtime.
-   * Resolves the API key from process.env automatically.
-   * Returns null on success, the envKey string if the key is missing,
-   * or an object { error: string } if the provider fails validation.
-   */
+  /** Switch worker brain provider/model at runtime. */
   async switchBrain(providerKey, modelId) {
     const logger = getLogger();
     const providerDef = PROVIDERS[providerKey];
@@ -71,72 +83,57 @@ export class Agent {
 
     const envKey = providerDef.envKey;
     const apiKey = process.env[envKey];
-    if (!apiKey) {
-      return envKey; // caller handles prompting
-    }
+    if (!apiKey) return envKey;
 
-    // Validate the new provider before committing changes
     try {
-      // Build a temporary config to test
       const testConfig = { ...this.config, brain: { ...this.config.brain, provider: providerKey, model: modelId, api_key: apiKey } };
       const testProvider = createProvider(testConfig);
       await testProvider.ping();
 
-      // Ping succeeded — commit changes
       this.config.brain.provider = providerKey;
       this.config.brain.model = modelId;
       this.config.brain.api_key = apiKey;
-      this.provider = testProvider;
+      this.workerProvider = testProvider;
       saveProviderToYaml(providerKey, modelId);
 
-      logger.info(`Brain switched to ${providerDef.name} / ${modelId}`);
+      logger.info(`Worker brain switched to ${providerDef.name} / ${modelId}`);
       return null;
     } catch (err) {
-      // Validation failed — keep everything as-is
       logger.error(`Brain switch failed for ${providerDef.name} / ${modelId}: ${err.message}`);
       return { error: err.message };
     }
   }
 
-  /**
-   * Finalize brain switch after API key was provided via chat.
-   * Returns null on success, or { error: string } on failure.
-   */
+  /** Finalize brain switch after API key was provided via chat. */
   async switchBrainWithKey(providerKey, modelId, apiKey) {
     const logger = getLogger();
     const providerDef = PROVIDERS[providerKey];
 
     try {
-      // Build a temporary config to validate before saving anything
       const testConfig = { ...this.config, brain: { ...this.config.brain, provider: providerKey, model: modelId, api_key: apiKey } };
       const testProvider = createProvider(testConfig);
       await testProvider.ping();
 
-      // Ping succeeded — save the key and commit changes
       saveCredential(this.config, providerDef.envKey, apiKey);
       this.config.brain.provider = providerKey;
       this.config.brain.model = modelId;
       this.config.brain.api_key = apiKey;
-      this.provider = testProvider;
+      this.workerProvider = testProvider;
       saveProviderToYaml(providerKey, modelId);
 
-      logger.info(`Brain switched to ${providerDef.name} / ${modelId} (new key saved)`);
+      logger.info(`Worker brain switched to ${providerDef.name} / ${modelId} (new key saved)`);
       return null;
     } catch (err) {
-      // Validation failed — don't save anything
       logger.error(`Brain switch failed for ${providerDef.name} / ${modelId}: ${err.message}`);
       return { error: err.message };
     }
   }
 
-  /**
-   * Truncate a tool result to stay within token budget.
-   */
+  /** Truncate a tool result. */
   _truncateResult(name, result) {
     let str = JSON.stringify(result);
     if (str.length <= MAX_RESULT_LENGTH) return str;
 
-    // Try truncating known large fields first
     if (result && typeof result === 'object') {
       const truncated = { ...result };
       for (const field of LARGE_FIELDS) {
@@ -148,15 +145,14 @@ export class Agent {
       if (str.length <= MAX_RESULT_LENGTH) return str;
     }
 
-    // Hard truncate
     return str.slice(0, MAX_RESULT_LENGTH) + `\n... [truncated, total ${str.length} chars]`;
   }
 
   async processMessage(chatId, userMessage, user, onUpdate, sendPhoto) {
     const logger = getLogger();
 
-    this._onUpdate = onUpdate || null;
-    this._sendPhoto = sendPhoto || null;
+    // Store callbacks so workers can use them later
+    this._chatCallbacks.set(chatId, { onUpdate, sendPhoto });
 
     // Handle pending responses (confirmation or credential)
     const pending = this._pending.get(chatId);
@@ -164,262 +160,275 @@ export class Agent {
       this._pending.delete(chatId);
 
       if (pending.type === 'credential') {
-        return await this._handleCredentialResponse(chatId, userMessage, user, pending);
-      }
-
-      if (pending.type === 'confirmation') {
-        return await this._handleConfirmationResponse(chatId, userMessage, user, pending);
+        return await this._handleCredentialResponse(chatId, userMessage, user, pending, onUpdate);
       }
     }
 
-    const { max_tool_depth } = this.config.brain;
+    const { max_tool_depth } = this.config.orchestrator;
 
-    // Detect search/browse intent
-    const intent = detectIntent(userMessage);
-    if (intent) {
-      logger.info(`Detected intent: ${intent.type} for message: ${userMessage.slice(0, 100)}`);
-    }
-
-    // Add ORIGINAL user message to persistent history
+    // Add user message to persistent history
     this.conversationManager.addMessage(chatId, 'user', userMessage);
 
     // Build working messages from compressed history
     const messages = [...this.conversationManager.getSummarizedHistory(chatId)];
 
-    // If intent detected, replace last message with the planned version
-    // History stores the original; the model sees the plan
-    if (intent) {
-      const plan = generatePlan(intent);
-      if (plan) {
-        messages[messages.length - 1] = { role: 'user', content: plan };
-      }
-    }
+    const reply = await this._runLoop(chatId, messages, user, 0, max_tool_depth);
 
-    // Select relevant tools based on user message
-    const tools = selectToolsForMessage(userMessage, toolDefinitions);
-    logger.debug(`Selected ${tools.length}/${toolDefinitions.length} tools for message`);
-
-    const reply = await this._runLoop(chatId, messages, user, 0, max_tool_depth, tools, !!intent);
-
-    // Background persona extraction — fire-and-forget, never blocks the reply
+    // Background persona extraction
     this._extractPersonaBackground(userMessage, reply, user).catch(() => {});
 
     return reply;
   }
 
-  _formatToolSummary(name, input) {
-    const _short = (s, len = 80) => s && s.length > len ? s.slice(0, len) + '...' : s;
-    const _host = (url) => { try { return new URL(url).hostname; } catch { return url; } };
-
-    // Describe interact_with_page actions in plain English
-    const _describeActions = (actions) => {
-      if (!Array.isArray(actions) || actions.length === 0) return 'interacting with page';
-      return actions.map((a) => {
-        if (a.type === 'click') {
-          // Extract readable target from selector
-          const sel = a.selector || '';
-          const href = sel.match(/href=['"](.*?)['"]/)?.[1];
-          if (href) return `clicking link to ${_short(href, 50)}`;
-          const text = sel.match(/text\(\)=['"](.*?)['"]/)?.[1] || a.text;
-          if (text) return `clicking "${_short(text, 40)}"`;
-          return `clicking ${_short(sel, 50)}`;
-        }
-        if (a.type === 'type') return `typing "${_short(a.text || '', 40)}"`;
-        if (a.type === 'scroll') return `scrolling ${a.direction || 'down'}`;
-        if (a.type === 'wait') return 'waiting...';
-        if (a.type === 'evaluate') return 'running script';
-        return a.type || 'interacting';
-      }).join(', ');
-    };
-
-    switch (name) {
-      // Web & browser
-      case 'web_search':        return `Searching: "${_short(input.query, 60)}"`;
-      case 'browse_website':    return `Opening ${_host(input.url)}`;
-      case 'interact_with_page': return _describeActions(input.actions);
-      case 'extract_content':   return `Extracting content from page`;
-      case 'screenshot_website': return `Taking screenshot of ${_host(input.url)}`;
-      case 'curl_url':          return `Fetching ${_host(input.url)}`;
-
-      // Files & system
-      case 'execute_command':   return `Running: ${_short(input.command, 60)}`;
-      case 'read_file':         return `Reading ${_short(input.path)}`;
-      case 'write_file':        return `Writing ${_short(input.path)}`;
-      case 'list_directory':    return `Listing ${_short(input.path || '.')}`;
-      case 'check_port':        return `Checking port ${input.port}`;
-      case 'kill_process':      return `Killing process ${input.pid}`;
-      case 'send_image':        return `Sending image`;
-
-      // Git & GitHub
-      case 'git_clone':         return `Cloning ${_short(input.repo)}`;
-      case 'git_checkout':      return `Switching to branch ${input.branch}`;
-      case 'git_commit':        return `Committing: "${_short(input.message, 50)}"`;
-      case 'git_push':          return `Pushing changes`;
-      case 'git_diff':          return `Checking diff`;
-      case 'github_create_pr':  return `Creating PR: "${_short(input.title, 50)}"`;
-      case 'github_create_repo': return `Creating repo ${input.name}`;
-      case 'github_list_prs':   return `Listing PRs for ${_short(input.repo)}`;
-      case 'github_get_pr_diff': return `Getting PR diff`;
-      case 'github_post_review': return `Posting review`;
-
-      // Docker
-      case 'docker_exec':       return `Running in container ${_short(input.container)}`;
-      case 'docker_logs':       return `Fetching logs from ${_short(input.container)}`;
-      case 'docker_compose':    return `Docker compose ${input.action}`;
-
-      // Agent
-      case 'spawn_claude_code': return `Coding: ${_short(input.prompt, 60)}`;
-      case 'update_user_persona': return `Updating your profile`;
-
-      default:                  return `${name}`;
+  async _sendUpdate(chatId, text, opts) {
+    const callbacks = this._chatCallbacks.get(chatId);
+    if (callbacks?.onUpdate) {
+      try { return await callbacks.onUpdate(text, opts); } catch {}
     }
+    return null;
   }
 
-  async _sendUpdate(text) {
-    if (this._onUpdate) {
-      try { await this._onUpdate(text); } catch {}
-    }
-  }
-
-  async _handleCredentialResponse(chatId, userMessage, user, pending) {
+  async _handleCredentialResponse(chatId, userMessage, user, pending, onUpdate) {
     const logger = getLogger();
     const value = userMessage.trim();
 
     if (value.toLowerCase() === 'skip' || value.toLowerCase() === 'cancel') {
       logger.info(`User skipped credential: ${pending.credential.envKey}`);
-      pending.toolResults.push({
-        type: 'tool_result',
-        tool_use_id: pending.block.id,
-        content: this._truncateResult(pending.block.name, { error: `${pending.credential.label} not provided. Operation skipped.` }),
-      });
-      return await this._resumeAfterPause(chatId, user, pending);
+      return 'Credential skipped. You can provide it later.';
     }
 
-    // Save the credential
     saveCredential(this.config, pending.credential.envKey, value);
     logger.info(`Saved credential: ${pending.credential.envKey}`);
+    return `Saved ${pending.credential.label}. You can now try the task again.`;
+  }
 
-    // Now execute the original tool
-    const result = await executeTool(pending.block.name, pending.block.input, {
+  /** Set up listeners for job lifecycle events. */
+  _setupJobListeners() {
+    const logger = getLogger();
+
+    this.jobManager.on('job:completed', (job) => {
+      const chatId = job.chatId;
+      const workerDef = WORKER_TYPES[job.workerType] || {};
+      const emoji = workerDef.emoji || '✅';
+      const label = workerDef.label || job.workerType;
+
+      // Truncate long results
+      let resultText = job.result || 'Done.';
+      if (resultText.length > 3000) {
+        resultText = resultText.slice(0, 3000) + '\n\n... [result truncated]';
+      }
+
+      const msg = `${emoji} **${label} finished** (\`${job.id}\`, ${job.duration}s)\n\n${resultText}`;
+
+      // Add to conversation history so orchestrator has context
+      this.conversationManager.addMessage(chatId, 'assistant', msg);
+
+      // Send to user
+      this._sendUpdate(chatId, msg);
+    });
+
+    this.jobManager.on('job:failed', (job) => {
+      const chatId = job.chatId;
+      const workerDef = WORKER_TYPES[job.workerType] || {};
+      const label = workerDef.label || job.workerType;
+
+      const msg = `❌ **${label} failed** (\`${job.id}\`): ${job.error}`;
+
+      this.conversationManager.addMessage(chatId, 'assistant', msg);
+      this._sendUpdate(chatId, msg);
+    });
+
+    this.jobManager.on('job:cancelled', (job) => {
+      const chatId = job.chatId;
+      const workerDef = WORKER_TYPES[job.workerType] || {};
+      const label = workerDef.label || job.workerType;
+
+      const msg = `🚫 **${label} cancelled** (\`${job.id}\`)`;
+      this._sendUpdate(chatId, msg);
+    });
+  }
+
+  /**
+   * Spawn a worker for a job — called from dispatch_task handler.
+   * Creates smart progress reporting via editable Telegram message.
+   */
+  async _spawnWorker(job) {
+    const logger = getLogger();
+    const chatId = job.chatId;
+    const callbacks = this._chatCallbacks.get(chatId) || {};
+    const onUpdate = callbacks.onUpdate;
+    const sendPhoto = callbacks.sendPhoto;
+
+    const workerDef = WORKER_TYPES[job.workerType] || {};
+    const abortController = new AbortController();
+
+    // Smart progress: editable Telegram message (same pattern as coder.js)
+    let statusMsgId = null;
+    let activityLines = [];
+    let flushTimer = null;
+    const MAX_VISIBLE = 10;
+
+    const buildStatusText = (finalState = null) => {
+      const visible = activityLines.slice(-MAX_VISIBLE);
+      const countInfo = activityLines.length > MAX_VISIBLE
+        ? `\n_... ${activityLines.length} operations total_\n`
+        : '';
+      const header = `${workerDef.emoji || '⚙️'} *${workerDef.label || job.workerType}* (\`${job.id}\`)`;
+      if (finalState === 'done') return `${header} — Done\n${countInfo}\n${visible.join('\n')}`;
+      if (finalState === 'error') return `${header} — Failed\n${countInfo}\n${visible.join('\n')}`;
+      if (finalState === 'cancelled') return `${header} — Cancelled\n${countInfo}\n${visible.join('\n')}`;
+      return `${header} — Working...\n${countInfo}\n${visible.join('\n')}`;
+    };
+
+    const flushStatus = async () => {
+      flushTimer = null;
+      if (!onUpdate || activityLines.length === 0) return;
+      try {
+        if (statusMsgId) {
+          await onUpdate(buildStatusText(), { editMessageId: statusMsgId });
+        } else {
+          statusMsgId = await onUpdate(buildStatusText());
+          job.statusMessageId = statusMsgId;
+        }
+      } catch {}
+    };
+
+    const addActivity = (line) => {
+      activityLines.push(line);
+      if (!statusMsgId && !flushTimer) {
+        flushStatus();
+      } else if (!flushTimer) {
+        flushTimer = setTimeout(flushStatus, 1000);
+      }
+    };
+
+    // Get scoped tools and skill
+    const tools = getToolsForWorker(job.workerType);
+    const skillId = this.conversationManager.getSkill(chatId);
+
+    const worker = new WorkerAgent({
       config: this.config,
-      user,
-      personaManager: this.personaManager,
-      onUpdate: this._onUpdate,
-      sendPhoto: this._sendPhoto,
+      workerType: job.workerType,
+      jobId: job.id,
+      tools,
+      skillId,
+      callbacks: {
+        onProgress: (text) => addActivity(text),
+        onUpdate, // Real bot onUpdate for tools (coder.js smart output needs message_id)
+        onComplete: (result) => {
+          // Final status message update
+          if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+          if (statusMsgId && onUpdate) {
+            onUpdate(buildStatusText('done'), { editMessageId: statusMsgId }).catch(() => {});
+          }
+          this.jobManager.completeJob(job.id, result);
+        },
+        onError: (err) => {
+          if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+          if (statusMsgId && onUpdate) {
+            onUpdate(buildStatusText('error'), { editMessageId: statusMsgId }).catch(() => {});
+          }
+          this.jobManager.failJob(job.id, err.message || String(err));
+        },
+        sendPhoto,
+      },
+      abortController,
     });
 
-    pending.toolResults.push({
-      type: 'tool_result',
-      tool_use_id: pending.block.id,
-      content: this._truncateResult(pending.block.name, result),
-    });
+    // Store worker ref on job for cancellation
+    job.worker = worker;
 
-    return await this._resumeAfterPause(chatId, user, pending);
+    // Start the job
+    this.jobManager.startJob(job.id);
+
+    // Fire and forget — return the promise so .catch() in orchestrator-tools works
+    return worker.run(job.task);
   }
 
-  async _handleConfirmationResponse(chatId, userMessage, user, pending) {
-    const logger = getLogger();
-    const lower = userMessage.toLowerCase().trim();
-
-    if (lower === 'yes' || lower === 'y' || lower === 'confirm') {
-      logger.info(`User confirmed dangerous tool: ${pending.block.name}`);
-      const result = await executeTool(pending.block.name, pending.block.input, { ...pending.context, onUpdate: this._onUpdate, sendPhoto: this._sendPhoto });
-
-      pending.toolResults.push({
-        type: 'tool_result',
-        tool_use_id: pending.block.id,
-        content: this._truncateResult(pending.block.name, result),
-      });
-    } else {
-      logger.info(`User denied dangerous tool: ${pending.block.name}`);
-      pending.toolResults.push({
-        type: 'tool_result',
-        tool_use_id: pending.block.id,
-        content: this._truncateResult(pending.block.name, { error: 'User denied this operation.' }),
-      });
-    }
-
-    return await this._resumeAfterPause(chatId, user, pending);
-  }
-
-  async _resumeAfterPause(chatId, user, pending) {
-    // Process remaining blocks
-    for (const block of pending.remainingBlocks) {
-      if (block.type !== 'tool_use') continue;
-
-      const pauseMsg = await this._checkPause(chatId, block, user, pending.toolResults, pending.remainingBlocks.filter((b) => b !== block), pending.messages);
-      if (pauseMsg) return pauseMsg;
-
-      const r = await executeTool(block.name, block.input, { config: this.config, user, personaManager: this.personaManager, onUpdate: this._onUpdate, sendPhoto: this._sendPhoto });
-      pending.toolResults.push({
-        type: 'tool_result',
-        tool_use_id: block.id,
-        content: this._truncateResult(block.name, r),
-      });
-    }
-
-    pending.messages.push({ role: 'user', content: pending.toolResults });
-    const { max_tool_depth } = this.config.brain;
-    return await this._runLoop(chatId, pending.messages, user, 0, max_tool_depth, pending.tools || toolDefinitions);
-  }
-
-  _checkPause(chatId, block, user, toolResults, remainingBlocks, messages) {
+  async _runLoop(chatId, messages, user, startDepth, maxDepth) {
     const logger = getLogger();
 
-    // Check missing credentials first
-    const missing = getMissingCredential(block.name, this.config);
-    if (missing) {
-      logger.warn(`Missing credential for ${block.name}: ${missing.envKey}`);
-      this._pending.set(chatId, {
-        type: 'credential',
-        block,
-        credential: missing,
-        context: { config: this.config, user, personaManager: this.personaManager },
-        toolResults,
-        remainingBlocks,
+    for (let depth = startDepth; depth < maxDepth; depth++) {
+      logger.debug(`Orchestrator loop iteration ${depth + 1}/${maxDepth}`);
+
+      const response = await this.orchestratorProvider.chat({
+        system: this._getSystemPrompt(chatId, user),
         messages,
+        tools: orchestratorToolDefinitions,
       });
-      return `🔑 **${missing.label}** is required for this action.\n\nPlease send your token now (it will be saved to \`~/.kernelbot/.env\`).\n\nOr reply **skip** to cancel.`;
+
+      if (response.stopReason === 'end_turn') {
+        const reply = response.text || '';
+        this.conversationManager.addMessage(chatId, 'assistant', reply);
+        return reply;
+      }
+
+      if (response.stopReason === 'tool_use') {
+        messages.push({ role: 'assistant', content: response.rawContent });
+
+        if (response.text && response.text.trim()) {
+          logger.info(`Orchestrator thinking: ${response.text.slice(0, 200)}`);
+        }
+
+        const toolResults = [];
+
+        for (const block of response.toolCalls) {
+          const summary = this._formatToolSummary(block.name, block.input);
+          logger.info(`Orchestrator tool: ${summary}`);
+          await this._sendUpdate(chatId, `⚡ ${summary}`);
+
+          const result = await executeOrchestratorTool(block.name, block.input, {
+            chatId,
+            jobManager: this.jobManager,
+            config: this.config,
+            spawnWorker: (job) => this._spawnWorker(job),
+          });
+
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: this._truncateResult(block.name, result),
+          });
+        }
+
+        messages.push({ role: 'user', content: toolResults });
+        continue;
+      }
+
+      // Unexpected stop reason
+      logger.warn(`Unexpected stopReason: ${response.stopReason}`);
+      if (response.text) {
+        this.conversationManager.addMessage(chatId, 'assistant', response.text);
+        return response.text;
+      }
+      return 'Something went wrong — unexpected response from the model.';
     }
 
-    // Check dangerous operation confirmation
-    const dangerLabel = checkConfirmation(block.name, block.input, this.config);
-    if (dangerLabel) {
-      logger.warn(`Dangerous tool detected: ${block.name} — ${dangerLabel}`);
-      this._pending.set(chatId, {
-        type: 'confirmation',
-        block,
-        context: { config: this.config, user, personaManager: this.personaManager },
-        toolResults,
-        remainingBlocks,
-        messages,
-      });
-      return `⚠️ This action will **${dangerLabel}**.\n\n\`${block.name}\`: \`${JSON.stringify(block.input)}\`\n\nConfirm? (yes/no)`;
+    const depthWarning = `Reached maximum orchestrator depth (${maxDepth}).`;
+    this.conversationManager.addMessage(chatId, 'assistant', depthWarning);
+    return depthWarning;
+  }
+
+  _formatToolSummary(name, input) {
+    switch (name) {
+      case 'dispatch_task': {
+        const workerDef = WORKER_TYPES[input.worker_type] || {};
+        return `Dispatching ${workerDef.emoji || '⚙️'} ${workerDef.label || input.worker_type}: ${(input.task || '').slice(0, 60)}`;
+      }
+      case 'list_jobs':
+        return 'Checking job status';
+      case 'cancel_job':
+        return `Cancelling job ${input.job_id}`;
+      default:
+        return name;
     }
-
-    return null;
   }
 
-  /**
-   * Completion gate — check if the model did enough work for a web intent.
-   * Requires at least 2 distinct browser tools used (e.g., browse + interact).
-   * A single browse_website call is NOT enough for a search/browse intent.
-   */
-  _isIntentSatisfied(allUsedTools) {
-    const uniqueBrowserTools = new Set(allUsedTools.filter((t) => BROWSER_TOOLS.has(t)));
-    return uniqueBrowserTools.size >= 2;
-  }
-
-  /**
-   * Background persona extraction — runs a lightweight LLM call after each
-   * message to extract user profile information automatically.
-   * Fire-and-forget; failures are silently logged and never surface to the user.
-   */
+  /** Background persona extraction. */
   async _extractPersonaBackground(userMessage, reply, user) {
     const logger = getLogger();
 
     if (!this.personaManager || !user?.id) return;
-    // Skip empty or trivially short messages (e.g. "ok", "y")
     if (!userMessage || userMessage.trim().length < 3) return;
 
     const currentPersona = this.personaManager.load(user.id, user.username);
@@ -451,7 +460,7 @@ export class Agent {
     ].join('\n');
 
     try {
-      const response = await this.provider.chat({
+      const response = await this.orchestratorProvider.chat({
         system,
         messages: [{ role: 'user', content: userPrompt }],
       });
@@ -466,104 +475,7 @@ export class Agent {
       logger.debug(`Persona extraction skipped: ${err.message}`);
     }
   }
-
-  async _runLoop(chatId, messages, user, startDepth, maxDepth, tools, hasIntent = false) {
-    const logger = getLogger();
-    let currentTools = tools || toolDefinitions;
-    const allUsedTools = []; // track tools across all iterations
-    let gateTriggered = false; // completion gate pushes only once
-
-    for (let depth = startDepth; depth < maxDepth; depth++) {
-      logger.debug(`Agent loop iteration ${depth + 1}/${maxDepth}`);
-
-      const response = await this.provider.chat({
-        system: this._getSystemPrompt(chatId, user),
-        messages,
-        tools: currentTools,
-      });
-
-      if (response.stopReason === 'end_turn') {
-        const reply = response.text || '';
-
-        // Completion gate: if an intent is active and the model hasn't done enough, push once
-        if (hasIntent && !gateTriggered && !this._isIntentSatisfied(allUsedTools)) {
-          gateTriggered = true;
-          logger.info(`Completion gate: model stopped too early (used ${allUsedTools.length} tools), pushing to continue`);
-          messages.push({ role: 'assistant', content: response.rawContent || [{ type: 'text', text: reply }] });
-          messages.push({ role: 'user', content: 'Continue with the task. Navigate into the relevant section, search or click within the site, and show me the actual results.' });
-          continue;
-        }
-
-        this.conversationManager.addMessage(chatId, 'assistant', reply);
-        return reply;
-      }
-
-      if (response.stopReason === 'tool_use') {
-        messages.push({ role: 'assistant', content: response.rawContent });
-
-        // Log thinking text but don't send to user — tool summaries are enough
-        if (response.text && response.text.trim()) {
-          logger.info(`Agent thinking: ${response.text.slice(0, 200)}`);
-        }
-
-        const toolResults = [];
-        const usedToolNames = [];
-
-        for (let i = 0; i < response.toolCalls.length; i++) {
-          const block = response.toolCalls[i];
-
-          // Build a block-like object for _checkPause (needs .type for remainingBlocks filter)
-          const blockObj = { type: 'tool_use', id: block.id, name: block.name, input: block.input };
-
-          // Check if we need to pause (missing cred or dangerous action)
-          const remaining = response.toolCalls.slice(i + 1).map((tc) => ({
-            type: 'tool_use', id: tc.id, name: tc.name, input: tc.input,
-          }));
-          const pauseMsg = this._checkPause(chatId, blockObj, user, toolResults, remaining, messages);
-          if (pauseMsg) return pauseMsg;
-
-          const summary = this._formatToolSummary(block.name, block.input);
-          logger.info(`Tool call: ${summary}`);
-          await this._sendUpdate(`🔧 ${summary}`);
-
-          const result = await executeTool(block.name, block.input, {
-            config: this.config,
-            user,
-            personaManager: this.personaManager,
-            onUpdate: this._onUpdate,
-            sendPhoto: this._sendPhoto,
-          });
-
-          usedToolNames.push(block.name);
-          allUsedTools.push(block.name);
-
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: this._truncateResult(block.name, result),
-          });
-        }
-
-        // Expand tools based on what was actually used
-        currentTools = expandToolsForUsed(usedToolNames, currentTools, toolDefinitions);
-
-        messages.push({ role: 'user', content: toolResults });
-        continue;
-      }
-
-      // Unexpected stop reason
-      logger.warn(`Unexpected stopReason: ${response.stopReason}`);
-      if (response.text) {
-        this.conversationManager.addMessage(chatId, 'assistant', response.text);
-        return response.text;
-      }
-      return 'Something went wrong — unexpected response from the model.';
-    }
-
-    const depthWarning =
-      `Reached maximum tool depth (${maxDepth}). Stopping to prevent infinite loops. ` +
-      `Please try again with a simpler request.`;
-    this.conversationManager.addMessage(chatId, 'assistant', depthWarning);
-    return depthWarning;
-  }
 }
+
+// Re-export as Agent for backward compatibility with bin/kernel.js import
+export { OrchestratorAgent as Agent };

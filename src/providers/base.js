@@ -17,9 +17,10 @@ export class BaseProvider {
    * @param {string} opts.system - System prompt
    * @param {Array} opts.messages - Anthropic-format messages
    * @param {Array} opts.tools - Anthropic-format tool definitions
+   * @param {AbortSignal} [opts.signal] - Optional AbortSignal for cancellation
    * @returns {Promise<{stopReason: 'end_turn'|'tool_use', text: string, toolCalls: Array<{id,name,input}>, rawContent: Array}>}
    */
-  async chat({ system, messages, tools }) {
+  async chat({ system, messages, tools, signal }) {
     throw new Error('chat() not implemented');
   }
 
