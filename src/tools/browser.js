@@ -10,7 +10,7 @@ const MAX_CONTENT_LENGTH = 15000;
 const MAX_SCREENSHOT_WIDTH = 1920;
 const MAX_SCREENSHOT_HEIGHT = 1080;
 const SCREENSHOTS_DIR = join(homedir(), '.kernelbot', 'screenshots');
-const SESSION_TTL = 180_000; // 3 minutes of inactivity
+const SESSION_TTL = 60_000; // 1 minute of inactivity — Chrome is a RAM hog
 
 const BLOCKED_URL_PATTERNS = [
   /^https?:\/\/localhost/i,
@@ -72,12 +72,17 @@ async function closeBrowserSession() {
 
 /**
  * Close a specific session's page. Called when a worker finishes.
+ * If no sessions remain, close the entire browser to free RAM/CPU.
  */
 export async function closeSession(sessionId) {
   const page = _pages.get(sessionId);
   if (page) {
     _pages.delete(sessionId);
     await page.close().catch(() => {});
+  }
+  // If no more sessions, kill the browser entirely to free resources
+  if (_pages.size === 0 && _browser) {
+    await closeBrowserSession();
   }
 }
 

@@ -20,26 +20,25 @@ export class AnthropicProvider extends BaseProvider {
       params.tools = tools;
     }
 
-    const requestOpts = {};
-    if (signal) requestOpts.signal = signal;
+    return this._callWithResilience(async (timedSignal) => {
+      const response = await this.client.messages.create(params, { signal: timedSignal });
 
-    const response = await this.client.messages.create(params, requestOpts);
+      const stopReason = response.stop_reason === 'end_turn' ? 'end_turn' : 'tool_use';
 
-    const stopReason = response.stop_reason === 'end_turn' ? 'end_turn' : 'tool_use';
+      const textBlocks = response.content.filter((b) => b.type === 'text');
+      const text = textBlocks.map((b) => b.text).join('\n');
 
-    const textBlocks = response.content.filter((b) => b.type === 'text');
-    const text = textBlocks.map((b) => b.text).join('\n');
+      const toolCalls = response.content
+        .filter((b) => b.type === 'tool_use')
+        .map((b) => ({ id: b.id, name: b.name, input: b.input }));
 
-    const toolCalls = response.content
-      .filter((b) => b.type === 'tool_use')
-      .map((b) => ({ id: b.id, name: b.name, input: b.input }));
-
-    return {
-      stopReason,
-      text,
-      toolCalls,
-      rawContent: response.content,
-    };
+      return {
+        stopReason,
+        text,
+        toolCalls,
+        rawContent: response.content,
+      };
+    }, signal);
   }
 
   async ping() {

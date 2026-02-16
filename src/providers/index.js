@@ -22,6 +22,7 @@ export function createProvider(config) {
     maxTokens: max_tokens,
     temperature,
     apiKey: api_key,
+    timeout: config.brain.timeout,
   };
 
   if (provider === 'anthropic') {

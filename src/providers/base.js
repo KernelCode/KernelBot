@@ -4,11 +4,84 @@
  */
 
 export class BaseProvider {
-  constructor({ model, maxTokens, temperature, apiKey }) {
+  constructor({ model, maxTokens, temperature, apiKey, timeout }) {
     this.model = model;
     this.maxTokens = maxTokens;
     this.temperature = temperature;
     this.apiKey = apiKey;
+    this.timeout = timeout || 60_000;
+  }
+
+  /**
+   * Wrap an async LLM call with timeout + single retry on transient errors.
+   * Composes an internal timeout AbortController with an optional external signal
+   * (e.g. worker cancellation). Either aborting will cancel the call.
+   *
+   * @param {(signal: AbortSignal) => Promise<any>} fn - The API call, receives composed signal
+   * @param {AbortSignal} [externalSignal] - Optional external abort signal
+   * @returns {Promise<any>}
+   */
+  async _callWithResilience(fn, externalSignal) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const ac = new AbortController();
+      const timer = setTimeout(
+        () => ac.abort(new Error(`LLM call timed out after ${this.timeout / 1000}s`)),
+        this.timeout,
+      );
+
+      // If external signal already aborted, bail immediately
+      if (externalSignal?.aborted) {
+        clearTimeout(timer);
+        throw externalSignal.reason || new Error('Aborted');
+      }
+
+      // Forward external abort to our internal controller
+      let removeListener;
+      if (externalSignal) {
+        const onAbort = () => {
+          clearTimeout(timer);
+          ac.abort(externalSignal.reason || new Error('Cancelled'));
+        };
+        externalSignal.addEventListener('abort', onAbort, { once: true });
+        removeListener = () => externalSignal.removeEventListener('abort', onAbort);
+      }
+
+      try {
+        const result = await fn(ac.signal);
+        clearTimeout(timer);
+        removeListener?.();
+        return result;
+      } catch (err) {
+        clearTimeout(timer);
+        removeListener?.();
+
+        if (attempt < 2 && this._isTransient(err)) {
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Determine if an error is transient and worth retrying.
+   * Covers connection errors, timeouts, 5xx, and 429 rate limits.
+   */
+  _isTransient(err) {
+    const msg = err?.message || '';
+    if (
+      msg.includes('Connection error') ||
+      msg.includes('ECONNRESET') ||
+      msg.includes('socket hang up') ||
+      msg.includes('ETIMEDOUT') ||
+      msg.includes('fetch failed') ||
+      msg.includes('timed out')
+    ) {
+      return true;
+    }
+    const status = err?.status || err?.statusCode;
+    return (status >= 500 && status < 600) || status === 429;
   }
 
   /**

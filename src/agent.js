@@ -21,7 +21,7 @@ export class OrchestratorAgent {
     this._pending = new Map(); // chatId -> pending state
     this._chatCallbacks = new Map(); // chatId -> { onUpdate, sendPhoto }
 
-    // Orchestrator always uses Anthropic
+    // Orchestrator always uses Anthropic (30s timeout — lean dispatch/summarize calls)
     this.orchestratorProvider = createProvider({
       brain: {
         provider: 'anthropic',
@@ -29,6 +29,7 @@ export class OrchestratorAgent {
         max_tokens: config.orchestrator.max_tokens,
         temperature: config.orchestrator.temperature,
         api_key: config.orchestrator.api_key || process.env.ANTHROPIC_API_KEY,
+        timeout: 30_000,
       },
     });
 
@@ -214,26 +215,34 @@ export class OrchestratorAgent {
   _setupJobListeners() {
     const logger = getLogger();
 
-    this.jobManager.on('job:completed', (job) => {
+    this.jobManager.on('job:completed', async (job) => {
       const chatId = job.chatId;
       const workerDef = WORKER_TYPES[job.workerType] || {};
       const label = workerDef.label || job.workerType;
 
       logger.info(`[Orchestrator] Job completed event: ${job.id} [${job.workerType}] in chat ${chatId} (${job.duration}s) — result length: ${(job.result || '').length} chars`);
 
-      // Store raw result in conversation history so orchestrator has full context
+      // 1. Store raw result in conversation history so orchestrator has full context
       let resultText = job.result || 'Done.';
       if (resultText.length > 3000) {
         resultText = resultText.slice(0, 3000) + '\n\n... [result truncated]';
       }
       this.conversationManager.addMessage(chatId, 'user', `[Worker result: ${label} (${job.id}, ${job.duration}s)]\n\n${resultText}`);
 
-      // Trigger orchestrator to summarize the result for the user
-      this._summarizeJobResult(chatId, job).catch((err) => {
+      // 2. IMMEDIATELY notify user (guarantees they see something regardless of summary LLM)
+      const notifyMsgId = await this._sendUpdate(chatId, `✅ ${label} finished! Preparing summary...`);
+
+      // 3. Try to summarize (provider timeout protects against hangs)
+      try {
+        const summary = await this._summarizeJobResult(chatId, job);
+        if (summary) {
+          this.conversationManager.addMessage(chatId, 'assistant', summary);
+          await this._sendUpdate(chatId, summary, { editMessageId: notifyMsgId });
+        }
+      } catch (err) {
         logger.error(`[Orchestrator] Failed to summarize job ${job.id}: ${err.message}`);
-        // Fallback: send a brief notification without the raw dump
-        this._sendUpdate(chatId, `✅ ${label} finished (\`${job.id}\`, ${job.duration}s). Ask me for the results!`);
-      });
+        await this._sendUpdate(chatId, `✅ ${label} finished (\`${job.id}\`, ${job.duration}s)! Ask me for the details.`, { editMessageId: notifyMsgId }).catch(() => {});
+      }
     });
 
     this.jobManager.on('job:failed', (job) => {
@@ -262,7 +271,9 @@ export class OrchestratorAgent {
 
   /**
    * Auto-summarize a completed job result via the orchestrator LLM.
-   * The orchestrator reads the worker's raw result and presents a clean summary to the user.
+   * The orchestrator reads the worker's raw result and presents a clean summary.
+   * Protected by the provider's built-in timeout (30s) — no manual Promise.race needed.
+   * Returns the summary text, or null. Caller handles delivery.
    */
   async _summarizeJobResult(chatId, job) {
     const logger = getLogger();
@@ -271,7 +282,6 @@ export class OrchestratorAgent {
 
     logger.info(`[Orchestrator] Summarizing job ${job.id} [${job.workerType}] result for user`);
 
-    // Build messages: give orchestrator the worker result and ask for a summary
     const history = this.conversationManager.getSummarizedHistory(chatId);
 
     const response = await this.orchestratorProvider.chat({
@@ -288,10 +298,7 @@ export class OrchestratorAgent {
     const summary = response.text || '';
     logger.info(`[Orchestrator] Job ${job.id} summary: "${summary.slice(0, 200)}"`);
 
-    if (summary) {
-      this.conversationManager.addMessage(chatId, 'assistant', summary);
-      this._sendUpdate(chatId, summary);
-    }
+    return summary || null;
   }
 
   /**
@@ -402,24 +409,11 @@ export class OrchestratorAgent {
     for (let depth = startDepth; depth < maxDepth; depth++) {
       logger.info(`[Orchestrator] LLM call ${depth + 1}/${maxDepth} for chat ${chatId} — sending ${messages.length} messages`);
 
-      let response;
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          response = await this.orchestratorProvider.chat({
-            system: this._getSystemPrompt(chatId, user),
-            messages,
-            tools: orchestratorToolDefinitions,
-          });
-          break;
-        } catch (err) {
-          if (attempt < 2 && (err.message?.includes('Connection error') || err.message?.includes('ECONNRESET') || err.message?.includes('socket hang up'))) {
-            logger.warn(`[Orchestrator] LLM call failed (attempt ${attempt}): ${err.message} — retrying...`);
-            await new Promise(r => setTimeout(r, 1000));
-            continue;
-          }
-          throw err;
-        }
-      }
+      const response = await this.orchestratorProvider.chat({
+        system: this._getSystemPrompt(chatId, user),
+        messages,
+        tools: orchestratorToolDefinitions,
+      });
 
       logger.info(`[Orchestrator] LLM response: stopReason=${response.stopReason}, text=${(response.text || '').length} chars, toolCalls=${(response.toolCalls || []).length}`);
 
