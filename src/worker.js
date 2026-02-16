@@ -45,11 +45,12 @@ export class WorkerAgent {
     const skillPrompt = skillId ? getUnifiedSkillById(skillId)?.systemPrompt : null;
     this.systemPrompt = getWorkerPrompt(workerType, config, skillPrompt);
 
-    // Max tool depth from config
-    this.maxDepth = config.brain.max_tool_depth || 12;
+    // Safety ceiling — not a real limit, just prevents infinite loops
+    // The real limit is the job timeout enforced by JobManager
+    this.maxIterations = 200;
 
     const logger = getLogger();
-    logger.info(`[Worker ${jobId}] Created: type=${workerType}, provider=${config.brain.provider}/${config.brain.model}, tools=${tools.length}, maxDepth=${this.maxDepth}, skill=${skillId || 'none'}`);
+    logger.info(`[Worker ${jobId}] Created: type=${workerType}, provider=${config.brain.provider}/${config.brain.model}, tools=${tools.length}, skill=${skillId || 'none'}`);
   }
 
   /** Cancel this worker. */
@@ -87,13 +88,13 @@ export class WorkerAgent {
   async _runLoop(messages) {
     const logger = getLogger();
 
-    for (let depth = 0; depth < this.maxDepth; depth++) {
+    for (let depth = 0; depth < this.maxIterations; depth++) {
       if (this._cancelled) {
         logger.info(`[Worker ${this.jobId}] Cancelled before iteration ${depth + 1}`);
         throw new Error('Worker cancelled');
       }
 
-      logger.info(`[Worker ${this.jobId}] LLM call ${depth + 1}/${this.maxDepth} — sending ${messages.length} messages`);
+      logger.info(`[Worker ${this.jobId}] LLM call ${depth + 1} — sending ${messages.length} messages`);
 
       const response = await this.provider.chat({
         system: this.systemPrompt,
@@ -164,8 +165,60 @@ export class WorkerAgent {
       return response.text || 'Worker finished with unexpected response.';
     }
 
-    logger.warn(`[Worker ${this.jobId}] Reached max tool depth (${this.maxDepth})`);
-    return `Worker reached maximum tool depth (${this.maxDepth}). Partial results may be available.`;
+    // Safety ceiling hit (should basically never happen — job timeout is the real limit)
+    logger.warn(`[Worker ${this.jobId}] Hit safety ceiling (${this.maxIterations} iterations) — requesting final summary`);
+    this._reportProgress(`⏳ Summarizing results...`);
+
+    try {
+      messages.push({
+        role: 'user',
+        content: 'You have reached the iteration limit. Summarize everything you have found and accomplished so far. Return a complete, detailed summary of all results, data, and findings.',
+      });
+
+      const summaryResponse = await this.provider.chat({
+        system: this.systemPrompt,
+        messages,
+        tools: [], // No tools — force text-only response
+        signal: this.abortController.signal,
+      });
+
+      const summary = summaryResponse.text || '';
+      logger.info(`[Worker ${this.jobId}] Final summary: "${summary.slice(0, 200)}"`);
+
+      if (summary.length > 10) {
+        return summary;
+      }
+    } catch (err) {
+      logger.warn(`[Worker ${this.jobId}] Summary call failed: ${err.message}`);
+    }
+
+    // Fallback: extract any text the LLM produced during the loop
+    const lastAssistantText = this._extractLastAssistantText(messages);
+    if (lastAssistantText) {
+      logger.info(`[Worker ${this.jobId}] Falling back to last assistant text: "${lastAssistantText.slice(0, 200)}"`);
+      return lastAssistantText;
+    }
+
+    return 'Worker finished but could not produce a final summary.';
+  }
+
+  /** Extract the last meaningful assistant text from message history. */
+  _extractLastAssistantText(messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role !== 'assistant') continue;
+
+      if (typeof msg.content === 'string' && msg.content.trim()) {
+        return msg.content.trim();
+      }
+      if (Array.isArray(msg.content)) {
+        const texts = msg.content
+          .filter(b => b.type === 'text' && b.text?.trim())
+          .map(b => b.text.trim());
+        if (texts.length > 0) return texts.join('\n');
+      }
+    }
+    return null;
   }
 
   _reportProgress(text) {

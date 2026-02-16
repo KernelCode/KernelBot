@@ -23,7 +23,6 @@ const DEFAULTS = {
     model: 'claude-sonnet-4-20250514',
     max_tokens: 4096,
     temperature: 0.3,
-    max_tool_depth: 12,
   },
   swarm: {
     max_concurrent_jobs: 3,
