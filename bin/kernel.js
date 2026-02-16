@@ -23,6 +23,7 @@ import { UserPersonaManager } from '../src/persona.js';
 import { Agent } from '../src/agent.js';
 import { JobManager } from '../src/swarm/job-manager.js';
 import { startBot } from '../src/bot.js';
+import { AutomationManager } from '../src/automation/index.js';
 import { createProvider, PROVIDERS } from '../src/providers/index.js';
 import {
   loadCustomSkills,
@@ -46,7 +47,8 @@ function showMenu(config) {
   console.log(`  ${chalk.cyan('4.')} View audit logs`);
   console.log(`  ${chalk.cyan('5.')} Change brain model`);
   console.log(`  ${chalk.cyan('6.')} Manage custom skills`);
-  console.log(`  ${chalk.cyan('7.')} Exit`);
+  console.log(`  ${chalk.cyan('7.')} Manage automations`);
+  console.log(`  ${chalk.cyan('8.')} Exit`);
   console.log('');
 }
 
@@ -171,9 +173,11 @@ async function startBotFlow(config) {
     cleanupIntervalMinutes: config.swarm.cleanup_interval_minutes,
   });
 
-  const agent = new Agent({ config, conversationManager, personaManager, jobManager });
+  const automationManager = new AutomationManager();
 
-  startBot(config, agent, conversationManager, jobManager);
+  const agent = new Agent({ config, conversationManager, personaManager, jobManager, automationManager });
+
+  startBot(config, agent, conversationManager, jobManager, automationManager);
 
   // Periodic job cleanup and timeout enforcement
   const cleanupMs = (config.swarm.cleanup_interval_minutes || 30) * 60 * 1000;
@@ -270,6 +274,67 @@ async function manageCustomSkills(rl) {
   }
 }
 
+async function manageAutomations(rl) {
+  const manager = new AutomationManager();
+
+  let managing = true;
+  while (managing) {
+    const autos = manager.listAll();
+    console.log('');
+    console.log(chalk.bold('  Automations\n'));
+    console.log(`  ${chalk.cyan('1.')} List all automations (${autos.length})`);
+    console.log(`  ${chalk.cyan('2.')} Delete an automation`);
+    console.log(`  ${chalk.cyan('3.')} Back`);
+    console.log('');
+
+    const choice = await ask(rl, chalk.cyan('  > '));
+    switch (choice.trim()) {
+      case '1': {
+        if (!autos.length) {
+          console.log(chalk.dim('\n  No automations found.\n'));
+          break;
+        }
+        console.log('');
+        for (const a of autos) {
+          const status = a.enabled ? chalk.green('enabled') : chalk.yellow('paused');
+          const next = a.nextRun ? new Date(a.nextRun).toLocaleString() : 'not scheduled';
+          console.log(`  ${chalk.bold(a.name)} (${a.id}) — chat ${a.chatId}`);
+          console.log(chalk.dim(`     Status: ${status} | Runs: ${a.runCount} | Next: ${next}`));
+          console.log(chalk.dim(`     Task: ${a.description.slice(0, 80)}${a.description.length > 80 ? '...' : ''}`));
+        }
+        console.log('');
+        break;
+      }
+      case '2': {
+        if (!autos.length) {
+          console.log(chalk.dim('\n  No automations to delete.\n'));
+          break;
+        }
+        console.log('');
+        autos.forEach((a, i) => {
+          console.log(`  ${chalk.cyan(`${i + 1}.`)} ${a.name} (${a.id}) — chat ${a.chatId}`);
+        });
+        console.log('');
+        const pick = await ask(rl, chalk.cyan('  Delete #: '));
+        const idx = parseInt(pick, 10) - 1;
+        if (idx >= 0 && idx < autos.length) {
+          const deleted = manager.delete(autos[idx].id);
+          if (deleted) console.log(chalk.green(`\n  🗑️  Deleted: ${autos[idx].name}\n`));
+          else console.log(chalk.dim('  Not found.\n'));
+        } else {
+          console.log(chalk.dim('  Cancelled.\n'));
+        }
+        break;
+      }
+      case '3':
+        managing = false;
+        break;
+      default:
+        console.log(chalk.dim('  Invalid choice.\n'));
+    }
+  }
+}
+
 async function main() {
   showLogo();
 
@@ -306,6 +371,9 @@ async function main() {
         await manageCustomSkills(rl);
         break;
       case '7':
+        await manageAutomations(rl);
+        break;
+      case '8':
         running = false;
         break;
       default:

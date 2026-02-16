@@ -50,7 +50,7 @@ class ChatQueue {
   }
 }
 
-export function startBot(config, agent, conversationManager, jobManager) {
+export function startBot(config, agent, conversationManager, jobManager, automationManager) {
   const logger = getLogger();
   const bot = new TelegramBot(config.telegram.bot_token, { polling: true });
   const chatQueue = new ChatQueue();
@@ -69,6 +69,75 @@ export function startBot(config, agent, conversationManager, jobManager) {
   loadCustomSkills();
 
   logger.info('Telegram bot started with polling');
+
+  // Initialize automation manager with bot context
+  if (automationManager) {
+    const sendMsg = async (chatId, text) => {
+      try {
+        await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+      } catch {
+        await bot.sendMessage(chatId, text);
+      }
+    };
+
+    const sendAction = (chatId, action) => bot.sendChatAction(chatId, action).catch(() => {});
+
+    const agentFactory = (chatId) => {
+      const onUpdate = async (update, opts = {}) => {
+        if (opts.editMessageId) {
+          try {
+            const edited = await bot.editMessageText(update, {
+              chat_id: chatId,
+              message_id: opts.editMessageId,
+              parse_mode: 'Markdown',
+            });
+            return edited.message_id;
+          } catch {
+            try {
+              const edited = await bot.editMessageText(update, {
+                chat_id: chatId,
+                message_id: opts.editMessageId,
+              });
+              return edited.message_id;
+            } catch {
+              return opts.editMessageId;
+            }
+          }
+        }
+        const parts = splitMessage(update);
+        let lastMsgId = null;
+        for (const part of parts) {
+          try {
+            const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
+            lastMsgId = sent.message_id;
+          } catch {
+            const sent = await bot.sendMessage(chatId, part);
+            lastMsgId = sent.message_id;
+          }
+        }
+        return lastMsgId;
+      };
+
+      const sendPhoto = async (filePath, caption) => {
+        const fileOpts = { contentType: 'image/png' };
+        try {
+          await bot.sendPhoto(chatId, createReadStream(filePath), { caption: caption || '', parse_mode: 'Markdown' }, fileOpts);
+        } catch {
+          try {
+            await bot.sendPhoto(chatId, createReadStream(filePath), { caption: caption || '' }, fileOpts);
+          } catch (err) {
+            logger.error(`[Automation] Failed to send photo: ${err.message}`);
+          }
+        }
+      };
+
+      return { agent, onUpdate, sendPhoto };
+    };
+
+    automationManager.init({ sendMessage: sendMsg, sendChatAction: sendAction, agentFactory, config });
+    automationManager.startAll();
+    logger.info('[Bot] Automation manager initialized and started');
+  }
 
   // Track pending brain API key input: chatId -> { providerKey, modelId }
   const pendingBrainKey = new Map();
@@ -356,6 +425,31 @@ export function startBot(config, agent, conversationManager, jobManager) {
           chat_id: chatId,
           message_id: query.message.message_id,
         });
+        await bot.answerCallbackQuery(query.id);
+
+      // ── Automation callbacks ─────────────────────────────────────────
+      } else if (data.startsWith('auto_pause:')) {
+        const autoId = data.slice('auto_pause:'.length);
+        logger.info(`[Bot] Automation pause request: ${autoId} from chat ${chatId}`);
+        const auto = automationManager?.update(autoId, { enabled: false });
+        const msg = auto ? `⏸️ Paused automation \`${autoId}\` (${auto.name})` : `Automation \`${autoId}\` not found.`;
+        await bot.editMessageText(msg, { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' });
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data.startsWith('auto_resume:')) {
+        const autoId = data.slice('auto_resume:'.length);
+        logger.info(`[Bot] Automation resume request: ${autoId} from chat ${chatId}`);
+        const auto = automationManager?.update(autoId, { enabled: true });
+        const msg = auto ? `▶️ Resumed automation \`${autoId}\` (${auto.name})` : `Automation \`${autoId}\` not found.`;
+        await bot.editMessageText(msg, { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' });
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data.startsWith('auto_delete:')) {
+        const autoId = data.slice('auto_delete:'.length);
+        logger.info(`[Bot] Automation delete request: ${autoId} from chat ${chatId}`);
+        const deleted = automationManager?.delete(autoId);
+        const msg = deleted ? `🗑️ Deleted automation \`${autoId}\`` : `Automation \`${autoId}\` not found.`;
+        await bot.editMessageText(msg, { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' });
         await bot.answerCallbackQuery(query.id);
       }
     } catch (err) {
@@ -697,6 +791,7 @@ export function startBot(config, agent, conversationManager, jobManager) {
         '/skills reset — Clear active skill back to default',
         '/jobs — List running and recent jobs',
         '/cancel — Cancel running job(s)',
+        '/auto — Manage recurring automations',
         '/context — Show current conversation context and brain info',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',
@@ -708,6 +803,107 @@ export function startBot(config, agent, conversationManager, jobManager) {
         'Or just send any message to chat with the agent.',
       ].join('\n'), { parse_mode: 'Markdown' });
       return;
+    }
+
+    // ── /auto command ──────────────────────────────────────────────
+    if (text === '/auto' || text.startsWith('/auto ')) {
+      logger.info(`[Bot] /auto command from ${username} (${userId}) in chat ${chatId}`);
+      const args = text.slice('/auto'.length).trim();
+
+      if (!automationManager) {
+        await bot.sendMessage(chatId, 'Automation system not available.');
+        return;
+      }
+
+      // /auto (no args) — list automations
+      if (!args) {
+        const autos = automationManager.listForChat(chatId);
+        if (autos.length === 0) {
+          await bot.sendMessage(chatId, [
+            '⏰ *No automations set up yet.*',
+            '',
+            'Tell me what to automate in natural language, e.g.:',
+            '  "check my server health every hour"',
+            '  "send me a news summary every morning at 9am"',
+            '',
+            'Or use `/auto` subcommands:',
+            '  `/auto pause <id>` — pause an automation',
+            '  `/auto resume <id>` — resume an automation',
+            '  `/auto delete <id>` — delete an automation',
+            '  `/auto run <id>` — trigger immediately',
+          ].join('\n'), { parse_mode: 'Markdown' });
+          return;
+        }
+
+        const lines = ['⏰ *Automations*', ''];
+        for (const auto of autos) {
+          lines.push(auto.toSummary());
+        }
+        lines.push('', '_Use `/auto pause|resume|delete|run <id>` to manage._');
+
+        // Build inline keyboard for quick actions
+        const buttons = autos.map((a) => {
+          const row = [];
+          if (a.enabled) {
+            row.push({ text: `⏸️ Pause ${a.id}`, callback_data: `auto_pause:${a.id}` });
+          } else {
+            row.push({ text: `▶️ Resume ${a.id}`, callback_data: `auto_resume:${a.id}` });
+          }
+          row.push({ text: `🗑️ Delete ${a.id}`, callback_data: `auto_delete:${a.id}` });
+          return row;
+        });
+
+        await bot.sendMessage(chatId, lines.join('\n'), {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons },
+        });
+        return;
+      }
+
+      // /auto pause <id>
+      if (args.startsWith('pause ')) {
+        const autoId = args.slice('pause '.length).trim();
+        const auto = automationManager.update(autoId, { enabled: false });
+        await bot.sendMessage(chatId, auto
+          ? `⏸️ Paused automation \`${autoId}\` (${auto.name})`
+          : `Automation \`${autoId}\` not found.`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // /auto resume <id>
+      if (args.startsWith('resume ')) {
+        const autoId = args.slice('resume '.length).trim();
+        const auto = automationManager.update(autoId, { enabled: true });
+        await bot.sendMessage(chatId, auto
+          ? `▶️ Resumed automation \`${autoId}\` (${auto.name})`
+          : `Automation \`${autoId}\` not found.`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // /auto delete <id>
+      if (args.startsWith('delete ')) {
+        const autoId = args.slice('delete '.length).trim();
+        const deleted = automationManager.delete(autoId);
+        await bot.sendMessage(chatId, deleted
+          ? `🗑️ Deleted automation \`${autoId}\``
+          : `Automation \`${autoId}\` not found.`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // /auto run <id> — trigger immediately
+      if (args.startsWith('run ')) {
+        const autoId = args.slice('run '.length).trim();
+        try {
+          await automationManager.runNow(autoId);
+        } catch (err) {
+          await bot.sendMessage(chatId, `Failed: ${err.message}`);
+        }
+        return;
+      }
+
+      // /auto <anything else> — treat as natural language automation request
+      text = `Set up an automation: ${args}`;
+      // Fall through to normal message processing below
     }
 
     // Web browsing shortcut commands — rewrite as natural language for the agent

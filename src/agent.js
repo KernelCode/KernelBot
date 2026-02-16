@@ -13,11 +13,12 @@ const MAX_RESULT_LENGTH = 3000;
 const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
 
 export class OrchestratorAgent {
-  constructor({ config, conversationManager, personaManager, jobManager }) {
+  constructor({ config, conversationManager, personaManager, jobManager, automationManager }) {
     this.config = config;
     this.conversationManager = conversationManager;
     this.personaManager = personaManager;
     this.jobManager = jobManager;
+    this.automationManager = automationManager || null;
     this._pending = new Map(); // chatId -> pending state
     this._chatCallbacks = new Map(); // chatId -> { onUpdate, sendPhoto }
 
@@ -444,6 +445,7 @@ export class OrchestratorAgent {
             jobManager: this.jobManager,
             config: this.config,
             spawnWorker: (job) => this._spawnWorker(job),
+            automationManager: this.automationManager,
           });
 
           logger.info(`[Orchestrator] Tool result for ${block.name}: ${JSON.stringify(result).slice(0, 200)}`);
@@ -484,6 +486,14 @@ export class OrchestratorAgent {
         return 'Checking job status';
       case 'cancel_job':
         return `Cancelling job ${input.job_id}`;
+      case 'create_automation':
+        return `Creating automation: ${(input.name || '').slice(0, 40)}`;
+      case 'list_automations':
+        return 'Listing automations';
+      case 'update_automation':
+        return `Updating automation ${input.automation_id}`;
+      case 'delete_automation':
+        return `Deleting automation ${input.automation_id}`;
       default:
         return name;
     }

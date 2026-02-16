@@ -46,7 +46,23 @@ Before dispatching dangerous tasks (file deletion, force push, \`rm -rf\`, killi
 ## Efficiency
 - Don't dispatch for trivial questions you can answer yourself.
 - When a task clearly needs one worker type, dispatch immediately without overthinking.
-- When results come back from workers, summarize them clearly for the user.`;
+- When results come back from workers, summarize them clearly for the user.
+
+## Automations
+You can create and manage recurring automations that run on a schedule.
+
+When a user asks to automate something ("check my server every hour", "news summary every morning"):
+1. Use create_automation with a clear, standalone task description
+2. Choose the right schedule:
+   - Fixed time: 'cron' with expression (e.g. "0 9 * * *" for 9am daily)
+   - Regular interval: 'interval' with minutes
+   - Human-like random: 'random' with min/max minutes range
+3. The task description must be detailed enough to work as a standalone prompt
+
+When you receive a message starting with [AUTOMATION:], an automation triggered it.
+Execute the task and report results. Don't create new automations from automated tasks.
+
+Tools: create_automation, list_automations, update_automation, delete_automation`;
 
   if (skillPrompt) {
     prompt += `\n\n## Active Skill\nYou have specialized expertise in the following domain. Guide your workers with this knowledge.\n\n${skillPrompt}`;

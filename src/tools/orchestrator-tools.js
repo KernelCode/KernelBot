@@ -49,6 +49,102 @@ export const orchestratorToolDefinitions = [
       required: ['job_id'],
     },
   },
+  {
+    name: 'create_automation',
+    description: 'Create a recurring automation that runs on a schedule. The task description will be executed as a standalone prompt each time it fires.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Short name for the automation (e.g. "Server Health Check").',
+        },
+        description: {
+          type: 'string',
+          description: 'Detailed task prompt that will be executed each time. Must be standalone and self-contained.',
+        },
+        schedule_type: {
+          type: 'string',
+          enum: ['cron', 'interval', 'random'],
+          description: 'Schedule type: cron (fixed times), interval (every N minutes), random (human-like random intervals).',
+        },
+        cron_expression: {
+          type: 'string',
+          description: 'Cron expression for schedule_type=cron (e.g. "0 9 * * *" for 9am daily). 5 fields: minute hour dayOfMonth month dayOfWeek.',
+        },
+        interval_minutes: {
+          type: 'number',
+          description: 'Interval in minutes for schedule_type=interval (minimum 5).',
+        },
+        min_minutes: {
+          type: 'number',
+          description: 'Minimum interval in minutes for schedule_type=random.',
+        },
+        max_minutes: {
+          type: 'number',
+          description: 'Maximum interval in minutes for schedule_type=random.',
+        },
+      },
+      required: ['name', 'description', 'schedule_type'],
+    },
+  },
+  {
+    name: 'list_automations',
+    description: 'List all automations for the current chat with their status, schedule, and next run time.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'update_automation',
+    description: 'Update an existing automation — change its name, description, schedule, or enable/disable it.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        automation_id: {
+          type: 'string',
+          description: 'The ID of the automation to update.',
+        },
+        enabled: {
+          type: 'boolean',
+          description: 'Enable or disable the automation.',
+        },
+        name: {
+          type: 'string',
+          description: 'New name for the automation.',
+        },
+        description: {
+          type: 'string',
+          description: 'New task prompt for the automation.',
+        },
+        schedule_type: {
+          type: 'string',
+          enum: ['cron', 'interval', 'random'],
+          description: 'New schedule type.',
+        },
+        cron_expression: { type: 'string' },
+        interval_minutes: { type: 'number' },
+        min_minutes: { type: 'number' },
+        max_minutes: { type: 'number' },
+      },
+      required: ['automation_id'],
+    },
+  },
+  {
+    name: 'delete_automation',
+    description: 'Permanently delete an automation by its ID.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        automation_id: {
+          type: 'string',
+          description: 'The ID of the automation to delete.',
+        },
+      },
+      required: ['automation_id'],
+    },
+  },
 ];
 
 /**
@@ -62,7 +158,7 @@ export const orchestratorToolDefinitions = [
  */
 export async function executeOrchestratorTool(name, input, context) {
   const logger = getLogger();
-  const { chatId, jobManager, config, spawnWorker } = context;
+  const { chatId, jobManager, config, spawnWorker, automationManager } = context;
 
   switch (name) {
     case 'dispatch_task': {
@@ -153,6 +249,120 @@ export async function executeOrchestratorTool(name, input, context) {
         status: 'cancelled',
         message: `Cancelled ${WORKER_TYPES[job.workerType]?.emoji || ''} ${job.workerType} worker.`,
       };
+    }
+
+    case 'create_automation': {
+      if (!automationManager) return { error: 'Automation system not available.' };
+
+      const { name: autoName, description, schedule_type, cron_expression, interval_minutes, min_minutes, max_minutes } = input;
+      logger.info(`[create_automation] Request: name="${autoName}", type=${schedule_type}`);
+
+      let schedule;
+      switch (schedule_type) {
+        case 'cron':
+          schedule = { type: 'cron', expression: cron_expression };
+          break;
+        case 'interval':
+          schedule = { type: 'interval', minutes: interval_minutes };
+          break;
+        case 'random':
+          schedule = { type: 'random', minMinutes: min_minutes, maxMinutes: max_minutes };
+          break;
+        default:
+          return { error: `Unknown schedule type: ${schedule_type}` };
+      }
+
+      try {
+        const auto = automationManager.create(chatId, { name: autoName, description, schedule });
+        return {
+          automation_id: auto.id,
+          name: auto.name,
+          schedule: auto.schedule,
+          next_run: auto.nextRun ? new Date(auto.nextRun).toLocaleString() : null,
+          message: `Automation "${auto.name}" created and armed.`,
+        };
+      } catch (err) {
+        logger.warn(`[create_automation] Failed: ${err.message}`);
+        return { error: err.message };
+      }
+    }
+
+    case 'list_automations': {
+      if (!automationManager) return { error: 'Automation system not available.' };
+
+      const autos = automationManager.listForChat(chatId);
+      logger.info(`[list_automations] Chat ${chatId} — ${autos.length} automation(s)`);
+
+      if (autos.length === 0) {
+        return { message: 'No automations for this chat.' };
+      }
+
+      return {
+        automations: autos.map((a) => ({
+          id: a.id,
+          name: a.name,
+          description: a.description.slice(0, 100),
+          schedule: a.schedule,
+          enabled: a.enabled,
+          next_run: a.nextRun ? new Date(a.nextRun).toLocaleString() : null,
+          run_count: a.runCount,
+          last_error: a.lastError,
+          summary: a.toSummary(),
+        })),
+      };
+    }
+
+    case 'update_automation': {
+      if (!automationManager) return { error: 'Automation system not available.' };
+
+      const { automation_id, enabled, name: newName, description: newDesc, schedule_type: newSchedType, cron_expression: newCron, interval_minutes: newInterval, min_minutes: newMin, max_minutes: newMax } = input;
+      logger.info(`[update_automation] Request: id=${automation_id}`);
+
+      const changes = {};
+      if (enabled !== undefined) changes.enabled = enabled;
+      if (newName !== undefined) changes.name = newName;
+      if (newDesc !== undefined) changes.description = newDesc;
+
+      if (newSchedType !== undefined) {
+        switch (newSchedType) {
+          case 'cron':
+            changes.schedule = { type: 'cron', expression: newCron };
+            break;
+          case 'interval':
+            changes.schedule = { type: 'interval', minutes: newInterval };
+            break;
+          case 'random':
+            changes.schedule = { type: 'random', minMinutes: newMin, maxMinutes: newMax };
+            break;
+        }
+      }
+
+      try {
+        const auto = automationManager.update(automation_id, changes);
+        if (!auto) return { error: `Automation ${automation_id} not found.` };
+        return {
+          automation_id: auto.id,
+          name: auto.name,
+          enabled: auto.enabled,
+          schedule: auto.schedule,
+          next_run: auto.nextRun ? new Date(auto.nextRun).toLocaleString() : null,
+          message: `Automation "${auto.name}" updated.`,
+        };
+      } catch (err) {
+        logger.warn(`[update_automation] Failed: ${err.message}`);
+        return { error: err.message };
+      }
+    }
+
+    case 'delete_automation': {
+      if (!automationManager) return { error: 'Automation system not available.' };
+
+      const { automation_id } = input;
+      logger.info(`[delete_automation] Request: id=${automation_id}`);
+
+      const deleted = automationManager.delete(automation_id);
+      if (!deleted) return { error: `Automation ${automation_id} not found.` };
+      return { automation_id, status: 'deleted', message: `Automation deleted.` };
     }
 
     default:
