@@ -57,6 +57,7 @@ export const handlers = {
         prompt: params.prompt,
         maxTurns: params.max_turns,
         onOutput: onUpdate,
+        signal: context.signal || null,
       });
 
       // Show stderr if any

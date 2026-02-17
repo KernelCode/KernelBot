@@ -230,6 +230,8 @@ export async function executeOrchestratorTool(name, input, context) {
           status: j.status,
           task: j.task.slice(0, 100),
           duration: j.duration,
+          recent_activity: j.progress.slice(-5),
+          last_activity_seconds_ago: j.lastActivity ? Math.round((Date.now() - j.lastActivity) / 1000) : null,
           summary: j.toSummary(),
         })),
       };

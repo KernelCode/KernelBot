@@ -20,6 +20,7 @@ import {
 import { createAuditLogger } from '../src/security/audit.js';
 import { ConversationManager } from '../src/conversation.js';
 import { UserPersonaManager } from '../src/persona.js';
+import { SelfManager } from '../src/self.js';
 import { Agent } from '../src/agent.js';
 import { JobManager } from '../src/swarm/job-manager.js';
 import { startBot } from '../src/bot.js';
@@ -168,6 +169,7 @@ async function startBotFlow(config) {
 
   const conversationManager = new ConversationManager(config);
   const personaManager = new UserPersonaManager();
+  const selfManager = new SelfManager();
   const jobManager = new JobManager({
     jobTimeoutSeconds: config.swarm.job_timeout_seconds,
     cleanupIntervalMinutes: config.swarm.cleanup_interval_minutes,
@@ -175,7 +177,7 @@ async function startBotFlow(config) {
 
   const automationManager = new AutomationManager();
 
-  const agent = new Agent({ config, conversationManager, personaManager, jobManager, automationManager });
+  const agent = new Agent({ config, conversationManager, personaManager, selfManager, jobManager, automationManager });
 
   startBot(config, agent, conversationManager, jobManager, automationManager);
 

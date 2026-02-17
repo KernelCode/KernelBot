@@ -136,11 +136,11 @@ function processEvent(line, onOutput, logger) {
 export class ClaudeCodeSpawner {
   constructor(config) {
     this.maxTurns = config.claude_code?.max_turns || 50;
-    this.timeout = (config.claude_code?.timeout_seconds || 600) * 1000;
+    this.timeout = (config.claude_code?.timeout_seconds || 86400) * 1000;
     this.model = config.claude_code?.model || null;
   }
 
-  async run({ workingDirectory, prompt, maxTurns, onOutput }) {
+  async run({ workingDirectory, prompt, maxTurns, onOutput, signal }) {
     const logger = getLogger();
     const turns = maxTurns || this.maxTurns;
 
@@ -223,6 +223,20 @@ export class ClaudeCodeSpawner {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
+      // Wire abort signal to kill the child process
+      let abortHandler = null;
+      if (signal) {
+        if (signal.aborted) {
+          child.kill('SIGTERM');
+        } else {
+          abortHandler = () => {
+            logger.info('Claude Code: abort signal received — killing child process');
+            child.kill('SIGTERM');
+          };
+          signal.addEventListener('abort', abortHandler, { once: true });
+        }
+      }
+
       let fullOutput = '';
       let stderr = '';
       let buffer = '';
@@ -268,6 +282,7 @@ export class ClaudeCodeSpawner {
 
       child.on('close', async (code) => {
         clearTimeout(timer);
+        if (abortHandler && signal) signal.removeEventListener('abort', abortHandler);
 
         if (buffer.trim()) {
           fullOutput += buffer.trim();
@@ -312,6 +327,7 @@ export class ClaudeCodeSpawner {
 
       child.on('error', (err) => {
         clearTimeout(timer);
+        if (abortHandler && signal) signal.removeEventListener('abort', abortHandler);
         if (err.code === 'ENOENT') {
           reject(new Error('Claude Code CLI not found. Install with: npm i -g @anthropic-ai/claude-code'));
         } else {

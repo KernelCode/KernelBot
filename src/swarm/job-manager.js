@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { Job } from './job.js';
+import { WORKER_TYPES } from './worker-registry.js';
 import { getLogger } from '../utils/logger.js';
 
 /**
@@ -22,9 +23,12 @@ export class JobManager extends EventEmitter {
   /** Create a new job (status: queued). */
   createJob(chatId, workerType, task) {
     const job = new Job({ chatId, workerType, task });
+    // Set per-job timeout from worker type config, fall back to global
+    const workerConfig = WORKER_TYPES[workerType];
+    job.timeoutMs = workerConfig?.timeout ? workerConfig.timeout * 1000 : this.jobTimeoutMs;
     this.jobs.set(job.id, job);
     const logger = getLogger();
-    logger.info(`[JobManager] Job created: ${job.id} [${workerType}] for chat ${chatId} — "${task.slice(0, 100)}"`);
+    logger.info(`[JobManager] Job created: ${job.id} [${workerType}] for chat ${chatId} — timeout: ${job.timeoutMs / 1000}s — "${task.slice(0, 100)}"`);
     logger.debug(`[JobManager] Total jobs tracked: ${this.jobs.size}`);
     return job;
   }
@@ -145,13 +149,14 @@ export class JobManager extends EventEmitter {
       if (job.status === 'running' && job.startedAt) {
         checkedCount++;
         const elapsed = now - job.startedAt;
-        if (elapsed > this.jobTimeoutMs) {
-          getLogger().warn(`[JobManager] Job ${job.id} [${job.workerType}] timed out — elapsed: ${Math.round(elapsed / 1000)}s, limit: ${this.jobTimeoutMs / 1000}s`);
+        const timeoutMs = job.timeoutMs || this.jobTimeoutMs;
+        if (elapsed > timeoutMs) {
+          getLogger().warn(`[JobManager] Job ${job.id} [${job.workerType}] timed out — elapsed: ${Math.round(elapsed / 1000)}s, limit: ${timeoutMs / 1000}s`);
           // Cancel the worker first so it stops executing & frees resources
           if (job.worker && typeof job.worker.cancel === 'function') {
             job.worker.cancel();
           }
-          this.failJob(job.id, `Timed out after ${this.jobTimeoutMs / 1000}s`);
+          this.failJob(job.id, `Timed out after ${timeoutMs / 1000}s`);
         }
       }
     }

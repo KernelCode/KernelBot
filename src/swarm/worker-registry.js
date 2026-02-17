@@ -10,30 +10,35 @@ export const WORKER_TYPES = {
     emoji: '💻',
     categories: ['core', 'coding', 'git', 'github'],
     description: 'Write code, fix bugs, create PRs',
+    timeout: 86400,  // 24 hours — Claude Code can legitimately run for hours
   },
   browser: {
     label: 'Browser Worker',
     emoji: '🌐',
     categories: ['browser'],
     description: 'Web search, scraping, screenshots',
+    timeout: 300,    // 5 minutes
   },
   system: {
     label: 'System Worker',
     emoji: '🖥️',
     categories: ['core', 'process', 'monitor', 'network'],
     description: 'OS operations, monitoring, network',
+    timeout: 600,    // 10 minutes
   },
   devops: {
     label: 'DevOps Worker',
     emoji: '🚀',
     categories: ['core', 'docker', 'process', 'monitor', 'network', 'git'],
     description: 'Docker, deploy, infrastructure',
+    timeout: 3600,   // 1 hour
   },
   research: {
     label: 'Research Worker',
     emoji: '🔍',
     categories: ['browser', 'core'],
     description: 'Deep web research and analysis',
+    timeout: 600,    // 10 minutes
   },
 };
 

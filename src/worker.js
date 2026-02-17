@@ -151,6 +151,7 @@ export class WorkerAgent {
             onUpdate: this.callbacks.onUpdate || null, // Real bot onUpdate (returns message_id for coder.js smart output)
             sendPhoto: this.callbacks.sendPhoto || null,
             sessionId: this.jobId, // Per-worker browser session isolation
+            signal: this.abortController.signal, // For killing child processes on cancellation
           });
 
           const resultStr = this._truncateResult(block.name, result);
@@ -257,6 +258,9 @@ export class WorkerAgent {
   _reportProgress(text) {
     if (this.callbacks.onProgress) {
       try { this.callbacks.onProgress(text); } catch {}
+    }
+    if (this.callbacks.onHeartbeat) {
+      try { this.callbacks.onHeartbeat(text); } catch {}
     }
   }
 

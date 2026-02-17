@@ -26,6 +26,9 @@ export class Job {
     this.createdAt = Date.now();
     this.startedAt = null;
     this.completedAt = null;
+    this.timeoutMs = null;                              // Per-job timeout (set from worker type config)
+    this.progress = [];                                 // Recent activity entries
+    this.lastActivity = null;                           // Timestamp of last activity
   }
 
   /** Transition to a new status. Throws if the transition is invalid. */
@@ -46,6 +49,13 @@ export class Job {
     return Math.round((end - this.startedAt) / 1000);
   }
 
+  /** Record a progress heartbeat from the worker. Caps at 20 entries. */
+  addProgress(text) {
+    this.progress.push(text);
+    if (this.progress.length > 20) this.progress.shift();
+    this.lastActivity = Date.now();
+  }
+
   /** Whether this job is in a terminal state. */
   get isTerminal() {
     return ['completed', 'failed', 'cancelled'].includes(this.status);
@@ -62,6 +72,7 @@ export class Job {
     };
     const emoji = statusEmoji[this.status] || '❓';
     const dur = this.duration != null ? ` (${this.duration}s)` : '';
-    return `${emoji} \`${this.id}\` [${this.workerType}] ${this.task.slice(0, 60)}${this.task.length > 60 ? '...' : ''}${dur}`;
+    const lastAct = this.progress.length > 0 ? ` | ${this.progress[this.progress.length - 1]}` : '';
+    return `${emoji} \`${this.id}\` [${this.workerType}] ${this.task.slice(0, 60)}${this.task.length > 60 ? '...' : ''}${dur}${lastAct}`;
   }
 }

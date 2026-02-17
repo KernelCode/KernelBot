@@ -122,12 +122,15 @@ export const handlers = {
     }
 
     return new Promise((res) => {
+      let abortHandler = null;
+
       const child = exec(
         command,
         { timeout: timeout_seconds * 1000, maxBuffer: 10 * 1024 * 1024 },
         (error, stdout, stderr) => {
+          if (abortHandler && context.signal) context.signal.removeEventListener('abort', abortHandler);
           if (error && error.killed) {
-            return res({ error: `Command timed out after ${timeout_seconds}s` });
+            return res({ error: `Command timed out or was cancelled after ${timeout_seconds}s` });
           }
           const result = {
             stdout: stdout || '',
@@ -147,6 +150,16 @@ export const handlers = {
           res(result);
         },
       );
+
+      // Wire abort signal to kill the child process
+      if (context.signal) {
+        if (context.signal.aborted) {
+          child.kill('SIGTERM');
+        } else {
+          abortHandler = () => child.kill('SIGTERM');
+          context.signal.addEventListener('abort', abortHandler, { once: true });
+        }
+      }
     });
   },
 

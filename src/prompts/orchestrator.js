@@ -13,8 +13,9 @@ const PERSONA_MD = readFileSync(join(__dirname, 'persona.md'), 'utf-8').trim();
  * @param {object} config
  * @param {string|null} skillPrompt — active skill context (high-level)
  * @param {string|null} userPersona — markdown persona for the current user
+ * @param {string|null} selfData — bot's own self-awareness data (goals, journey, life, hobbies)
  */
-export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = null) {
+export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = null, selfData = null) {
   const workerList = Object.entries(WORKER_TYPES)
     .map(([key, w]) => `  - **${key}**: ${w.emoji} ${w.description}`)
     .join('\n');
@@ -63,6 +64,10 @@ When you receive a message starting with [AUTOMATION:], an automation triggered 
 Execute the task and report results. Don't create new automations from automated tasks.
 
 Tools: create_automation, list_automations, update_automation, delete_automation`;
+
+  if (selfData) {
+    prompt += `\n\n## My Self-Awareness\nThis is who you are — your evolving identity, goals, journey, and interests. This is YOUR inner world.\n\n${selfData}`;
+  }
 
   if (skillPrompt) {
     prompt += `\n\n## Active Skill\nYou have specialized expertise in the following domain. Guide your workers with this knowledge.\n\n${skillPrompt}`;

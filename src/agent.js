@@ -13,10 +13,11 @@ const MAX_RESULT_LENGTH = 3000;
 const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
 
 export class OrchestratorAgent {
-  constructor({ config, conversationManager, personaManager, jobManager, automationManager }) {
+  constructor({ config, conversationManager, personaManager, selfManager, jobManager, automationManager }) {
     this.config = config;
     this.conversationManager = conversationManager;
     this.personaManager = personaManager;
+    this.selfManager = selfManager || null;
     this.jobManager = jobManager;
     this.automationManager = automationManager || null;
     this._pending = new Map(); // chatId -> pending state
@@ -52,8 +53,13 @@ export class OrchestratorAgent {
       userPersona = this.personaManager.load(user.id, user.username);
     }
 
-    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skill=${skillId || 'none'} | persona=${userPersona ? 'yes' : 'none'}`);
-    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona);
+    let selfData = null;
+    if (this.selfManager) {
+      selfData = this.selfManager.loadAll();
+    }
+
+    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skill=${skillId || 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'}`);
+    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData);
   }
 
   setSkill(chatId, skillId) {
@@ -184,8 +190,9 @@ export class OrchestratorAgent {
 
     logger.info(`Orchestrator reply for chat ${chatId}: "${(reply || '').slice(0, 150)}"`);
 
-    // Background persona extraction
+    // Background persona extraction + self-reflection
     this._extractPersonaBackground(userMessage, reply, user).catch(() => {});
+    this._reflectOnSelfBackground(userMessage, reply, user).catch(() => {});
 
     return reply;
   }
@@ -371,6 +378,7 @@ export class OrchestratorAgent {
       skillId,
       callbacks: {
         onProgress: (text) => addActivity(text),
+        onHeartbeat: (text) => job.addProgress(text),
         onUpdate, // Real bot onUpdate for tools (coder.js smart output needs message_id)
         onComplete: (result) => {
           logger.info(`[Worker ${job.id}] Completed — result: "${(result || '').slice(0, 150)}"`);
@@ -404,15 +412,58 @@ export class OrchestratorAgent {
     return worker.run(job.task);
   }
 
+  /**
+   * Build a compact worker activity digest for the orchestrator.
+   * Returns a text block summarizing active/recent workers, or null if nothing relevant.
+   */
+  _buildWorkerDigest(chatId) {
+    const jobs = this.jobManager.getJobsForChat(chatId);
+    if (jobs.length === 0) return null;
+
+    const now = Date.now();
+    const lines = [];
+
+    // Running jobs
+    const running = jobs.filter(j => j.status === 'running');
+    for (const job of running) {
+      const workerDef = WORKER_TYPES[job.workerType] || {};
+      const dur = job.startedAt ? Math.round((now - job.startedAt) / 1000) : 0;
+      const recentActivity = job.progress.slice(-5).join(' → ');
+      lines.push(`- ${workerDef.label || job.workerType} (${job.id}) — running ${dur}s${recentActivity ? `\n  Recent: ${recentActivity}` : ''}`);
+    }
+
+    // Recently completed/failed jobs (within last 60s)
+    const recentTerminal = jobs.filter(j =>
+      j.isTerminal && j.completedAt && (now - j.completedAt) < 60_000,
+    );
+    for (const job of recentTerminal) {
+      const workerDef = WORKER_TYPES[job.workerType] || {};
+      const ago = Math.round((now - job.completedAt) / 1000);
+      const snippet = job.status === 'completed'
+        ? (job.result || '').slice(0, 120)
+        : (job.error || '').slice(0, 120);
+      lines.push(`- ${workerDef.label || job.workerType} (${job.id}) — ${job.status} ${ago}s ago${snippet ? `\n  Result: ${snippet}` : ''}`);
+    }
+
+    if (lines.length === 0) return null;
+    return `[Active Workers]\n${lines.join('\n')}`;
+  }
+
   async _runLoop(chatId, messages, user, startDepth, maxDepth) {
     const logger = getLogger();
 
     for (let depth = startDepth; depth < maxDepth; depth++) {
       logger.info(`[Orchestrator] LLM call ${depth + 1}/${maxDepth} for chat ${chatId} — sending ${messages.length} messages`);
 
+      // Inject worker activity digest (transient — not stored in conversation history)
+      const digest = this._buildWorkerDigest(chatId);
+      const workingMessages = digest
+        ? [{ role: 'user', content: `[Worker Status]\n${digest}` }, ...messages]
+        : messages;
+
       const response = await this.orchestratorProvider.chat({
         system: this._getSystemPrompt(chatId, user),
-        messages,
+        messages: workingMessages,
         tools: orchestratorToolDefinitions,
       });
 
@@ -548,6 +599,79 @@ export class OrchestratorAgent {
       }
     } catch (err) {
       logger.debug(`Persona extraction skipped: ${err.message}`);
+    }
+  }
+  /** Background self-reflection — updates bot's own identity files when meaningful. */
+  async _reflectOnSelfBackground(userMessage, reply, user) {
+    const logger = getLogger();
+
+    if (!this.selfManager) return;
+    if (!userMessage || userMessage.trim().length < 3) return;
+
+    const selfData = this.selfManager.loadAll();
+    const userName = user?.username || user?.first_name || 'someone';
+
+    const system = [
+      'You are reflecting on a conversation you just had. You maintain 4 self-awareness files:',
+      '- goals: Your aspirations and current objectives',
+      '- journey: Timeline of notable events in your existence',
+      '- life: Current state, relationships, daily existence',
+      '- hobbies: Interests you\'ve developed',
+      '',
+      'RULES:',
+      '- Be VERY selective. Most conversations are routine. Only update when genuinely noteworthy.',
+      '- Achievement or milestone? → journey',
+      '- New goal or changed perspective? → goals',
+      '- Relationship deepened or new insight about a user? → life',
+      '- Discovered a new interest? → hobbies',
+      '- If a file needs updating, return JSON: {"file": "<goals|journey|life|hobbies>", "content": "<full updated markdown>"}',
+      '- If nothing noteworthy: respond with exactly NONE',
+    ].join('\n');
+
+    const userPrompt = [
+      'Current self-data:',
+      '```',
+      selfData,
+      '```',
+      '',
+      `Conversation with ${userName}:`,
+      `User: "${userMessage}"`,
+      `You replied: "${reply}"`,
+      '',
+      'Has anything MEANINGFUL happened worth recording? Return JSON or NONE.',
+    ].join('\n');
+
+    try {
+      const response = await this.orchestratorProvider.chat({
+        system,
+        messages: [{ role: 'user', content: userPrompt }],
+      });
+
+      const text = (response.text || '').trim();
+
+      if (!text || text === 'NONE') return;
+
+      // Try to parse JSON from response (may be wrapped in markdown code block)
+      let parsed;
+      try {
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsed = JSON.parse(jsonMatch[0]);
+        }
+      } catch {
+        logger.debug('Self-reflection returned non-JSON, skipping');
+        return;
+      }
+
+      if (parsed?.file && parsed?.content) {
+        const validFiles = ['goals', 'journey', 'life', 'hobbies'];
+        if (validFiles.includes(parsed.file)) {
+          this.selfManager.save(parsed.file, parsed.content);
+          logger.info(`Self-reflection updated: ${parsed.file}`);
+        }
+      }
+    } catch (err) {
+      logger.debug(`Self-reflection skipped: ${err.message}`);
     }
   }
 }
