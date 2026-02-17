@@ -351,6 +351,16 @@ export function loadConfig() {
     if (!config.github) config.github = {};
     config.github.token = process.env.GITHUB_TOKEN;
   }
+  // ElevenLabs voice credentials
+  if (process.env.ELEVENLABS_API_KEY) {
+    if (!config.elevenlabs) config.elevenlabs = {};
+    config.elevenlabs.api_key = process.env.ELEVENLABS_API_KEY;
+  }
+  if (process.env.ELEVENLABS_VOICE_ID) {
+    if (!config.elevenlabs) config.elevenlabs = {};
+    config.elevenlabs.voice_id = process.env.ELEVENLABS_VOICE_ID;
+  }
+
   if (process.env.JIRA_BASE_URL || process.env.JIRA_EMAIL || process.env.JIRA_API_TOKEN) {
     if (!config.jira) config.jira = {};
     if (process.env.JIRA_BASE_URL) config.jira.base_url = process.env.JIRA_BASE_URL;
