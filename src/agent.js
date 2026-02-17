@@ -453,7 +453,10 @@ export class OrchestratorAgent {
       }
       if (sr.followUp) parts.push(`Follow-up: ${sr.followUp}`);
       // Include details up to 8000 chars
-      if (sr.details) parts.push(`Details:\n${sr.details.slice(0, 8000)}`);
+      if (sr.details) {
+        const d = typeof sr.details === 'string' ? sr.details : JSON.stringify(sr.details, null, 2);
+        parts.push(`Details:\n${d.slice(0, 8000)}`);
+      }
       resultContext = parts.join('\n');
     } else {
       resultContext = (job.result || 'Done.').slice(0, 8000);
@@ -498,9 +501,10 @@ export class OrchestratorAgent {
       }
       if (sr.followUp) parts.push(`Follow-up: ${sr.followUp}`);
       if (sr.details) {
-        const details = sr.details.length > 6000
-          ? sr.details.slice(0, 6000) + '\n... [details truncated]'
-          : sr.details;
+        const d = typeof sr.details === 'string' ? sr.details : JSON.stringify(sr.details, null, 2);
+        const details = d.length > 6000
+          ? d.slice(0, 6000) + '\n... [details truncated]'
+          : d;
         parts.push(`Details:\n${details}`);
       }
     } else {
@@ -599,7 +603,8 @@ export class OrchestratorAgent {
             parts.push(`Artifacts: ${sr.artifacts.map(a => `${a.title || a.type}: ${a.url || a.path || ''}`).join(', ')}`);
           }
           if (sr.details) {
-            parts.push(sr.details.slice(0, 4000));
+            const d = typeof sr.details === 'string' ? sr.details : JSON.stringify(sr.details, null, 2);
+            parts.push(d.slice(0, 4000));
           }
           depResults.push(parts.join('\n'));
         } else if (depJob.result) {

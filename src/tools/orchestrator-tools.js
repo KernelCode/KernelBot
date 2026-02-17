@@ -212,19 +212,34 @@ export async function executeOrchestratorTool(name, input, context) {
 
       // Pre-check credentials for the worker's tools
       const toolNames = getToolNamesForWorkerType(worker_type);
+      const missingCreds = [];
       for (const toolName of toolNames) {
         const missing = getMissingCredential(toolName, config);
         if (missing) {
-          logger.warn(`[dispatch_task] Missing credential for ${worker_type}: ${missing.envKey}`);
+          missingCreds.push(missing);
+        }
+      }
+
+      let credentialWarning = null;
+      if (missingCreds.length > 0) {
+        if (worker_type === 'coding') {
+          // Soft warning for coding worker — spawn_claude_code handles git/GitHub internally
+          const warnings = missingCreds.map(c => `${c.label} (${c.envKey})`).join(', ');
+          logger.info(`[dispatch_task] Coding worker — soft credential warning (non-blocking): ${warnings}`);
+          credentialWarning = `Note: The following credentials are not configured as env vars: ${warnings}. If git/GitHub tools are unavailable, use spawn_claude_code for ALL operations — it handles git, GitHub, and PR creation internally.`;
+        } else {
+          // Hard block for all other worker types
+          const first = missingCreds[0];
+          logger.warn(`[dispatch_task] Missing credential for ${worker_type}: ${first.envKey}`);
           return {
-            error: `Missing credential for ${worker_type} worker: ${missing.label} (${missing.envKey}). Ask the user to provide it.`,
+            error: `Missing credential for ${worker_type} worker: ${first.label} (${first.envKey}). Ask the user to provide it.`,
           };
         }
       }
 
       // Create the job with context and dependencies
       const job = jobManager.createJob(chatId, worker_type, task);
-      job.context = taskContext || null;
+      job.context = [taskContext, credentialWarning].filter(Boolean).join('\n\n') || null;
       job.dependsOn = depIds;
       job.userId = user?.id || null;
       const workerConfig = WORKER_TYPES[worker_type];

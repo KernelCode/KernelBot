@@ -292,6 +292,8 @@ export class WorkerAgent {
       };
     }
 
+    const _str = (v) => typeof v === 'string' ? v : (v ? JSON.stringify(v, null, 2) : '');
+
     // Try to extract JSON from ```json ... ``` fences
     const fenceMatch = text.match(/```json\s*\n?([\s\S]*?)\n?\s*```/);
     if (fenceMatch) {
@@ -300,11 +302,11 @@ export class WorkerAgent {
         if (parsed.summary && parsed.status) {
           return {
             structured: true,
-            summary: parsed.summary || '',
-            status: parsed.status || 'success',
-            details: parsed.details || '',
+            summary: String(parsed.summary || ''),
+            status: String(parsed.status || 'success'),
+            details: _str(parsed.details),
             artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
-            followUp: parsed.followUp || null,
+            followUp: parsed.followUp ? String(parsed.followUp) : null,
             toolsUsed: this._toolCallCount,
             errors: this._errors,
           };
@@ -318,11 +320,11 @@ export class WorkerAgent {
       if (parsed.summary && parsed.status) {
         return {
           structured: true,
-          summary: parsed.summary || '',
-          status: parsed.status || 'success',
-          details: parsed.details || '',
+          summary: String(parsed.summary || ''),
+          status: String(parsed.status || 'success'),
+          details: _str(parsed.details),
           artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
-          followUp: parsed.followUp || null,
+          followUp: parsed.followUp ? String(parsed.followUp) : null,
           toolsUsed: this._toolCallCount,
           errors: this._errors,
         };
