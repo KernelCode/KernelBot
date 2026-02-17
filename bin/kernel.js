@@ -26,6 +26,11 @@ import { JobManager } from '../src/swarm/job-manager.js';
 import { startBot } from '../src/bot.js';
 import { AutomationManager } from '../src/automation/index.js';
 import { createProvider, PROVIDERS } from '../src/providers/index.js';
+import { MemoryManager } from '../src/life/memory.js';
+import { JournalManager } from '../src/life/journal.js';
+import { ShareQueue } from '../src/life/share-queue.js';
+import { ImprovementTracker } from '../src/life/improvements.js';
+import { LifeEngine } from '../src/life/engine.js';
 import {
   loadCustomSkills,
   getCustomSkills,
@@ -182,9 +187,20 @@ async function startBotFlow(config) {
 
   const automationManager = new AutomationManager();
 
-  const agent = new Agent({ config, conversationManager, personaManager, selfManager, jobManager, automationManager });
+  // Life system managers
+  const memoryManager = new MemoryManager();
+  const journalManager = new JournalManager();
+  const shareQueue = new ShareQueue();
+  const improvementTracker = new ImprovementTracker();
 
-  startBot(config, agent, conversationManager, jobManager, automationManager);
+  const agent = new Agent({ config, conversationManager, personaManager, selfManager, jobManager, automationManager, memoryManager, shareQueue });
+
+  // Life Engine — autonomous inner life
+  const lifeEngine = new LifeEngine({
+    config, agent, memoryManager, journalManager, shareQueue, improvementTracker, selfManager,
+  });
+
+  startBot(config, agent, conversationManager, jobManager, automationManager, { lifeEngine, memoryManager, journalManager, shareQueue, improvementTracker });
 
   // Periodic job cleanup and timeout enforcement
   const cleanupMs = (config.swarm.cleanup_interval_minutes || 30) * 60 * 1000;
@@ -193,7 +209,30 @@ async function startBotFlow(config) {
     jobManager.enforceTimeouts();
   }, Math.min(cleanupMs, 60_000)); // enforce timeouts every minute at most
 
+  // Periodic memory pruning (daily)
+  const retentionDays = config.life?.memory_retention_days || 90;
+  setInterval(() => {
+    memoryManager.pruneOld(retentionDays);
+    shareQueue.prune(7);
+  }, 24 * 3600_000);
+
   showStartupComplete();
+
+  // Start life engine if enabled
+  const lifeEnabled = config.life?.enabled !== false;
+  if (lifeEnabled) {
+    logger.info('[Startup] Life engine enabled — waking up...');
+    lifeEngine.wakeUp().then(() => {
+      lifeEngine.start();
+      logger.info('[Startup] Life engine running');
+    }).catch(err => {
+      logger.error(`[Startup] Life engine wake-up failed: ${err.message}`);
+      lifeEngine.start(); // still start heartbeat even if wake-up fails
+    });
+  } else {
+    logger.info('[Startup] Life engine disabled');
+  }
+
   return true;
 }
 

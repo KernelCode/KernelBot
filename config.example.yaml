@@ -56,3 +56,25 @@ voice:
   tts_enabled: true       # Send voice replies alongside text (default: true if API key present)
   stt_enabled: true        # Transcribe user voice messages (default: true if API key present)
   # voice_id: JBFqnCBsd6RMkjVDRZzb  # ElevenLabs voice ID (override ELEVENLABS_VOICE_ID env var)
+
+# Inner Life — autonomous thinking, journaling, browsing, creating
+# Data stored at ~/.kernelbot/life/
+life:
+  enabled: true                  # Enable autonomous inner life
+  min_interval_minutes: 30       # Minimum time between activities
+  max_interval_minutes: 120      # Maximum time between activities
+  activity_weights:              # Relative probability weights
+    think: 30                    # Inner monologue, self-questioning
+    browse: 25                   # Explore interests via web search
+    journal: 20                  # Write daily journal entries
+    create: 15                   # Creative expression (poems, stories, thoughts)
+    self_code: 10                # Self-improvement proposals (requires self_coding.enabled)
+  proactive_sharing: true        # Share discoveries with users proactively
+  proactive_max_per_day: 3       # Max proactive messages per day
+  memory_retention_days: 90      # Days to keep episodic memories
+  self_coding:
+    enabled: false               # Allow self-improvement code proposals (safety-gated)
+    branch_prefix: "life/self-improve"  # Git branch prefix for proposals
+  quiet_hours:
+    start: 2                     # Hour to start quiet period (no activities)
+    end: 6                       # Hour to end quiet period

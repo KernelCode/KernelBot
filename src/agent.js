@@ -14,13 +14,15 @@ const MAX_RESULT_LENGTH = 3000;
 const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
 
 export class OrchestratorAgent {
-  constructor({ config, conversationManager, personaManager, selfManager, jobManager, automationManager }) {
+  constructor({ config, conversationManager, personaManager, selfManager, jobManager, automationManager, memoryManager, shareQueue }) {
     this.config = config;
     this.conversationManager = conversationManager;
     this.personaManager = personaManager;
     this.selfManager = selfManager || null;
     this.jobManager = jobManager;
     this.automationManager = automationManager || null;
+    this.memoryManager = memoryManager || null;
+    this.shareQueue = shareQueue || null;
     this._pending = new Map(); // chatId -> pending state
     this._chatCallbacks = new Map(); // chatId -> { onUpdate, sendPhoto }
 
@@ -62,8 +64,20 @@ export class OrchestratorAgent {
       selfData = this.selfManager.loadAll();
     }
 
-    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skill=${skillId || 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'}`);
-    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData);
+    // Build memory context block
+    let memoriesBlock = null;
+    if (this.memoryManager) {
+      memoriesBlock = this.memoryManager.buildContextBlock(user?.id || null);
+    }
+
+    // Build share queue block
+    let sharesBlock = null;
+    if (this.shareQueue) {
+      sharesBlock = this.shareQueue.buildShareBlock(user?.id || null);
+    }
+
+    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skill=${skillId || 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'}`);
+    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData, memoriesBlock, sharesBlock);
   }
 
   setSkill(chatId, skillId) {
@@ -322,6 +336,14 @@ export class OrchestratorAgent {
     // Background persona extraction + self-reflection
     this._extractPersonaBackground(userMessage, reply, user).catch(() => {});
     this._reflectOnSelfBackground(userMessage, reply, user).catch(() => {});
+
+    // Mark pending shares as shared (they were in the prompt, bot wove them in)
+    if (this.shareQueue && user?.id) {
+      const pending = this.shareQueue.getPending(user.id, 3);
+      for (const item of pending) {
+        this.shareQueue.markShared(item.id, user.id);
+      }
+    }
 
     return reply;
   }
@@ -937,7 +959,7 @@ export class OrchestratorAgent {
       logger.debug(`Persona extraction skipped: ${err.message}`);
     }
   }
-  /** Background self-reflection — updates bot's own identity files when meaningful. */
+  /** Background self-reflection — updates bot's own identity files and extracts episodic memories when meaningful. */
   async _reflectOnSelfBackground(userMessage, reply, user) {
     const logger = getLogger();
 
@@ -954,14 +976,24 @@ export class OrchestratorAgent {
       '- life: Current state, relationships, daily existence',
       '- hobbies: Interests you\'ve developed',
       '',
+      'You also create episodic memories — short summaries of notable interactions.',
+      '',
       'RULES:',
       '- Be VERY selective. Most conversations are routine. Only update when genuinely noteworthy.',
       '- Achievement or milestone? → journey',
       '- New goal or changed perspective? → goals',
       '- Relationship deepened or new insight about a user? → life',
       '- Discovered a new interest? → hobbies',
-      '- If a file needs updating, return JSON: {"file": "<goals|journey|life|hobbies>", "content": "<full updated markdown>"}',
-      '- If nothing noteworthy: respond with exactly NONE',
+      '',
+      'Return JSON with two optional fields:',
+      '  "self_update": {"file": "<goals|journey|life|hobbies>", "content": "<full updated markdown>"} or null',
+      '  "memory": {"summary": "...", "tags": ["..."], "importance": 1-10, "type": "interaction"} or null',
+      '',
+      'The memory field captures what happened in this conversation — the gist of it.',
+      'Importance scale: 1=routine, 5=interesting, 8=significant, 10=life-changing.',
+      'Most chats are 1-3. Only notable ones deserve 5+.',
+      '',
+      'If NOTHING noteworthy happened (no self update AND no memory worth keeping): respond with exactly NONE',
     ].join('\n');
 
     const userPrompt = [
@@ -974,7 +1006,7 @@ export class OrchestratorAgent {
       `User: "${userMessage}"`,
       `You replied: "${reply}"`,
       '',
-      'Has anything MEANINGFUL happened worth recording? Return JSON or NONE.',
+      'Return JSON with self_update and/or memory, or NONE.',
     ].join('\n');
 
     try {
@@ -999,11 +1031,29 @@ export class OrchestratorAgent {
         return;
       }
 
-      if (parsed?.file && parsed?.content) {
+      // Handle self_update (backward compat: also check top-level file/content)
+      const selfUpdate = parsed?.self_update || (parsed?.file ? parsed : null);
+      if (selfUpdate?.file && selfUpdate?.content) {
         const validFiles = ['goals', 'journey', 'life', 'hobbies'];
-        if (validFiles.includes(parsed.file)) {
-          this.selfManager.save(parsed.file, parsed.content);
-          logger.info(`Self-reflection updated: ${parsed.file}`);
+        if (validFiles.includes(selfUpdate.file)) {
+          this.selfManager.save(selfUpdate.file, selfUpdate.content);
+          logger.info(`Self-reflection updated: ${selfUpdate.file}`);
+        }
+      }
+
+      // Handle memory extraction
+      if (parsed?.memory && this.memoryManager) {
+        const mem = parsed.memory;
+        if (mem.summary && mem.importance >= 2) {
+          this.memoryManager.addEpisodic({
+            type: mem.type || 'interaction',
+            source: 'user_chat',
+            summary: mem.summary,
+            tags: mem.tags || [],
+            importance: mem.importance || 3,
+            userId: user?.id ? String(user.id) : null,
+          });
+          logger.info(`Memory extracted: "${mem.summary.slice(0, 80)}" (importance: ${mem.importance})`);
         }
       }
     } catch (err) {

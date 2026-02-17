@@ -53,7 +53,8 @@ class ChatQueue {
   }
 }
 
-export function startBot(config, agent, conversationManager, jobManager, automationManager) {
+export function startBot(config, agent, conversationManager, jobManager, automationManager, lifeDeps = {}) {
+  const { lifeEngine, memoryManager, journalManager, shareQueue, improvementTracker } = lifeDeps;
   const logger = getLogger();
   const bot = new TelegramBot(config.telegram.bot_token, { polling: true });
   const chatQueue = new ChatQueue();
@@ -87,6 +88,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     { command: 'jobs', description: 'List running and recent jobs' },
     { command: 'cancel', description: 'Cancel running job(s)' },
     { command: 'auto', description: 'Manage recurring automations' },
+    { command: 'life', description: 'Inner life engine status and control' },
+    { command: 'journal', description: 'View today\'s journal or a past date' },
+    { command: 'memories', description: 'View recent memories or search' },
     { command: 'context', description: 'Show all models, auth, and context info' },
     { command: 'clean', description: 'Clear conversation and start fresh' },
     { command: 'history', description: 'Show message count in memory' },
@@ -1100,6 +1104,177 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       return;
     }
 
+    // ── /life command ──────────────────────────────────────────────
+    if (text === '/life' || text.startsWith('/life ')) {
+      logger.info(`[Bot] /life command from ${username} (${userId}) in chat ${chatId}`);
+      const args = text.slice('/life'.length).trim();
+
+      if (!lifeEngine) {
+        await bot.sendMessage(chatId, 'Life engine is not available.');
+        return;
+      }
+
+      if (args === 'pause') {
+        lifeEngine.pause();
+        await bot.sendMessage(chatId, '⏸️ Inner life paused. Use `/life resume` to restart.', { parse_mode: 'Markdown' });
+        return;
+      }
+      if (args === 'resume') {
+        lifeEngine.resume();
+        await bot.sendMessage(chatId, '▶️ Inner life resumed!');
+        return;
+      }
+      if (args.startsWith('trigger')) {
+        const activityType = args.split(/\s+/)[1] || null;
+        const validTypes = ['think', 'browse', 'journal', 'create'];
+        if (activityType && !validTypes.includes(activityType)) {
+          await bot.sendMessage(chatId, `Unknown activity type. Available: ${validTypes.join(', ')}`);
+          return;
+        }
+        await bot.sendMessage(chatId, `⚡ Triggering ${activityType || 'random'} activity...`);
+        lifeEngine.triggerNow(activityType).catch(err => {
+          logger.error(`[Bot] Life trigger failed: ${err.message}`);
+        });
+        return;
+      }
+      if (args === 'review' && improvementTracker) {
+        const pending = improvementTracker.getPending();
+        if (pending.length === 0) {
+          await bot.sendMessage(chatId, 'No pending self-improvement proposals.');
+          return;
+        }
+        const lines = ['*Self-Improvement Proposals*', ''];
+        for (const p of pending) {
+          lines.push(`**${p.id}** — ${p.description.slice(0, 200)}`);
+          lines.push(`  Branch: \`${p.branch}\` | Scope: ${p.scope}`);
+          lines.push('');
+        }
+        await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // Default: show status
+      const status = lifeEngine.getStatus();
+      const lines = [
+        '🌱 *Inner Life*',
+        '',
+        `*Status:* ${status.paused ? '⏸️ Paused' : status.status === 'active' ? '🟢 Active' : '⚪ Idle'}`,
+        `*Total activities:* ${status.totalActivities}`,
+        `*Last activity:* ${status.lastActivity || 'none'} (${status.lastActivityAgo})`,
+        `*Last wake-up:* ${status.lastWakeUpAgo}`,
+        '',
+        '*Activity counts:*',
+        `  💭 Think: ${status.activityCounts.think || 0}`,
+        `  🌐 Browse: ${status.activityCounts.browse || 0}`,
+        `  📓 Journal: ${status.activityCounts.journal || 0}`,
+        `  🎨 Create: ${status.activityCounts.create || 0}`,
+        `  🔧 Self-code: ${status.activityCounts.self_code || 0}`,
+        '',
+        '_Commands:_',
+        '`/life pause` — Pause activities',
+        '`/life resume` — Resume activities',
+        '`/life trigger [think|browse|journal|create]` — Trigger now',
+      ];
+      await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // ── /journal command ─────────────────────────────────────────
+    if (text === '/journal' || text.startsWith('/journal ')) {
+      logger.info(`[Bot] /journal command from ${username} (${userId}) in chat ${chatId}`);
+
+      if (!journalManager) {
+        await bot.sendMessage(chatId, 'Journal system is not available.');
+        return;
+      }
+
+      const args = text.slice('/journal'.length).trim();
+
+      if (args && /^\d{4}-\d{2}-\d{2}$/.test(args)) {
+        const entry = journalManager.getEntry(args);
+        if (!entry) {
+          await bot.sendMessage(chatId, `No journal entry for ${args}.`);
+          return;
+        }
+        const chunks = splitMessage(entry);
+        for (const chunk of chunks) {
+          try { await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' }); }
+          catch { await bot.sendMessage(chatId, chunk); }
+        }
+        return;
+      }
+
+      if (args === 'list') {
+        const dates = journalManager.list(15);
+        if (dates.length === 0) {
+          await bot.sendMessage(chatId, 'No journal entries yet.');
+          return;
+        }
+        const lines = ['📓 *Journal Entries*', '', ...dates.map(d => `  • \`${d}\``)];
+        lines.push('', '_Use `/journal YYYY-MM-DD` to read an entry._');
+        await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // Default: show today's journal
+      const today = journalManager.getToday();
+      if (!today) {
+        await bot.sendMessage(chatId, '📓 No journal entries today yet.\n\n_Use `/journal list` to see past entries._', { parse_mode: 'Markdown' });
+        return;
+      }
+      const chunks = splitMessage(today);
+      for (const chunk of chunks) {
+        try { await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' }); }
+        catch { await bot.sendMessage(chatId, chunk); }
+      }
+      return;
+    }
+
+    // ── /memories command ────────────────────────────────────────
+    if (text === '/memories' || text.startsWith('/memories ')) {
+      logger.info(`[Bot] /memories command from ${username} (${userId}) in chat ${chatId}`);
+
+      if (!memoryManager) {
+        await bot.sendMessage(chatId, 'Memory system is not available.');
+        return;
+      }
+
+      const args = text.slice('/memories'.length).trim();
+
+      if (args.startsWith('about ')) {
+        const query = args.slice('about '.length).trim();
+        const results = memoryManager.searchEpisodic(query, 10);
+        if (results.length === 0) {
+          await bot.sendMessage(chatId, `No memories matching "${query}".`);
+          return;
+        }
+        const lines = [`🧠 *Memories about "${query}"*`, ''];
+        for (const m of results) {
+          const date = new Date(m.timestamp).toLocaleDateString();
+          lines.push(`• ${m.summary} _(${date}, importance: ${m.importance})_`);
+        }
+        await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // Default: show last 10 memories
+      const recent = memoryManager.getRecentEpisodic(168, 10); // last 7 days
+      if (recent.length === 0) {
+        await bot.sendMessage(chatId, '🧠 No memories yet.');
+        return;
+      }
+      const lines = ['🧠 *Recent Memories*', ''];
+      for (const m of recent) {
+        const ago = Math.round((Date.now() - m.timestamp) / 60000);
+        const timeLabel = ago < 60 ? `${ago}m ago` : ago < 1440 ? `${Math.round(ago / 60)}h ago` : `${Math.round(ago / 1440)}d ago`;
+        const icon = { interaction: '💬', discovery: '🔍', thought: '💭', creation: '🎨' }[m.type] || '•';
+        lines.push(`${icon} ${m.summary} _(${timeLabel})_`);
+      }
+      lines.push('', '_Use `/memories about <topic>` to search._');
+      await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
     if (text === '/help') {
       const activeSkill = agent.getActiveSkill(chatId);
       const skillLine = activeSkill
@@ -1117,6 +1292,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         '/jobs — List running and recent jobs',
         '/cancel — Cancel running job(s)',
         '/auto — Manage recurring automations',
+        '/life — Inner life engine status & control',
+        '/journal — View today\'s journal or a past date',
+        '/memories — View recent memories or search',
         '/context — Show all models, auth, and context info',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',
