@@ -359,24 +359,26 @@ export class OrchestratorAgent {
 
       logger.info(`[Orchestrator] Job completed event: ${job.id} [${job.workerType}] in chat ${chatId} (${job.duration}s) — result length: ${(job.result || '').length} chars, structured: ${!!job.structuredResult}`);
 
-      // 1. Store result in conversation history as assistant message (not fake user message)
-      const historyEntry = this._buildResultHistoryEntry(job);
-      this.conversationManager.addMessage(chatId, 'assistant', historyEntry);
-
-      // 2. IMMEDIATELY notify user (guarantees they see something regardless of summary LLM)
+      // 1. IMMEDIATELY notify user (guarantees they see something regardless of summary LLM)
       const notifyMsgId = await this._sendUpdate(chatId, `✅ ${label} finished! Preparing summary...`);
 
-      // 3. Try to summarize (provider timeout protects against hangs)
+      // 2. Try to summarize, then store ONE message in history (summary or fallback — not both)
       try {
         const summary = await this._summarizeJobResult(chatId, job);
         if (summary) {
           this.conversationManager.addMessage(chatId, 'assistant', summary);
           await this._sendUpdate(chatId, summary, { editMessageId: notifyMsgId });
+        } else {
+          // Summary was null (short result) — store the fallback
+          const fallback = this._buildSummaryFallback(job, label);
+          this.conversationManager.addMessage(chatId, 'assistant', fallback);
+          await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId }).catch(() => {});
         }
       } catch (err) {
         logger.error(`[Orchestrator] Failed to summarize job ${job.id}: ${err.message}`);
-        // Better fallback: show structured summary + artifacts instead of "ask me for details"
+        // Store the fallback so the orchestrator retains context about what happened
         const fallback = this._buildSummaryFallback(job, label);
+        this.conversationManager.addMessage(chatId, 'assistant', fallback);
         await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId }).catch(() => {});
       }
     });
