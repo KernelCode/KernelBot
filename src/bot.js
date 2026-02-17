@@ -13,6 +13,7 @@ import {
   getCustomSkills,
 } from './skills/custom.js';
 import { TTSService } from './services/tts.js';
+import { shouldSendVoice } from './utils/voice-detection.js';
 import { STTService } from './services/stt.js';
 import { getClaudeAuthStatus, claudeLogout } from './claude-auth.js';
 
@@ -1350,8 +1351,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           }
         }
 
-        // Send voice reply if TTS is available and the reply isn't too short
-        if (ttsService.isAvailable() && reply && reply.length > 5) {
+        // Send voice reply ONLY if user explicitly requested it (opt-in)
+        // This saves ElevenLabs API token costs by only sending voice when asked
+        if (ttsService.isAvailable() && reply && reply.length > 5 && shouldSendVoice(mergedText)) {
           try {
             const audioPath = await ttsService.synthesize(reply);
             if (audioPath) {
