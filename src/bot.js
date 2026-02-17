@@ -12,6 +12,8 @@ import {
   deleteCustomSkill,
   getCustomSkills,
 } from './skills/custom.js';
+import { TTSService } from './services/tts.js';
+import { STTService } from './services/stt.js';
 
 function splitMessage(text, maxLength = 4096) {
   if (text.length <= maxLength) return [text];
@@ -55,6 +57,12 @@ export function startBot(config, agent, conversationManager, jobManager, automat
   const bot = new TelegramBot(config.telegram.bot_token, { polling: true });
   const chatQueue = new ChatQueue();
   const batchWindowMs = config.telegram.batch_window_ms || 3000;
+
+  // Initialize voice services
+  const ttsService = new TTSService(config);
+  const sttService = new STTService(config);
+  if (ttsService.isAvailable()) logger.info('[Bot] TTS service enabled (ElevenLabs)');
+  if (sttService.isAvailable()) logger.info('[Bot] STT service enabled');
 
   // Per-chat message batching: chatId -> { messages[], timer, resolve }
   const chatBatches = new Map();
@@ -546,6 +554,32 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       }
     }
 
+    // Handle voice messages — transcribe and process as text
+    if (msg.voice && sttService.isAvailable()) {
+      logger.info(`[Bot] Voice message from ${username} (${userId}) in chat ${chatId}, duration: ${msg.voice.duration}s`);
+      let tmpPath = null;
+      try {
+        const fileUrl = await bot.getFileLink(msg.voice.file_id);
+        tmpPath = await sttService.downloadAudio(fileUrl);
+        const transcribed = await sttService.transcribe(tmpPath);
+        if (!transcribed) {
+          await bot.sendMessage(chatId, 'Could not transcribe the voice message. Please try again or send text.');
+          return;
+        }
+        logger.info(`[Bot] Transcribed voice: "${transcribed.slice(0, 100)}" from ${username} in chat ${chatId}`);
+        // Show the user what was heard
+        await bot.sendMessage(chatId, `🎤 _"${transcribed}"_`, { parse_mode: 'Markdown' });
+        // Process as a normal text message (fall through below)
+        msg.text = transcribed;
+      } catch (err) {
+        logger.error(`[Bot] Voice transcription failed: ${err.message}`);
+        await bot.sendMessage(chatId, 'Failed to process voice message. Please try sending text instead.');
+        return;
+      } finally {
+        if (tmpPath) sttService.cleanup(tmpPath);
+      }
+    }
+
     if (!msg.text) return; // ignore non-text (and non-document) messages
 
     let text = msg.text.trim();
@@ -1022,6 +1056,18 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           } catch {
             // Fallback to plain text if Markdown fails
             await bot.sendMessage(chatId, chunk);
+          }
+        }
+
+        // Send voice reply if TTS is available and the reply isn't too short
+        if (ttsService.isAvailable() && reply && reply.length > 5) {
+          try {
+            const audioPath = await ttsService.synthesize(reply);
+            if (audioPath) {
+              await bot.sendVoice(chatId, createReadStream(audioPath));
+            }
+          } catch (err) {
+            logger.warn(`[Bot] TTS voice reply failed: ${err.message}`);
           }
         }
       } catch (err) {

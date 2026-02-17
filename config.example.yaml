@@ -43,3 +43,10 @@ logging:
 
 conversation:
   max_history: 50
+
+# Voice — ElevenLabs TTS & STT
+# Requires ELEVENLABS_API_KEY in .env
+voice:
+  tts_enabled: true       # Send voice replies alongside text (default: true if API key present)
+  stt_enabled: true        # Transcribe user voice messages (default: true if API key present)
+  # voice_id: JBFqnCBsd6RMkjVDRZzb  # ElevenLabs voice ID (override ELEVENLABS_VOICE_ID env var)
