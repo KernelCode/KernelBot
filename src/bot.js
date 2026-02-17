@@ -14,6 +14,7 @@ import {
 } from './skills/custom.js';
 import { TTSService } from './services/tts.js';
 import { STTService } from './services/stt.js';
+import { getClaudeAuthStatus, claudeLogout } from './claude-auth.js';
 
 function splitMessage(text, maxLength = 4096) {
   if (text.length <= maxLength) return [text];
@@ -75,6 +76,22 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
   // Load custom skills from disk
   loadCustomSkills();
+
+  // Register commands in Telegram's menu button
+  bot.setMyCommands([
+    { command: 'brain', description: 'Switch worker AI model/provider' },
+    { command: 'orchestrator', description: 'Switch orchestrator AI model/provider' },
+    { command: 'claudemodel', description: 'Switch Claude Code model' },
+    { command: 'claude', description: 'Manage Claude Code authentication' },
+    { command: 'skills', description: 'Browse and activate persona skills' },
+    { command: 'jobs', description: 'List running and recent jobs' },
+    { command: 'cancel', description: 'Cancel running job(s)' },
+    { command: 'auto', description: 'Manage recurring automations' },
+    { command: 'context', description: 'Show all models, auth, and context info' },
+    { command: 'clean', description: 'Clear conversation and start fresh' },
+    { command: 'history', description: 'Show message count in memory' },
+    { command: 'help', description: 'Show all available commands' },
+  ]).catch((err) => logger.warn(`Failed to set bot commands menu: ${err.message}`));
 
   logger.info('Telegram bot started with polling');
 
@@ -149,6 +166,12 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
   // Track pending brain API key input: chatId -> { providerKey, modelId }
   const pendingBrainKey = new Map();
+
+  // Track pending orchestrator API key input: chatId -> { providerKey, modelId }
+  const pendingOrchKey = new Map();
+
+  // Track pending Claude Code auth input: chatId -> { type: 'api_key' | 'oauth_token' }
+  const pendingClaudeAuth = new Map();
 
   // Track pending custom skill creation: chatId -> { step: 'name' | 'prompt', name?: string }
   const pendingCustomSkill = new Map();
@@ -459,6 +482,140 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         const msg = deleted ? `🗑️ Deleted automation \`${autoId}\`` : `Automation \`${autoId}\` not found.`;
         await bot.editMessageText(msg, { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' });
         await bot.answerCallbackQuery(query.id);
+
+      // ── Orchestrator callbacks ─────────────────────────────────────
+      } else if (data.startsWith('orch_provider:')) {
+        const providerKey = data.split(':')[1];
+        const providerDef = PROVIDERS[providerKey];
+        if (!providerDef) {
+          await bot.answerCallbackQuery(query.id, { text: 'Unknown provider' });
+          return;
+        }
+
+        const modelButtons = providerDef.models.map((m) => ([{
+          text: m.label,
+          callback_data: `orch_model:${providerKey}:${m.id}`,
+        }]));
+        modelButtons.push([{ text: 'Cancel', callback_data: 'orch_cancel' }]);
+
+        await bot.editMessageText(`Select a *${providerDef.name}* model for orchestrator:`, {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: modelButtons },
+        });
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data.startsWith('orch_model:')) {
+        const [, providerKey, modelId] = data.split(':');
+        const providerDef = PROVIDERS[providerKey];
+        const modelEntry = providerDef?.models.find((m) => m.id === modelId);
+        const modelLabel = modelEntry ? modelEntry.label : modelId;
+
+        await bot.editMessageText(
+          `⏳ Verifying *${providerDef.name}* / *${modelLabel}* for orchestrator...`,
+          { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+        );
+
+        logger.info(`[Bot] Orchestrator switch request: ${providerKey}/${modelId} from chat ${chatId}`);
+        const result = await agent.switchOrchestrator(providerKey, modelId);
+        if (result && typeof result === 'object' && result.error) {
+          const current = agent.getOrchestratorInfo();
+          await bot.editMessageText(
+            `❌ Failed to switch: ${result.error}\n\nKeeping *${current.providerName}* / *${current.modelLabel}*`,
+            { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+          );
+        } else if (result) {
+          // API key missing
+          logger.info(`[Bot] Orchestrator switch needs API key: ${result} for ${providerKey}/${modelId}`);
+          pendingOrchKey.set(chatId, { providerKey, modelId });
+          await bot.editMessageText(
+            `🔑 *${providerDef.name}* API key is required.\n\nPlease send your \`${result}\` now.\n\nOr send *cancel* to abort.`,
+            { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+          );
+        } else {
+          const info = agent.getOrchestratorInfo();
+          await bot.editMessageText(
+            `🎛️ Orchestrator switched to *${info.providerName}* / *${info.modelLabel}*`,
+            { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+          );
+        }
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'orch_cancel') {
+        pendingOrchKey.delete(chatId);
+        await bot.editMessageText('Orchestrator change cancelled.', {
+          chat_id: chatId, message_id: query.message.message_id,
+        });
+        await bot.answerCallbackQuery(query.id);
+
+      // ── Claude Code model callbacks ────────────────────────────────
+      } else if (data.startsWith('ccmodel:')) {
+        const modelId = data.slice('ccmodel:'.length);
+        agent.switchClaudeCodeModel(modelId);
+        const info = agent.getClaudeCodeInfo();
+        logger.info(`[Bot] Claude Code model switched to ${info.modelLabel} from chat ${chatId}`);
+        await bot.editMessageText(
+          `💻 Claude Code model switched to *${info.modelLabel}*`,
+          { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'ccmodel_cancel') {
+        await bot.editMessageText('Claude Code model change cancelled.', {
+          chat_id: chatId, message_id: query.message.message_id,
+        });
+        await bot.answerCallbackQuery(query.id);
+
+      // ── Claude Code auth callbacks ─────────────────────────────────
+      } else if (data === 'claude_apikey') {
+        pendingClaudeAuth.set(chatId, { type: 'api_key' });
+        await bot.editMessageText(
+          '🔑 Send your *Anthropic API key* for Claude Code.\n\nOr send *cancel* to abort.',
+          { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'claude_oauth') {
+        pendingClaudeAuth.set(chatId, { type: 'oauth_token' });
+        await bot.editMessageText(
+          '🔑 Run `claude setup-token` locally and paste the *OAuth token* here.\n\nThis uses your Pro/Max subscription instead of an API key.\n\nOr send *cancel* to abort.',
+          { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'claude_system') {
+        agent.setClaudeCodeAuth('system', null);
+        logger.info(`[Bot] Claude Code auth set to system from chat ${chatId}`);
+        await bot.editMessageText(
+          '🔓 Claude Code set to *system auth* — using host machine credentials.',
+          { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'claude_status') {
+        await bot.answerCallbackQuery(query.id, { text: 'Checking...' });
+        const status = await getClaudeAuthStatus();
+        const authConfig = agent.getClaudeAuthConfig();
+        await bot.editMessageText(
+          `🔐 *Claude Code Auth*\n\n*Mode:* ${authConfig.mode}\n*Credential:* ${authConfig.credential}\n\n*CLI Status:*\n\`\`\`\n${status.output.slice(0, 500)}\n\`\`\``,
+          { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+        );
+
+      } else if (data === 'claude_logout') {
+        await bot.answerCallbackQuery(query.id, { text: 'Logging out...' });
+        const result = await claudeLogout();
+        await bot.editMessageText(
+          `🚪 Claude Code logout: ${result.output || 'Done.'}`,
+          { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+        );
+
+      } else if (data === 'claude_cancel') {
+        pendingClaudeAuth.delete(chatId);
+        await bot.editMessageText('Claude Code auth management dismissed.', {
+          chat_id: chatId, message_id: query.message.message_id,
+        });
+        await bot.answerCallbackQuery(query.id);
       }
     } catch (err) {
       logger.error(`[Bot] Callback query error for "${data}" in chat ${chatId}: ${err.message}`);
@@ -616,6 +773,60 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       return;
     }
 
+    // Handle pending orchestrator API key input
+    if (pendingOrchKey.has(chatId)) {
+      const pending = pendingOrchKey.get(chatId);
+      pendingOrchKey.delete(chatId);
+
+      if (text.toLowerCase() === 'cancel') {
+        logger.info(`[Bot] Orchestrator key input cancelled by ${username} in chat ${chatId}`);
+        await bot.sendMessage(chatId, 'Orchestrator change cancelled.');
+        return;
+      }
+
+      logger.info(`[Bot] Orchestrator key received for ${pending.providerKey}/${pending.modelId} from ${username} in chat ${chatId}`);
+      await bot.sendMessage(chatId, '⏳ Verifying API key...');
+      const switchResult = await agent.switchOrchestratorWithKey(pending.providerKey, pending.modelId, text);
+      if (switchResult && switchResult.error) {
+        const current = agent.getOrchestratorInfo();
+        await bot.sendMessage(
+          chatId,
+          `❌ Failed to switch: ${switchResult.error}\n\nKeeping *${current.providerName}* / *${current.modelLabel}*`,
+          { parse_mode: 'Markdown' },
+        );
+      } else {
+        const info = agent.getOrchestratorInfo();
+        await bot.sendMessage(
+          chatId,
+          `🎛️ Orchestrator switched to *${info.providerName}* / *${info.modelLabel}*\n\nAPI key saved.`,
+          { parse_mode: 'Markdown' },
+        );
+      }
+      return;
+    }
+
+    // Handle pending Claude Code auth input
+    if (pendingClaudeAuth.has(chatId)) {
+      const pending = pendingClaudeAuth.get(chatId);
+      pendingClaudeAuth.delete(chatId);
+
+      if (text.toLowerCase() === 'cancel') {
+        logger.info(`[Bot] Claude Code auth input cancelled by ${username} in chat ${chatId}`);
+        await bot.sendMessage(chatId, 'Claude Code auth setup cancelled.');
+        return;
+      }
+
+      agent.setClaudeCodeAuth(pending.type, text);
+      const label = pending.type === 'api_key' ? 'API Key' : 'OAuth Token';
+      logger.info(`[Bot] Claude Code ${label} saved from ${username} in chat ${chatId}`);
+      await bot.sendMessage(
+        chatId,
+        `🔐 Claude Code *${label}* saved and activated.\n\nNext Claude Code spawn will use this credential.`,
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+
     // Handle pending custom skill creation (text input for name or prompt)
     if (pendingCustomSkill.has(chatId)) {
       const pending = pendingCustomSkill.get(chatId);
@@ -666,6 +877,78 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       await bot.sendMessage(
         chatId,
         `🧠 *Current brain:* ${info.providerName} / ${info.modelLabel}\n\nSelect a provider to switch:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons },
+        },
+      );
+      return;
+    }
+
+    if (text === '/orchestrator') {
+      logger.info(`[Bot] /orchestrator command from ${username} (${userId}) in chat ${chatId}`);
+      const info = agent.getOrchestratorInfo();
+      const providerKeys = Object.keys(PROVIDERS);
+      const buttons = providerKeys.map((key) => ([{
+        text: `${PROVIDERS[key].name}${key === info.provider ? ' ✓' : ''}`,
+        callback_data: `orch_provider:${key}`,
+      }]));
+      buttons.push([{ text: 'Cancel', callback_data: 'orch_cancel' }]);
+
+      await bot.sendMessage(
+        chatId,
+        `🎛️ *Current orchestrator:* ${info.providerName} / ${info.modelLabel}\n\nSelect a provider to switch:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons },
+        },
+      );
+      return;
+    }
+
+    if (text === '/claudemodel') {
+      logger.info(`[Bot] /claudemodel command from ${username} (${userId}) in chat ${chatId}`);
+      const info = agent.getClaudeCodeInfo();
+      const anthropicModels = PROVIDERS.anthropic.models;
+      const buttons = anthropicModels.map((m) => ([{
+        text: `${m.label}${m.id === info.model ? ' ✓' : ''}`,
+        callback_data: `ccmodel:${m.id}`,
+      }]));
+      buttons.push([{ text: 'Cancel', callback_data: 'ccmodel_cancel' }]);
+
+      await bot.sendMessage(
+        chatId,
+        `💻 *Current Claude Code model:* ${info.modelLabel}\n\nSelect a model:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons },
+        },
+      );
+      return;
+    }
+
+    if (text === '/claude') {
+      logger.info(`[Bot] /claude command from ${username} (${userId}) in chat ${chatId}`);
+      const authConfig = agent.getClaudeAuthConfig();
+      const ccInfo = agent.getClaudeCodeInfo();
+
+      const modeLabels = { system: '🔓 System Login', api_key: '🔑 API Key', oauth_token: '🎫 OAuth Token (Pro/Max)' };
+      const modeLabel = modeLabels[authConfig.mode] || authConfig.mode;
+
+      const buttons = [
+        [{ text: '🔑 Set API Key', callback_data: 'claude_apikey' }],
+        [{ text: '🎫 Set OAuth Token (Pro/Max)', callback_data: 'claude_oauth' }],
+        [{ text: '🔓 Use System Auth', callback_data: 'claude_system' }],
+        [
+          { text: '🔄 Refresh Status', callback_data: 'claude_status' },
+          { text: '🚪 Logout', callback_data: 'claude_logout' },
+        ],
+        [{ text: 'Cancel', callback_data: 'claude_cancel' }],
+      ];
+
+      await bot.sendMessage(
+        chatId,
+        `🔐 *Claude Code Auth*\n\n*Auth Mode:* ${modeLabel}\n*Credential:* ${authConfig.credential}\n*Model:* ${ccInfo.modelLabel}\n\nSelect an action:`,
         {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: buttons },
@@ -727,6 +1010,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
     if (text === '/context') {
       const info = agent.getBrainInfo();
+      const orchInfo = agent.getOrchestratorInfo();
+      const ccInfo = agent.getClaudeCodeInfo();
+      const authConfig = agent.getClaudeAuthConfig();
       const activeSkill = agent.getActiveSkill(chatId);
       const msgCount = conversationManager.getMessageCount(chatId);
       const history = conversationManager.getHistory(chatId);
@@ -745,7 +1031,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       const lines = [
         '📋 *Conversation Context*',
         '',
-        `🧠 *Brain:* ${info.providerName} / ${info.modelLabel}`,
+        `🎛️ *Orchestrator:* ${orchInfo.providerName} / ${orchInfo.modelLabel}`,
+        `🧠 *Brain (Workers):* ${info.providerName} / ${info.modelLabel}`,
+        `💻 *Claude Code:* ${ccInfo.modelLabel} (auth: ${authConfig.mode})`,
         activeSkill
           ? `🎭 *Skill:* ${activeSkill.emoji} ${activeSkill.name}`
           : '🎭 *Skill:* Default persona',
@@ -820,13 +1108,16 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       await bot.sendMessage(chatId, [
         '*KernelBot Commands*',
         skillLine,
-        '/brain — Show current AI model and switch provider/model',
+        '/brain — Switch worker AI model/provider',
+        '/orchestrator — Switch orchestrator AI model/provider',
+        '/claudemodel — Switch Claude Code model',
+        '/claude — Manage Claude Code authentication',
         '/skills — Browse and activate persona skills',
         '/skills reset — Clear active skill back to default',
         '/jobs — List running and recent jobs',
         '/cancel — Cancel running job(s)',
         '/auto — Manage recurring automations',
-        '/context — Show current conversation context and brain info',
+        '/context — Show all models, auth, and context info',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',
         '/browse <url> — Browse a website and get a summary',

@@ -5,16 +5,22 @@ bot:
   name: KernelBot
   description: AI engineering agent with full OS control
 
+orchestrator:
+  provider: anthropic    # anthropic | openai | google | groq — switchable via /orchestrator
+  # model: claude-opus-4-6
+
 brain:
-  provider: anthropic    # anthropic | openai | google | groq
+  provider: anthropic    # anthropic | openai | google | groq — switchable via /brain
   model: claude-sonnet-4-20250514
   max_tokens: 8192
   temperature: 0.3
   max_tool_depth: 25
 
 claude_code:
+  # model: claude-opus-4-6           # switchable via /claudemodel
   max_turns: 50
   timeout_seconds: 600
+  # auth_mode: system                # system | api_key | oauth_token — switchable via /claude
   # workspace_dir: /tmp/kernelbot-workspaces  # default: ~/.kernelbot/workspaces
 
 github:

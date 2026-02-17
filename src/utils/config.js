@@ -13,6 +13,7 @@ const DEFAULTS = {
     description: 'AI engineering agent with full OS control',
   },
   orchestrator: {
+    provider: 'anthropic',
     model: 'claude-opus-4-6',
     max_tokens: 2048,
     temperature: 0.3,
@@ -38,6 +39,7 @@ const DEFAULTS = {
     max_turns: 50,
     timeout_seconds: 600,
     workspace_dir: null, // defaults to ~/.kernelbot/workspaces
+    auth_mode: 'system', // system | api_key | oauth_token
   },
   github: {
     default_branch: 'main',
@@ -191,6 +193,84 @@ export function saveProviderToYaml(providerKey, modelId) {
 }
 
 /**
+ * Save orchestrator provider and model to config.yaml.
+ */
+export function saveOrchestratorToYaml(providerKey, modelId) {
+  const configDir = getConfigDir();
+  mkdirSync(configDir, { recursive: true });
+  const configPath = join(configDir, 'config.yaml');
+
+  let existing = {};
+  if (existsSync(configPath)) {
+    existing = yaml.load(readFileSync(configPath, 'utf-8')) || {};
+  }
+
+  existing.orchestrator = {
+    ...(existing.orchestrator || {}),
+    provider: providerKey,
+    model: modelId,
+  };
+
+  writeFileSync(configPath, yaml.dump(existing, { lineWidth: -1 }));
+  return configPath;
+}
+
+/**
+ * Save Claude Code model to config.yaml.
+ */
+export function saveClaudeCodeModelToYaml(modelId) {
+  const configDir = getConfigDir();
+  mkdirSync(configDir, { recursive: true });
+  const configPath = join(configDir, 'config.yaml');
+
+  let existing = {};
+  if (existsSync(configPath)) {
+    existing = yaml.load(readFileSync(configPath, 'utf-8')) || {};
+  }
+
+  existing.claude_code = {
+    ...(existing.claude_code || {}),
+    model: modelId,
+  };
+
+  writeFileSync(configPath, yaml.dump(existing, { lineWidth: -1 }));
+  return configPath;
+}
+
+/**
+ * Save Claude Code auth mode + credential to config.yaml and .env.
+ */
+export function saveClaudeCodeAuth(config, mode, value) {
+  const configDir = getConfigDir();
+  mkdirSync(configDir, { recursive: true });
+  const configPath = join(configDir, 'config.yaml');
+
+  let existing = {};
+  if (existsSync(configPath)) {
+    existing = yaml.load(readFileSync(configPath, 'utf-8')) || {};
+  }
+
+  existing.claude_code = {
+    ...(existing.claude_code || {}),
+    auth_mode: mode,
+  };
+
+  writeFileSync(configPath, yaml.dump(existing, { lineWidth: -1 }));
+
+  // Update live config
+  config.claude_code.auth_mode = mode;
+
+  if (mode === 'api_key' && value) {
+    saveCredential(config, 'CLAUDE_CODE_API_KEY', value);
+    config.claude_code.api_key = value;
+  } else if (mode === 'oauth_token' && value) {
+    saveCredential(config, 'CLAUDE_CODE_OAUTH_TOKEN', value);
+    config.claude_code.oauth_token = value;
+  }
+  // mode === 'system' — no credentials to save
+}
+
+/**
  * Full interactive flow: change brain model + optionally enter API key.
  */
 export async function changeBrainModel(config, rl) {
@@ -329,8 +409,13 @@ export function loadConfig() {
 
   const config = deepMerge(DEFAULTS, fileConfig);
 
-  // Orchestrator always uses Anthropic — resolve its API key
-  if (process.env.ANTHROPIC_API_KEY) {
+  // Orchestrator — resolve API key based on configured provider
+  const orchProvider = PROVIDERS[config.orchestrator.provider];
+  if (orchProvider && process.env[orchProvider.envKey]) {
+    config.orchestrator.api_key = process.env[orchProvider.envKey];
+  }
+  // Legacy fallback: ANTHROPIC_API_KEY for anthropic orchestrator
+  if (config.orchestrator.provider === 'anthropic' && !config.orchestrator.api_key && process.env.ANTHROPIC_API_KEY) {
     config.orchestrator.api_key = process.env.ANTHROPIC_API_KEY;
   }
 
@@ -366,6 +451,14 @@ export function loadConfig() {
     if (process.env.JIRA_BASE_URL) config.jira.base_url = process.env.JIRA_BASE_URL;
     if (process.env.JIRA_EMAIL) config.jira.email = process.env.JIRA_EMAIL;
     if (process.env.JIRA_API_TOKEN) config.jira.api_token = process.env.JIRA_API_TOKEN;
+  }
+
+  // Claude Code auth credentials from env
+  if (process.env.CLAUDE_CODE_API_KEY) {
+    config.claude_code.api_key = process.env.CLAUDE_CODE_API_KEY;
+  }
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    config.claude_code.oauth_token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
   }
 
   return config;

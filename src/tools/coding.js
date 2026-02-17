@@ -10,6 +10,10 @@ function getSpawner(config) {
   return spawner;
 }
 
+export function resetClaudeCodeSpawner() {
+  spawner = null;
+}
+
 export const definitions = [
   {
     name: 'spawn_claude_code',

@@ -126,14 +126,19 @@ async function startBotFlow(config) {
 
   const checks = [];
 
-  // Orchestrator always needs Anthropic API key
+  // Orchestrator check — dynamic provider
+  const orchProviderKey = config.orchestrator.provider || 'anthropic';
+  const orchProviderDef = PROVIDERS[orchProviderKey];
+  const orchLabel = orchProviderDef ? orchProviderDef.name : orchProviderKey;
   checks.push(
-    await showStartupCheck('Orchestrator (Anthropic) API', async () => {
-      const orchestratorKey = config.orchestrator.api_key || process.env.ANTHROPIC_API_KEY;
-      if (!orchestratorKey) throw new Error('ANTHROPIC_API_KEY is required for the orchestrator');
+    await showStartupCheck(`Orchestrator (${orchLabel}) API`, async () => {
+      const orchestratorKey = config.orchestrator.api_key
+        || (orchProviderDef && process.env[orchProviderDef.envKey])
+        || process.env.ANTHROPIC_API_KEY;
+      if (!orchestratorKey) throw new Error(`${orchProviderDef?.envKey || 'ANTHROPIC_API_KEY'} is required for the orchestrator`);
       const provider = createProvider({
         brain: {
-          provider: 'anthropic',
+          provider: orchProviderKey,
           model: config.orchestrator.model,
           max_tokens: config.orchestrator.max_tokens,
           temperature: config.orchestrator.temperature,

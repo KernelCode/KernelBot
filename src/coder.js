@@ -135,9 +135,32 @@ function processEvent(line, onOutput, logger) {
 
 export class ClaudeCodeSpawner {
   constructor(config) {
+    this.config = config;
     this.maxTurns = config.claude_code?.max_turns || 50;
     this.timeout = (config.claude_code?.timeout_seconds || 86400) * 1000;
-    this.model = config.claude_code?.model || null;
+  }
+
+  _buildSpawnEnv() {
+    const authMode = this.config.claude_code?.auth_mode || 'system';
+    const env = { ...process.env, IS_SANDBOX: '1' };
+
+    if (authMode === 'api_key') {
+      const key = this.config.claude_code?.api_key || process.env.CLAUDE_CODE_API_KEY;
+      if (key) {
+        env.ANTHROPIC_API_KEY = key;
+        delete env.CLAUDE_CODE_OAUTH_TOKEN;
+      }
+    } else if (authMode === 'oauth_token') {
+      const token = this.config.claude_code?.oauth_token || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      if (token) {
+        env.CLAUDE_CODE_OAUTH_TOKEN = token;
+        // Remove ANTHROPIC_API_KEY so it doesn't override subscription auth
+        delete env.ANTHROPIC_API_KEY;
+      }
+    }
+    // authMode === 'system' — pass env as-is
+
+    return env;
   }
 
   async run({ workingDirectory, prompt, maxTurns, onOutput, signal }) {
@@ -146,6 +169,9 @@ export class ClaudeCodeSpawner {
 
     ensureClaudeCodeSetup();
 
+    // Read model dynamically from config (supports hot-reload via switchClaudeCodeModel)
+    const model = this.config.claude_code?.model || null;
+
     const args = [
       '-p', prompt,
       '--max-turns', String(turns),
@@ -153,8 +179,8 @@ export class ClaudeCodeSpawner {
       '--verbose',
       '--dangerously-skip-permissions',
     ];
-    if (this.model) {
-      args.push('--model', this.model);
+    if (model) {
+      args.push('--model', model);
     }
 
     const cmd = `claude ${args.map((a) => a.includes(' ') ? `"${a}"` : a).join(' ')}`;
@@ -219,7 +245,7 @@ export class ClaudeCodeSpawner {
     return new Promise((resolve, reject) => {
       const child = spawn('claude', args, {
         cwd: workingDirectory,
-        env: { ...process.env, IS_SANDBOX: '1' },
+        env: this._buildSpawnEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 

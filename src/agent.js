@@ -7,7 +7,8 @@ import { getWorkerPrompt } from './prompts/workers.js';
 import { getUnifiedSkillById } from './skills/custom.js';
 import { WorkerAgent } from './worker.js';
 import { getLogger } from './utils/logger.js';
-import { getMissingCredential, saveCredential, saveProviderToYaml } from './utils/config.js';
+import { getMissingCredential, saveCredential, saveProviderToYaml, saveOrchestratorToYaml, saveClaudeCodeModelToYaml, saveClaudeCodeAuth } from './utils/config.js';
+import { resetClaudeCodeSpawner } from './tools/coding.js';
 
 const MAX_RESULT_LENGTH = 3000;
 const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
@@ -23,14 +24,17 @@ export class OrchestratorAgent {
     this._pending = new Map(); // chatId -> pending state
     this._chatCallbacks = new Map(); // chatId -> { onUpdate, sendPhoto }
 
-    // Orchestrator always uses Anthropic (30s timeout — lean dispatch/summarize calls)
+    // Orchestrator provider (30s timeout — lean dispatch/summarize calls)
+    const orchProviderKey = config.orchestrator.provider || 'anthropic';
+    const orchProviderDef = PROVIDERS[orchProviderKey];
+    const orchApiKey = config.orchestrator.api_key || (orchProviderDef && process.env[orchProviderDef.envKey]) || process.env.ANTHROPIC_API_KEY;
     this.orchestratorProvider = createProvider({
       brain: {
-        provider: 'anthropic',
+        provider: orchProviderKey,
         model: config.orchestrator.model,
         max_tokens: config.orchestrator.max_tokens,
         temperature: config.orchestrator.temperature,
-        api_key: config.orchestrator.api_key || process.env.ANTHROPIC_API_KEY,
+        api_key: orchApiKey,
         timeout: 30_000,
       },
     });
@@ -83,6 +87,131 @@ export class OrchestratorAgent {
     const modelEntry = providerDef?.models.find((m) => m.id === model);
     const modelLabel = modelEntry ? modelEntry.label : model;
     return { provider, providerName, model, modelLabel };
+  }
+
+  /** Return current orchestrator info for display. */
+  getOrchestratorInfo() {
+    const provider = this.config.orchestrator.provider || 'anthropic';
+    const model = this.config.orchestrator.model;
+    const providerDef = PROVIDERS[provider];
+    const providerName = providerDef ? providerDef.name : provider;
+    const modelEntry = providerDef?.models.find((m) => m.id === model);
+    const modelLabel = modelEntry ? modelEntry.label : model;
+    return { provider, providerName, model, modelLabel };
+  }
+
+  /** Switch orchestrator provider/model at runtime. */
+  async switchOrchestrator(providerKey, modelId) {
+    const logger = getLogger();
+    const providerDef = PROVIDERS[providerKey];
+    if (!providerDef) return `Unknown provider: ${providerKey}`;
+
+    const envKey = providerDef.envKey;
+    const apiKey = process.env[envKey];
+    if (!apiKey) return envKey;
+
+    try {
+      const testProvider = createProvider({
+        brain: {
+          provider: providerKey,
+          model: modelId,
+          max_tokens: this.config.orchestrator.max_tokens,
+          temperature: this.config.orchestrator.temperature,
+          api_key: apiKey,
+          timeout: 30_000,
+        },
+      });
+      await testProvider.ping();
+
+      this.config.orchestrator.provider = providerKey;
+      this.config.orchestrator.model = modelId;
+      this.config.orchestrator.api_key = apiKey;
+      this.orchestratorProvider = testProvider;
+      saveOrchestratorToYaml(providerKey, modelId);
+
+      logger.info(`Orchestrator switched to ${providerDef.name} / ${modelId}`);
+      return null;
+    } catch (err) {
+      logger.error(`Orchestrator switch failed for ${providerDef.name} / ${modelId}: ${err.message}`);
+      return { error: err.message };
+    }
+  }
+
+  /** Finalize orchestrator switch after API key was provided via chat. */
+  async switchOrchestratorWithKey(providerKey, modelId, apiKey) {
+    const logger = getLogger();
+    const providerDef = PROVIDERS[providerKey];
+
+    try {
+      const testProvider = createProvider({
+        brain: {
+          provider: providerKey,
+          model: modelId,
+          max_tokens: this.config.orchestrator.max_tokens,
+          temperature: this.config.orchestrator.temperature,
+          api_key: apiKey,
+          timeout: 30_000,
+        },
+      });
+      await testProvider.ping();
+
+      saveCredential(this.config, providerDef.envKey, apiKey);
+      this.config.orchestrator.provider = providerKey;
+      this.config.orchestrator.model = modelId;
+      this.config.orchestrator.api_key = apiKey;
+      this.orchestratorProvider = testProvider;
+      saveOrchestratorToYaml(providerKey, modelId);
+
+      logger.info(`Orchestrator switched to ${providerDef.name} / ${modelId} (new key saved)`);
+      return null;
+    } catch (err) {
+      logger.error(`Orchestrator switch failed for ${providerDef.name} / ${modelId}: ${err.message}`);
+      return { error: err.message };
+    }
+  }
+
+  /** Return current Claude Code model info for display. */
+  getClaudeCodeInfo() {
+    const model = this.config.claude_code?.model || 'claude-opus-4-6';
+    const providerDef = PROVIDERS.anthropic;
+    const modelEntry = providerDef?.models.find((m) => m.id === model);
+    const modelLabel = modelEntry ? modelEntry.label : model;
+    return { model, modelLabel };
+  }
+
+  /** Switch Claude Code model at runtime. */
+  switchClaudeCodeModel(modelId) {
+    const logger = getLogger();
+    this.config.claude_code.model = modelId;
+    saveClaudeCodeModelToYaml(modelId);
+    resetClaudeCodeSpawner();
+    logger.info(`Claude Code model switched to ${modelId}`);
+  }
+
+  /** Return current Claude Code auth config for display. */
+  getClaudeAuthConfig() {
+    const mode = this.config.claude_code?.auth_mode || 'system';
+    const info = { mode };
+
+    if (mode === 'api_key') {
+      const key = this.config.claude_code?.api_key || process.env.CLAUDE_CODE_API_KEY || '';
+      info.credential = key ? `${key.slice(0, 8)}...${key.slice(-4)}` : '(not set)';
+    } else if (mode === 'oauth_token') {
+      const token = this.config.claude_code?.oauth_token || process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
+      info.credential = token ? `${token.slice(0, 8)}...${token.slice(-4)}` : '(not set)';
+    } else {
+      info.credential = 'Using host system login';
+    }
+
+    return info;
+  }
+
+  /** Set Claude Code auth mode + credential at runtime. */
+  setClaudeCodeAuth(mode, value) {
+    const logger = getLogger();
+    saveClaudeCodeAuth(this.config, mode, value);
+    resetClaudeCodeSpawner();
+    logger.info(`Claude Code auth mode set to: ${mode}`);
   }
 
   /** Switch worker brain provider/model at runtime. */
