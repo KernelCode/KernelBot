@@ -130,7 +130,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
               });
               return edited.message_id;
             } catch {
-              return opts.editMessageId;
+              // Edit failed — fall through to send new message
             }
           }
         }
@@ -1592,12 +1592,12 @@ export function startBot(config, agent, conversationManager, jobManager, automat
                 });
                 return edited.message_id;
               } catch {
-                return opts.editMessageId;
+                // Edit failed — fall through to send new message
               }
             }
           }
 
-          // Send new message(s)
+          // Send new message(s) — also reached when edit fails
           const parts = splitMessage(update);
           let lastMsgId = null;
           for (const part of parts) {

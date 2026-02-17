@@ -351,7 +351,15 @@ export class OrchestratorAgent {
   async _sendUpdate(chatId, text, opts) {
     const callbacks = this._chatCallbacks.get(chatId);
     if (callbacks?.onUpdate) {
-      try { return await callbacks.onUpdate(text, opts); } catch {}
+      try {
+        return await callbacks.onUpdate(text, opts);
+      } catch (err) {
+        const logger = getLogger();
+        logger.error(`[Orchestrator] _sendUpdate failed for chat ${chatId}: ${err.message}`);
+      }
+    } else {
+      const logger = getLogger();
+      logger.warn(`[Orchestrator] _sendUpdate: no callbacks for chat ${chatId}`);
     }
     return null;
   }
@@ -383,18 +391,21 @@ export class OrchestratorAgent {
 
       // 1. IMMEDIATELY notify user (guarantees they see something regardless of summary LLM)
       const notifyMsgId = await this._sendUpdate(chatId, `✅ ${label} finished! Preparing summary...`);
+      logger.debug(`[Orchestrator] Job ${job.id} notification sent — msgId=${notifyMsgId || 'none'}`);
 
       // 2. Try to summarize, then store ONE message in history (summary or fallback — not both)
       try {
         const summary = await this._summarizeJobResult(chatId, job);
         if (summary) {
+          logger.debug(`[Orchestrator] Job ${job.id} summary ready (${summary.length} chars) — delivering to user`);
           this.conversationManager.addMessage(chatId, 'assistant', summary);
           await this._sendUpdate(chatId, summary, { editMessageId: notifyMsgId });
         } else {
-          // Summary was null (short result) — store the fallback
+          // Summary was null — store the fallback
           const fallback = this._buildSummaryFallback(job, label);
+          logger.debug(`[Orchestrator] Job ${job.id} using fallback (${fallback.length} chars) — delivering to user`);
           this.conversationManager.addMessage(chatId, 'assistant', fallback);
-          await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId }).catch(() => {});
+          await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
         }
       } catch (err) {
         logger.error(`[Orchestrator] Failed to summarize job ${job.id}: ${err.message}`);
@@ -558,6 +569,11 @@ export class OrchestratorAgent {
           return `- ${link}`;
         });
         parts.push(`\n${artifactLines.join('\n')}`);
+      }
+      if (sr.details) {
+        const d = typeof sr.details === 'string' ? sr.details : JSON.stringify(sr.details, null, 2);
+        const details = d.length > 1500 ? d.slice(0, 1500) + '\n... [truncated]' : d;
+        parts.push(`\n${details}`);
       }
       if (sr.followUp) parts.push(`\n💡 ${sr.followUp}`);
       return parts.join('');
