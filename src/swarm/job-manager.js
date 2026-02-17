@@ -11,6 +11,7 @@ import { getLogger } from '../utils/logger.js';
  *   job:completed  (job)
  *   job:failed     (job)
  *   job:cancelled  (job)
+ *   job:ready      (job) — emitted when a queued job's dependencies are all met
  */
 export class JobManager extends EventEmitter {
   constructor({ jobTimeoutSeconds = 300, cleanupIntervalMinutes = 30 } = {}) {
@@ -40,13 +41,17 @@ export class JobManager extends EventEmitter {
     getLogger().info(`[JobManager] Job ${job.id} [${job.workerType}] → running`);
   }
 
-  /** Move a job to completed with a result. */
-  completeJob(jobId, result) {
+  /** Move a job to completed with a result and optional structured data. */
+  completeJob(jobId, result, structuredResult = null) {
     const job = this._get(jobId);
     job.transition('completed');
     job.result = result;
-    getLogger().info(`[JobManager] Job ${job.id} [${job.workerType}] → completed (${job.duration}s) — result: ${(result || '').length} chars`);
+    if (structuredResult) {
+      job.structuredResult = structuredResult;
+    }
+    getLogger().info(`[JobManager] Job ${job.id} [${job.workerType}] → completed (${job.duration}s) — result: ${(result || '').length} chars, structured: ${!!structuredResult}`);
     this.emit('job:completed', job);
+    this._checkDependents(job);
   }
 
   /** Move a job to failed with an error message. */
@@ -56,6 +61,7 @@ export class JobManager extends EventEmitter {
     job.error = typeof error === 'string' ? error : error?.message || String(error);
     getLogger().error(`[JobManager] Job ${job.id} [${job.workerType}] → failed (${job.duration}s) — ${job.error}`);
     this.emit('job:failed', job);
+    this._failDependents(job);
   }
 
   /** Cancel a specific job. Returns the job or null if not found / already terminal. */
@@ -162,6 +168,42 @@ export class JobManager extends EventEmitter {
     }
     if (checkedCount > 0) {
       getLogger().debug(`[JobManager] Timeout check: ${checkedCount} running jobs checked`);
+    }
+  }
+
+  /** Check if any queued jobs have all dependencies met after a job completes. */
+  _checkDependents(completedJob) {
+    const logger = getLogger();
+    for (const job of this.jobs.values()) {
+      if (job.status !== 'queued' || job.dependsOn.length === 0) continue;
+      if (!job.dependsOn.includes(completedJob.id)) continue;
+
+      // Check if ALL dependencies are completed
+      const allMet = job.dependsOn.every(depId => {
+        const dep = this.jobs.get(depId);
+        return dep && dep.status === 'completed';
+      });
+
+      if (allMet) {
+        logger.info(`[JobManager] Job ${job.id} [${job.workerType}] — all dependencies met, emitting job:ready`);
+        this.emit('job:ready', job);
+      }
+    }
+  }
+
+  /** Cascade failure to dependent jobs when a job fails. */
+  _failDependents(failedJob) {
+    const logger = getLogger();
+    for (const job of this.jobs.values()) {
+      if (job.status !== 'queued' || job.dependsOn.length === 0) continue;
+      if (!job.dependsOn.includes(failedJob.id)) continue;
+
+      logger.warn(`[JobManager] Job ${job.id} [${job.workerType}] — dependency ${failedJob.id} failed, cascading failure`);
+      job.transition('failed');
+      job.error = `Dependency job ${failedJob.id} failed: ${failedJob.error || 'unknown error'}`;
+      this.emit('job:failed', job);
+      // Recursively cascade to jobs depending on this one
+      this._failDependents(job);
     }
   }
 

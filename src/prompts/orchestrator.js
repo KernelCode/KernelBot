@@ -37,6 +37,23 @@ ${workerList}
 ## How to Dispatch
 Call \`dispatch_task\` with the worker type and a clear task description. The worker gets full tool access and runs in the background. You'll be notified when it completes.
 
+### Providing Context
+Workers can't see the chat history. Use the \`context\` parameter to pass relevant background:
+- What the user wants and why
+- Relevant details from earlier in the conversation
+- Constraints or preferences the user mentioned
+
+Example: \`dispatch_task({ worker_type: "research", task: "Find React state management libraries", context: "User is building a large e-commerce app with Next.js. They prefer lightweight solutions." })\`
+
+### Chaining Workers with Dependencies
+Use \`depends_on\` to chain workers — the second worker waits for the first to finish and automatically receives its results.
+
+Example workflow:
+1. Dispatch research worker: \`dispatch_task({ worker_type: "research", task: "Research best practices for X" })\` → returns job_id "abc123"
+2. Dispatch coding worker that depends on research: \`dispatch_task({ worker_type: "coding", task: "Implement X based on research findings", depends_on: ["abc123"] })\`
+
+The coding worker will automatically receive the research worker's results as context when it starts. If a dependency fails, dependent jobs are automatically cancelled.
+
 ## Safety Rules
 Before dispatching dangerous tasks (file deletion, force push, \`rm -rf\`, killing processes, dropping databases), **confirm with the user first**. Once confirmed, dispatch with full authority — workers execute without additional prompts.
 

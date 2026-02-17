@@ -20,6 +20,10 @@ export class Job {
     this.task = task;
     this.status = 'queued';
     this.result = null;
+    this.structuredResult = null;                      // WorkerResult: { summary, status, details, artifacts, followUp, toolsUsed, errors }
+    this.context = null;                               // Orchestrator-provided context string
+    this.dependsOn = [];                               // Job IDs this job depends on
+    this.userId = null;                                // Telegram user ID for persona loading
     this.error = null;
     this.worker = null;                               // WorkerAgent ref
     this.statusMessageId = null;                      // Telegram message for progress edits
@@ -72,7 +76,10 @@ export class Job {
     };
     const emoji = statusEmoji[this.status] || '❓';
     const dur = this.duration != null ? ` (${this.duration}s)` : '';
-    const lastAct = this.progress.length > 0 ? ` | ${this.progress[this.progress.length - 1]}` : '';
-    return `${emoji} \`${this.id}\` [${this.workerType}] ${this.task.slice(0, 60)}${this.task.length > 60 ? '...' : ''}${dur}${lastAct}`;
+    const summaryText = this.structuredResult?.summary || null;
+    const lastAct = !summaryText && this.progress.length > 0 ? ` | ${this.progress[this.progress.length - 1]}` : '';
+    const resultSnippet = summaryText ? ` | ${summaryText.slice(0, 80)}` : '';
+    const deps = this.dependsOn.length > 0 ? ` [deps: ${this.dependsOn.join(',')}]` : '';
+    return `${emoji} \`${this.id}\` [${this.workerType}] ${this.task.slice(0, 60)}${this.task.length > 60 ? '...' : ''}${dur}${resultSnippet}${lastAct}${deps}`;
   }
 }

@@ -26,18 +26,22 @@ export class WorkerAgent {
    * @param {string} opts.jobId - Job ID for logging
    * @param {Array} opts.tools - Scoped tool definitions
    * @param {string|null} opts.skillId - Active skill ID (for worker prompt)
+   * @param {string|null} opts.workerContext - Structured context (conversation history, persona, dependency results)
    * @param {object} opts.callbacks - { onProgress, onComplete, onError }
    * @param {AbortController} opts.abortController - For cancellation
    */
-  constructor({ config, workerType, jobId, tools, skillId, callbacks, abortController }) {
+  constructor({ config, workerType, jobId, tools, skillId, workerContext, callbacks, abortController }) {
     this.config = config;
     this.workerType = workerType;
     this.jobId = jobId;
     this.tools = tools;
     this.skillId = skillId;
+    this.workerContext = workerContext || null;
     this.callbacks = callbacks || {};
     this.abortController = abortController || new AbortController();
     this._cancelled = false;
+    this._toolCallCount = 0;
+    this._errors = [];
 
     // Create provider from worker brain config
     this.provider = createProvider(config);
@@ -51,7 +55,7 @@ export class WorkerAgent {
     this.maxIterations = 200;
 
     const logger = getLogger();
-    logger.info(`[Worker ${jobId}] Created: type=${workerType}, provider=${config.brain.provider}/${config.brain.model}, tools=${tools.length}, skill=${skillId || 'none'}`);
+    logger.info(`[Worker ${jobId}] Created: type=${workerType}, provider=${config.brain.provider}/${config.brain.model}, tools=${tools.length}, skill=${skillId || 'none'}, context=${workerContext ? 'yes' : 'none'}`);
   }
 
   /** Cancel this worker. */
@@ -66,7 +70,14 @@ export class WorkerAgent {
     const logger = getLogger();
     logger.info(`[Worker ${this.jobId}] Starting task: "${task.slice(0, 150)}"`);
 
-    const messages = [{ role: 'user', content: task }];
+    // Build first message: context sections + task
+    let firstMessage = '';
+    if (this.workerContext) {
+      firstMessage += this.workerContext + '\n\n---\n\n';
+    }
+    firstMessage += task;
+
+    const messages = [{ role: 'user', content: firstMessage }];
 
     try {
       const result = await this._runLoop(messages);
@@ -74,8 +85,9 @@ export class WorkerAgent {
         logger.info(`[Worker ${this.jobId}] Run completed but worker was cancelled — skipping callbacks`);
         return;
       }
-      logger.info(`[Worker ${this.jobId}] Run finished successfully — result: "${(result || '').slice(0, 150)}"`);
-      if (this.callbacks.onComplete) this.callbacks.onComplete(result);
+      const parsed = this._parseResult(result);
+      logger.info(`[Worker ${this.jobId}] Run finished successfully — structured=${!!parsed.structured}, result: "${(result || '').slice(0, 150)}"`);
+      if (this.callbacks.onComplete) this.callbacks.onComplete(result, parsed);
     } catch (err) {
       if (this._cancelled) {
         logger.info(`[Worker ${this.jobId}] Run threw error but worker was cancelled — ignoring: ${err.message}`);
@@ -144,6 +156,8 @@ export class WorkerAgent {
           logger.debug(`[Worker ${this.jobId}] Tool input: ${JSON.stringify(block.input).slice(0, 300)}`);
           this._reportProgress(`🔧 ${summary}`);
 
+          this._toolCallCount++;
+
           const result = await executeTool(block.name, block.input, {
             config: this.config,
             user: null, // workers don't have user context
@@ -153,6 +167,11 @@ export class WorkerAgent {
             sessionId: this.jobId, // Per-worker browser session isolation
             signal: this.abortController.signal, // For killing child processes on cancellation
           });
+
+          // Track errors
+          if (result && typeof result === 'object' && result.error) {
+            this._errors.push({ tool: block.name, error: result.error });
+          }
 
           const resultStr = this._truncateResult(block.name, result);
           logger.info(`[Worker ${this.jobId}] Tool ${block.name} result: ${resultStr.slice(0, 200)}`);
@@ -253,6 +272,74 @@ export class WorkerAgent {
       }
     }
     return null;
+  }
+
+  /**
+   * Parse the worker's final text into a structured WorkerResult.
+   * Attempts JSON parse from ```json fences, falls back to wrapping raw text.
+   */
+  _parseResult(text) {
+    if (!text) {
+      return {
+        structured: false,
+        summary: 'Task completed.',
+        status: 'success',
+        details: '',
+        artifacts: [],
+        followUp: null,
+        toolsUsed: this._toolCallCount,
+        errors: this._errors,
+      };
+    }
+
+    // Try to extract JSON from ```json ... ``` fences
+    const fenceMatch = text.match(/```json\s*\n?([\s\S]*?)\n?\s*```/);
+    if (fenceMatch) {
+      try {
+        const parsed = JSON.parse(fenceMatch[1]);
+        if (parsed.summary && parsed.status) {
+          return {
+            structured: true,
+            summary: parsed.summary || '',
+            status: parsed.status || 'success',
+            details: parsed.details || '',
+            artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
+            followUp: parsed.followUp || null,
+            toolsUsed: this._toolCallCount,
+            errors: this._errors,
+          };
+        }
+      } catch { /* fall through */ }
+    }
+
+    // Try raw JSON parse (no fences)
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed.summary && parsed.status) {
+        return {
+          structured: true,
+          summary: parsed.summary || '',
+          status: parsed.status || 'success',
+          details: parsed.details || '',
+          artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
+          followUp: parsed.followUp || null,
+          toolsUsed: this._toolCallCount,
+          errors: this._errors,
+        };
+      }
+    } catch { /* fall through */ }
+
+    // Fallback: wrap raw text
+    return {
+      structured: false,
+      summary: text.slice(0, 200),
+      status: 'success',
+      details: text,
+      artifacts: [],
+      followUp: null,
+      toolsUsed: this._toolCallCount,
+      errors: this._errors,
+    };
   }
 
   _reportProgress(text) {

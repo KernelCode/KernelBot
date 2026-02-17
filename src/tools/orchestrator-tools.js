@@ -23,6 +23,15 @@ export const orchestratorToolDefinitions = [
           type: 'string',
           description: 'A clear, detailed description of what the worker should do.',
         },
+        context: {
+          type: 'string',
+          description: 'Optional background context for the worker — relevant conversation details, goals, constraints. The worker cannot see the chat history, so include anything important here.',
+        },
+        depends_on: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional array of job IDs that must complete before this worker starts. The worker will receive dependency results as context.',
+        },
       },
       required: ['worker_type', 'task'],
     },
@@ -158,12 +167,12 @@ export const orchestratorToolDefinitions = [
  */
 export async function executeOrchestratorTool(name, input, context) {
   const logger = getLogger();
-  const { chatId, jobManager, config, spawnWorker, automationManager } = context;
+  const { chatId, jobManager, config, spawnWorker, automationManager, user } = context;
 
   switch (name) {
     case 'dispatch_task': {
-      const { worker_type, task } = input;
-      logger.info(`[dispatch_task] Request: type=${worker_type}, task="${task.slice(0, 120)}"`);
+      const { worker_type, task, context: taskContext, depends_on } = input;
+      logger.info(`[dispatch_task] Request: type=${worker_type}, task="${task.slice(0, 120)}", deps=${depends_on?.length || 0}`);
 
       // Validate worker type
       if (!WORKER_TYPES[worker_type]) {
@@ -171,13 +180,34 @@ export async function executeOrchestratorTool(name, input, context) {
         return { error: `Unknown worker type: ${worker_type}. Valid: ${workerTypeEnum.join(', ')}` };
       }
 
-      // Check concurrent job limit
-      const running = jobManager.getRunningJobsForChat(chatId);
-      const maxConcurrent = config.swarm?.max_concurrent_jobs || 3;
-      logger.debug(`[dispatch_task] Running jobs: ${running.length}/${maxConcurrent} for chat ${chatId}`);
-      if (running.length >= maxConcurrent) {
-        logger.warn(`[dispatch_task] Rejected — concurrent limit reached: ${running.length}/${maxConcurrent} jobs for chat ${chatId}`);
-        return { error: `Maximum concurrent jobs (${maxConcurrent}) reached. Wait for a job to finish or cancel one.` };
+      // Validate dependency IDs
+      const depIds = Array.isArray(depends_on) ? depends_on : [];
+      for (const depId of depIds) {
+        const depJob = jobManager.getJob(depId);
+        if (!depJob) {
+          logger.warn(`[dispatch_task] Unknown dependency job: ${depId}`);
+          return { error: `Dependency job not found: ${depId}` };
+        }
+        if (depJob.status === 'failed' || depJob.status === 'cancelled') {
+          logger.warn(`[dispatch_task] Dependency job ${depId} already ${depJob.status}`);
+          return { error: `Dependency job ${depId} already ${depJob.status}. Cannot dispatch.` };
+        }
+      }
+
+      // Check concurrent job limit (only if we'll spawn immediately)
+      const hasUnmetDeps = depIds.some(id => {
+        const dep = jobManager.getJob(id);
+        return dep && dep.status !== 'completed';
+      });
+
+      if (!hasUnmetDeps) {
+        const running = jobManager.getRunningJobsForChat(chatId);
+        const maxConcurrent = config.swarm?.max_concurrent_jobs || 3;
+        logger.debug(`[dispatch_task] Running jobs: ${running.length}/${maxConcurrent} for chat ${chatId}`);
+        if (running.length >= maxConcurrent) {
+          logger.warn(`[dispatch_task] Rejected — concurrent limit reached: ${running.length}/${maxConcurrent} jobs for chat ${chatId}`);
+          return { error: `Maximum concurrent jobs (${maxConcurrent}) reached. Wait for a job to finish or cancel one.` };
+        }
       }
 
       // Pre-check credentials for the worker's tools
@@ -192,9 +222,24 @@ export async function executeOrchestratorTool(name, input, context) {
         }
       }
 
-      // Create and spawn the job
+      // Create the job with context and dependencies
       const job = jobManager.createJob(chatId, worker_type, task);
+      job.context = taskContext || null;
+      job.dependsOn = depIds;
+      job.userId = user?.id || null;
       const workerConfig = WORKER_TYPES[worker_type];
+
+      // If dependencies are not all met, leave job queued (job:ready will spawn it later)
+      if (hasUnmetDeps) {
+        logger.info(`[dispatch_task] Job ${job.id} queued — waiting for dependencies: ${depIds.join(', ')}`);
+        return {
+          job_id: job.id,
+          worker_type,
+          status: 'queued_waiting',
+          depends_on: depIds,
+          message: `${workerConfig.emoji} ${workerConfig.label} queued — waiting for ${depIds.length} dependency job(s) to complete.`,
+        };
+      }
 
       logger.info(`[dispatch_task] Dispatching job ${job.id} — ${workerConfig.emoji} ${workerConfig.label}: "${task.slice(0, 100)}"`);
 
@@ -224,16 +269,26 @@ export async function executeOrchestratorTool(name, input, context) {
         return { message: 'No jobs for this chat.' };
       }
       return {
-        jobs: jobs.slice(0, 20).map((j) => ({
-          id: j.id,
-          worker_type: j.workerType,
-          status: j.status,
-          task: j.task.slice(0, 100),
-          duration: j.duration,
-          recent_activity: j.progress.slice(-5),
-          last_activity_seconds_ago: j.lastActivity ? Math.round((Date.now() - j.lastActivity) / 1000) : null,
-          summary: j.toSummary(),
-        })),
+        jobs: jobs.slice(0, 20).map((j) => {
+          const entry = {
+            id: j.id,
+            worker_type: j.workerType,
+            status: j.status,
+            task: j.task.slice(0, 100),
+            duration: j.duration,
+            recent_activity: j.progress.slice(-5),
+            last_activity_seconds_ago: j.lastActivity ? Math.round((Date.now() - j.lastActivity) / 1000) : null,
+            summary: j.toSummary(),
+          };
+          if (j.dependsOn.length > 0) entry.depends_on = j.dependsOn;
+          if (j.structuredResult) {
+            entry.result_summary = j.structuredResult.summary;
+            entry.result_status = j.structuredResult.status;
+            if (j.structuredResult.artifacts?.length > 0) entry.artifacts = j.structuredResult.artifacts;
+            if (j.structuredResult.followUp) entry.follow_up = j.structuredResult.followUp;
+          }
+          return entry;
+        }),
       };
     }
 

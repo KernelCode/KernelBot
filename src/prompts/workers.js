@@ -79,7 +79,27 @@ export function getWorkerPrompt(workerType, config, skillPrompt = null) {
 - BUT be smart about it: don't loop endlessly. If you have enough data, stop and report.
 - NEVER retry a failing URL/site more than twice. If it times out or errors twice, MOVE ON to a different site or approach immediately.
 - When you've gathered sufficient results, STOP calling tools and return your findings.
-- Aim for quality results, not exhaustive coverage. 5 good results beat 50 incomplete ones.`;
+- Aim for quality results, not exhaustive coverage. 5 good results beat 50 incomplete ones.
+
+## Output Format
+When you finish your task, return your final response as a JSON object wrapped in \`\`\`json fences:
+
+\`\`\`json
+{
+  "summary": "One-paragraph summary of what you accomplished",
+  "status": "success | partial | failed",
+  "details": "Full detailed results, findings, data, etc. Be thorough.",
+  "artifacts": [{"type": "url|file|pr|commit", "title": "Short label", "url": "https://...", "path": "/path/to/file"}],
+  "followUp": "Suggested next steps or things the user should know (optional, null if none)"
+}
+\`\`\`
+
+Rules:
+- "summary" should be 1-3 sentences — what you did and the key finding/outcome.
+- "status": "success" if task fully completed, "partial" if only partly done, "failed" if you couldn't accomplish the goal.
+- "details" can be long — include all relevant data, code, analysis, etc.
+- "artifacts" is an array of notable outputs (URLs found, files created, PRs opened). Empty array if none.
+- If you cannot format as JSON (e.g. the output is too complex), just return plain text — it will still work.`;
 
   if (skillPrompt) {
     prompt += `\n\n## Domain Expertise\n${skillPrompt}`;

@@ -228,14 +228,11 @@ export class OrchestratorAgent {
       const workerDef = WORKER_TYPES[job.workerType] || {};
       const label = workerDef.label || job.workerType;
 
-      logger.info(`[Orchestrator] Job completed event: ${job.id} [${job.workerType}] in chat ${chatId} (${job.duration}s) — result length: ${(job.result || '').length} chars`);
+      logger.info(`[Orchestrator] Job completed event: ${job.id} [${job.workerType}] in chat ${chatId} (${job.duration}s) — result length: ${(job.result || '').length} chars, structured: ${!!job.structuredResult}`);
 
-      // 1. Store raw result in conversation history so orchestrator has full context
-      let resultText = job.result || 'Done.';
-      if (resultText.length > 3000) {
-        resultText = resultText.slice(0, 3000) + '\n\n... [result truncated]';
-      }
-      this.conversationManager.addMessage(chatId, 'user', `[Worker result: ${label} (${job.id}, ${job.duration}s)]\n\n${resultText}`);
+      // 1. Store result in conversation history as assistant message (not fake user message)
+      const historyEntry = this._buildResultHistoryEntry(job);
+      this.conversationManager.addMessage(chatId, 'assistant', historyEntry);
 
       // 2. IMMEDIATELY notify user (guarantees they see something regardless of summary LLM)
       const notifyMsgId = await this._sendUpdate(chatId, `✅ ${label} finished! Preparing summary...`);
@@ -249,7 +246,24 @@ export class OrchestratorAgent {
         }
       } catch (err) {
         logger.error(`[Orchestrator] Failed to summarize job ${job.id}: ${err.message}`);
-        await this._sendUpdate(chatId, `✅ ${label} finished (\`${job.id}\`, ${job.duration}s)! Ask me for the details.`, { editMessageId: notifyMsgId }).catch(() => {});
+        // Better fallback: show structured summary + artifacts instead of "ask me for details"
+        const fallback = this._buildSummaryFallback(job, label);
+        await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId }).catch(() => {});
+      }
+    });
+
+    // Handle jobs whose dependencies are now met
+    this.jobManager.on('job:ready', async (job) => {
+      const chatId = job.chatId;
+      logger.info(`[Orchestrator] Job ready event: ${job.id} [${job.workerType}] — dependencies met, spawning worker`);
+
+      try {
+        await this._spawnWorker(job);
+      } catch (err) {
+        logger.error(`[Orchestrator] Failed to spawn ready job ${job.id}: ${err.message}`);
+        if (!job.isTerminal) {
+          this.jobManager.failJob(job.id, err.message);
+        }
       }
     });
 
@@ -279,8 +293,9 @@ export class OrchestratorAgent {
 
   /**
    * Auto-summarize a completed job result via the orchestrator LLM.
-   * The orchestrator reads the worker's raw result and presents a clean summary.
-   * Protected by the provider's built-in timeout (30s) — no manual Promise.race needed.
+   * Uses structured data for focused summarization when available.
+   * Short results (<500 chars) skip the LLM call entirely.
+   * Protected by the provider's built-in timeout (30s).
    * Returns the summary text, or null. Caller handles delivery.
    */
   async _summarizeJobResult(chatId, job) {
@@ -290,6 +305,29 @@ export class OrchestratorAgent {
 
     logger.info(`[Orchestrator] Summarizing job ${job.id} [${job.workerType}] result for user`);
 
+    // Short results don't need LLM summarization
+    const sr = job.structuredResult;
+    const resultLen = (job.result || '').length;
+    if (sr?.structured && resultLen < 500) {
+      logger.info(`[Orchestrator] Job ${job.id} result short enough — skipping LLM summary`);
+      return this._buildSummaryFallback(job, label);
+    }
+
+    // Build a focused prompt using structured data if available
+    let resultContext;
+    if (sr?.structured) {
+      const parts = [`Summary: ${sr.summary}`, `Status: ${sr.status}`];
+      if (sr.artifacts?.length > 0) {
+        parts.push(`Artifacts: ${sr.artifacts.map(a => `${a.title || a.type}: ${a.url || a.path}`).join(', ')}`);
+      }
+      if (sr.followUp) parts.push(`Follow-up: ${sr.followUp}`);
+      // Include details up to 8000 chars
+      if (sr.details) parts.push(`Details:\n${sr.details.slice(0, 8000)}`);
+      resultContext = parts.join('\n');
+    } else {
+      resultContext = (job.result || 'Done.').slice(0, 8000);
+    }
+
     const history = this.conversationManager.getSummarizedHistory(chatId);
 
     const response = await this.orchestratorProvider.chat({
@@ -298,7 +336,7 @@ export class OrchestratorAgent {
         ...history,
         {
           role: 'user',
-          content: `The ${label} worker just finished job \`${job.id}\` (took ${job.duration}s). Present the results to the user in a clean, well-formatted way. Don't mention "worker" or technical job details — just present the findings naturally as if you did the work yourself.`,
+          content: `The ${label} worker just finished job \`${job.id}\` (took ${job.duration}s). Here are the results:\n\n${resultContext}\n\nPresent these results to the user in a clean, well-formatted way. Don't mention "worker" or technical job details — just present the findings naturally as if you did the work yourself.`,
         },
       ],
     });
@@ -307,6 +345,143 @@ export class OrchestratorAgent {
     logger.info(`[Orchestrator] Job ${job.id} summary: "${summary.slice(0, 200)}"`);
 
     return summary || null;
+  }
+
+  /**
+   * Build a compact history entry for a completed job result.
+   * Stored as role: 'assistant' (not fake 'user') with up to 6000 chars of detail.
+   */
+  _buildResultHistoryEntry(job) {
+    const workerDef = WORKER_TYPES[job.workerType] || {};
+    const label = workerDef.label || job.workerType;
+    const sr = job.structuredResult;
+
+    const parts = [`[${label} result — job ${job.id}, ${job.duration}s]`];
+
+    if (sr?.structured) {
+      parts.push(`Summary: ${sr.summary}`);
+      parts.push(`Status: ${sr.status}`);
+      if (sr.artifacts?.length > 0) {
+        const artifactLines = sr.artifacts.map(a => `- ${a.title || a.type}: ${a.url || a.path || ''}`);
+        parts.push(`Artifacts:\n${artifactLines.join('\n')}`);
+      }
+      if (sr.followUp) parts.push(`Follow-up: ${sr.followUp}`);
+      if (sr.details) {
+        const details = sr.details.length > 6000
+          ? sr.details.slice(0, 6000) + '\n... [details truncated]'
+          : sr.details;
+        parts.push(`Details:\n${details}`);
+      }
+    } else {
+      // Raw text result
+      const resultText = job.result || 'Done.';
+      if (resultText.length > 6000) {
+        parts.push(resultText.slice(0, 6000) + '\n... [result truncated]');
+      } else {
+        parts.push(resultText);
+      }
+    }
+
+    return parts.join('\n\n');
+  }
+
+  /**
+   * Build a fallback summary when LLM summarization fails.
+   * Shows structured summary + artifacts directly instead of "ask me for details".
+   */
+  _buildSummaryFallback(job, label) {
+    const sr = job.structuredResult;
+
+    if (sr?.structured) {
+      const parts = [`✅ **${label}** finished (\`${job.id}\`, ${job.duration}s)`];
+      parts.push(`\n${sr.summary}`);
+      if (sr.artifacts?.length > 0) {
+        const artifactLines = sr.artifacts.map(a => {
+          const link = a.url ? `[${a.title || a.type}](${a.url})` : (a.title || a.path || a.type);
+          return `- ${link}`;
+        });
+        parts.push(`\n${artifactLines.join('\n')}`);
+      }
+      if (sr.followUp) parts.push(`\n💡 ${sr.followUp}`);
+      return parts.join('');
+    }
+
+    // No structured result — show first 300 chars of raw result
+    const snippet = (job.result || '').slice(0, 300);
+    return `✅ **${label}** finished (\`${job.id}\`, ${job.duration}s)${snippet ? `\n\n${snippet}${job.result?.length > 300 ? '...' : ''}` : ''}`;
+  }
+
+  /**
+   * Build structured context for a worker.
+   * Assembles: orchestrator-provided context, recent user messages, user persona, dependency results.
+   */
+  _buildWorkerContext(job) {
+    const logger = getLogger();
+    const sections = [];
+
+    // 1. Orchestrator-provided context
+    if (job.context) {
+      sections.push(`## Context\n${job.context}`);
+    }
+
+    // 2. Last 5 user messages from conversation history
+    try {
+      const history = this.conversationManager.getSummarizedHistory(job.chatId);
+      const userMessages = history
+        .filter(m => m.role === 'user' && typeof m.content === 'string')
+        .slice(-5)
+        .map(m => m.content.slice(0, 500));
+      if (userMessages.length > 0) {
+        sections.push(`## Recent Conversation\n${userMessages.map(m => `> ${m}`).join('\n\n')}`);
+      }
+    } catch (err) {
+      logger.debug(`[Worker ${job.id}] Failed to load conversation history for context: ${err.message}`);
+    }
+
+    // 3. User persona
+    if (this.personaManager && job.userId) {
+      try {
+        const persona = this.personaManager.load(job.userId);
+        if (persona && persona.trim() && !persona.includes('No profile')) {
+          sections.push(`## User Profile\n${persona}`);
+        }
+      } catch (err) {
+        logger.debug(`[Worker ${job.id}] Failed to load persona for context: ${err.message}`);
+      }
+    }
+
+    // 4. Dependency job results
+    if (job.dependsOn.length > 0) {
+      const depResults = [];
+      for (const depId of job.dependsOn) {
+        const depJob = this.jobManager.getJob(depId);
+        if (!depJob || depJob.status !== 'completed') continue;
+
+        const workerDef = WORKER_TYPES[depJob.workerType] || {};
+        const label = workerDef.label || depJob.workerType;
+        const sr = depJob.structuredResult;
+
+        if (sr?.structured) {
+          const parts = [`### ${label} (${depId}) — ${sr.status}`];
+          parts.push(sr.summary);
+          if (sr.artifacts?.length > 0) {
+            parts.push(`Artifacts: ${sr.artifacts.map(a => `${a.title || a.type}: ${a.url || a.path || ''}`).join(', ')}`);
+          }
+          if (sr.details) {
+            parts.push(sr.details.slice(0, 4000));
+          }
+          depResults.push(parts.join('\n'));
+        } else if (depJob.result) {
+          depResults.push(`### ${label} (${depId})\n${depJob.result.slice(0, 4000)}`);
+        }
+      }
+      if (depResults.length > 0) {
+        sections.push(`## Prior Worker Results\n${depResults.join('\n\n')}`);
+      }
+    }
+
+    if (sections.length === 0) return null;
+    return sections.join('\n\n');
   }
 
   /**
@@ -368,7 +543,10 @@ export class OrchestratorAgent {
     // Get scoped tools and skill
     const tools = getToolsForWorker(job.workerType);
     const skillId = this.conversationManager.getSkill(chatId);
-    logger.debug(`[Orchestrator] Worker ${job.id} config: ${tools.length} tools, skill=${skillId || 'none'}, brain=${this.config.brain.provider}/${this.config.brain.model}`);
+
+    // Build worker context (conversation history, persona, dependency results)
+    const workerContext = this._buildWorkerContext(job);
+    logger.debug(`[Orchestrator] Worker ${job.id} config: ${tools.length} tools, skill=${skillId || 'none'}, brain=${this.config.brain.provider}/${this.config.brain.model}, context=${workerContext ? 'yes' : 'none'}`);
 
     const worker = new WorkerAgent({
       config: this.config,
@@ -376,18 +554,19 @@ export class OrchestratorAgent {
       jobId: job.id,
       tools,
       skillId,
+      workerContext,
       callbacks: {
         onProgress: (text) => addActivity(text),
         onHeartbeat: (text) => job.addProgress(text),
         onUpdate, // Real bot onUpdate for tools (coder.js smart output needs message_id)
-        onComplete: (result) => {
-          logger.info(`[Worker ${job.id}] Completed — result: "${(result || '').slice(0, 150)}"`);
+        onComplete: (result, parsedResult) => {
+          logger.info(`[Worker ${job.id}] Completed — structured=${!!parsedResult?.structured}, result: "${(result || '').slice(0, 150)}"`);
           // Final status message update
           if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
           if (statusMsgId && onUpdate) {
             onUpdate(buildStatusText('done'), { editMessageId: statusMsgId }).catch(() => {});
           }
-          this.jobManager.completeJob(job.id, result);
+          this.jobManager.completeJob(job.id, result, parsedResult || null);
         },
         onError: (err) => {
           logger.error(`[Worker ${job.id}] Error — ${err.message || String(err)}`);
@@ -414,7 +593,7 @@ export class OrchestratorAgent {
 
   /**
    * Build a compact worker activity digest for the orchestrator.
-   * Returns a text block summarizing active/recent workers, or null if nothing relevant.
+   * Returns a text block summarizing active/recent/waiting workers, or null if nothing relevant.
    */
   _buildWorkerDigest(chatId) {
     const jobs = this.jobManager.getJobsForChat(chatId);
@@ -428,20 +607,40 @@ export class OrchestratorAgent {
     for (const job of running) {
       const workerDef = WORKER_TYPES[job.workerType] || {};
       const dur = job.startedAt ? Math.round((now - job.startedAt) / 1000) : 0;
-      const recentActivity = job.progress.slice(-5).join(' → ');
+      const recentActivity = job.progress.slice(-8).join(' → ');
       lines.push(`- ${workerDef.label || job.workerType} (${job.id}) — running ${dur}s${recentActivity ? `\n  Recent: ${recentActivity}` : ''}`);
     }
 
-    // Recently completed/failed jobs (within last 60s)
+    // Queued/waiting jobs
+    const queued = jobs.filter(j => j.status === 'queued' && j.dependsOn.length > 0);
+    for (const job of queued) {
+      const workerDef = WORKER_TYPES[job.workerType] || {};
+      lines.push(`- ${workerDef.label || job.workerType} (${job.id}) — queued, waiting for: ${job.dependsOn.join(', ')}`);
+    }
+
+    // Recently completed/failed jobs (within last 120s)
     const recentTerminal = jobs.filter(j =>
-      j.isTerminal && j.completedAt && (now - j.completedAt) < 60_000,
+      j.isTerminal && j.completedAt && (now - j.completedAt) < 120_000,
     );
     for (const job of recentTerminal) {
       const workerDef = WORKER_TYPES[job.workerType] || {};
       const ago = Math.round((now - job.completedAt) / 1000);
-      const snippet = job.status === 'completed'
-        ? (job.result || '').slice(0, 120)
-        : (job.error || '').slice(0, 120);
+      let snippet;
+      if (job.status === 'completed') {
+        if (job.structuredResult?.structured) {
+          snippet = job.structuredResult.summary.slice(0, 300);
+          if (job.structuredResult.artifacts?.length > 0) {
+            snippet += ` | Artifacts: ${job.structuredResult.artifacts.map(a => a.title || a.type).join(', ')}`;
+          }
+          if (job.structuredResult.followUp) {
+            snippet += ` | Follow-up: ${job.structuredResult.followUp.slice(0, 100)}`;
+          }
+        } else {
+          snippet = (job.result || '').slice(0, 300);
+        }
+      } else {
+        snippet = (job.error || '').slice(0, 300);
+      }
       lines.push(`- ${workerDef.label || job.workerType} (${job.id}) — ${job.status} ${ago}s ago${snippet ? `\n  Result: ${snippet}` : ''}`);
     }
 
@@ -497,6 +696,7 @@ export class OrchestratorAgent {
             config: this.config,
             spawnWorker: (job) => this._spawnWorker(job),
             automationManager: this.automationManager,
+            user,
           });
 
           logger.info(`[Orchestrator] Tool result for ${block.name}: ${JSON.stringify(result).slice(0, 200)}`);
