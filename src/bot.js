@@ -54,7 +54,7 @@ class ChatQueue {
 }
 
 export function startBot(config, agent, conversationManager, jobManager, automationManager, lifeDeps = {}) {
-  const { lifeEngine, memoryManager, journalManager, shareQueue, improvementTracker } = lifeDeps;
+  const { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge } = lifeDeps;
   const logger = getLogger();
   const bot = new TelegramBot(config.telegram.bot_token, { polling: true });
   const chatQueue = new ChatQueue();
@@ -91,6 +91,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     { command: 'life', description: 'Inner life engine status and control' },
     { command: 'journal', description: 'View today\'s journal or a past date' },
     { command: 'memories', description: 'View recent memories or search' },
+    { command: 'evolution', description: 'Self-evolution status, history, and lessons' },
     { command: 'context', description: 'Show all models, auth, and context info' },
     { command: 'clean', description: 'Clear conversation and start fresh' },
     { command: 'history', description: 'Show message count in memory' },
@@ -1126,7 +1127,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       }
       if (args.startsWith('trigger')) {
         const activityType = args.split(/\s+/)[1] || null;
-        const validTypes = ['think', 'browse', 'journal', 'create'];
+        const validTypes = ['think', 'browse', 'journal', 'create', 'self_code', 'code_review', 'reflect'];
         if (activityType && !validTypes.includes(activityType)) {
           await bot.sendMessage(chatId, `Unknown activity type. Available: ${validTypes.join(', ')}`);
           return;
@@ -1137,19 +1138,28 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         });
         return;
       }
-      if (args === 'review' && improvementTracker) {
-        const pending = improvementTracker.getPending();
-        if (pending.length === 0) {
-          await bot.sendMessage(chatId, 'No pending self-improvement proposals.');
-          return;
+      if (args === 'review') {
+        if (evolutionTracker) {
+          const active = evolutionTracker.getActiveProposal();
+          const openPRs = evolutionTracker.getPRsToCheck();
+          const lines = ['*Evolution Status*', ''];
+          if (active) {
+            lines.push(`Active: \`${active.id}\` — ${active.status}`);
+            lines.push(`  ${(active.triggerContext || '').slice(0, 150)}`);
+          } else {
+            lines.push('_No active proposals._');
+          }
+          if (openPRs.length > 0) {
+            lines.push('', '*Open PRs:*');
+            for (const p of openPRs) {
+              lines.push(`  • PR #${p.prNumber}: ${p.prUrl || 'no URL'}`);
+            }
+          }
+          lines.push('', '_Use `/evolution` for full evolution status._');
+          await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+        } else {
+          await bot.sendMessage(chatId, 'Evolution system not available. Use `/evolution` for details.', { parse_mode: 'Markdown' });
         }
-        const lines = ['*Self-Improvement Proposals*', ''];
-        for (const p of pending) {
-          lines.push(`**${p.id}** — ${p.description.slice(0, 200)}`);
-          lines.push(`  Branch: \`${p.branch}\` | Scope: ${p.scope}`);
-          lines.push('');
-        }
-        await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
         return;
       }
 
@@ -1169,11 +1179,13 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         `  📓 Journal: ${status.activityCounts.journal || 0}`,
         `  🎨 Create: ${status.activityCounts.create || 0}`,
         `  🔧 Self-code: ${status.activityCounts.self_code || 0}`,
+        `  🔍 Code review: ${status.activityCounts.code_review || 0}`,
+        `  🪞 Reflect: ${status.activityCounts.reflect || 0}`,
         '',
         '_Commands:_',
         '`/life pause` — Pause activities',
         '`/life resume` — Resume activities',
-        '`/life trigger [think|browse|journal|create]` — Trigger now',
+        '`/life trigger [think|browse|journal|create|self_code|code_review|reflect]` — Trigger now',
       ];
       await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
       return;
@@ -1275,6 +1287,114 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       return;
     }
 
+    // ── /evolution command ──────────────────────────────────────────
+    if (text === '/evolution' || text.startsWith('/evolution ')) {
+      logger.info(`[Bot] /evolution command from ${username} (${userId}) in chat ${chatId}`);
+      const args = text.slice('/evolution'.length).trim();
+
+      if (!evolutionTracker) {
+        await bot.sendMessage(chatId, 'Evolution system is not available.');
+        return;
+      }
+
+      if (args === 'history') {
+        const proposals = evolutionTracker.getRecentProposals(10);
+        if (proposals.length === 0) {
+          await bot.sendMessage(chatId, 'No evolution proposals yet.');
+          return;
+        }
+        const lines = ['*Evolution History*', ''];
+        for (const p of proposals.reverse()) {
+          const statusIcon = { research: '🔬', planned: '📋', coding: '💻', pr_open: '🔄', merged: '✅', rejected: '❌', failed: '💥' }[p.status] || '•';
+          const age = Math.round((Date.now() - p.createdAt) / 3600_000);
+          const ageLabel = age < 24 ? `${age}h ago` : `${Math.round(age / 24)}d ago`;
+          lines.push(`${statusIcon} \`${p.id}\` — ${p.status} (${ageLabel})`);
+          lines.push(`  ${(p.triggerContext || '').slice(0, 100)}`);
+          if (p.prUrl) lines.push(`  PR: ${p.prUrl}`);
+          lines.push('');
+        }
+        await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      if (args === 'lessons') {
+        const lessons = evolutionTracker.getRecentLessons(15);
+        if (lessons.length === 0) {
+          await bot.sendMessage(chatId, 'No evolution lessons learned yet.');
+          return;
+        }
+        const lines = ['*Evolution Lessons*', ''];
+        for (const l of lessons.reverse()) {
+          lines.push(`• [${l.category}] ${l.lesson}`);
+          if (l.fromProposal) lines.push(`  _from ${l.fromProposal}_`);
+          lines.push('');
+        }
+        await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      if (args === 'trigger') {
+        if (!lifeEngine) {
+          await bot.sendMessage(chatId, 'Life engine is not available.');
+          return;
+        }
+        await bot.sendMessage(chatId, '⚡ Triggering evolution cycle...');
+        lifeEngine.triggerNow('self_code').catch(err => {
+          logger.error(`[Bot] Evolution trigger failed: ${err.message}`);
+        });
+        return;
+      }
+
+      if (args === 'scan') {
+        if (!codebaseKnowledge) {
+          await bot.sendMessage(chatId, 'Codebase knowledge is not available.');
+          return;
+        }
+        await bot.sendMessage(chatId, '🔍 Scanning codebase...');
+        codebaseKnowledge.scanChanged().then(count => {
+          bot.sendMessage(chatId, `✅ Scanned ${count} changed files.`).catch(() => {});
+        }).catch(err => {
+          bot.sendMessage(chatId, `Failed: ${err.message}`).catch(() => {});
+        });
+        return;
+      }
+
+      // Default: show status
+      const active = evolutionTracker.getActiveProposal();
+      const stats = evolutionTracker.getStats();
+      const openPRs = evolutionTracker.getPRsToCheck();
+
+      const lines = [
+        '🧬 *Self-Evolution*',
+        '',
+        `*Stats:* ${stats.totalProposals} total | ${stats.merged} merged | ${stats.rejected} rejected | ${stats.failed} failed`,
+        `*Success rate:* ${stats.successRate}%`,
+        `*Open PRs:* ${openPRs.length}`,
+      ];
+
+      if (active) {
+        const statusIcon = { research: '🔬', planned: '📋', coding: '💻', pr_open: '🔄' }[active.status] || '•';
+        lines.push('');
+        lines.push(`*Active proposal:* ${statusIcon} \`${active.id}\` — ${active.status}`);
+        lines.push(`  ${(active.triggerContext || '').slice(0, 120)}`);
+        if (active.prUrl) lines.push(`  PR: ${active.prUrl}`);
+      } else {
+        lines.push('', '_No active proposal_');
+      }
+
+      lines.push(
+        '',
+        '_Commands:_',
+        '`/evolution history` — Recent proposals',
+        '`/evolution lessons` — Learned lessons',
+        '`/evolution trigger` — Trigger evolution now',
+        '`/evolution scan` — Scan codebase',
+      );
+
+      await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
     if (text === '/help') {
       const activeSkill = agent.getActiveSkill(chatId);
       const skillLine = activeSkill
@@ -1295,6 +1415,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         '/life — Inner life engine status & control',
         '/journal — View today\'s journal or a past date',
         '/memories — View recent memories or search',
+        '/evolution — Self-evolution status, history, lessons',
         '/context — Show all models, auth, and context info',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',

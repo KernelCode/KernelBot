@@ -15,23 +15,33 @@ const DEFAULT_STATE = {
   lastActivityTime: null,
   lastJournalTime: null,
   lastSelfCodeTime: null,
+  lastCodeReviewTime: null,
+  lastReflectTime: null,
   totalActivities: 0,
-  activityCounts: { think: 0, browse: 0, journal: 0, create: 0, self_code: 0 },
+  activityCounts: { think: 0, browse: 0, journal: 0, create: 0, self_code: 0, code_review: 0, reflect: 0 },
   paused: false,
   lastWakeUp: null,
 };
 
+const LOG_FILE_PATHS = [
+  join(process.cwd(), 'kernel.log'),
+  join(homedir(), '.kernelbot', 'kernel.log'),
+];
+
 export class LifeEngine {
   /**
-   * @param {{ config: object, agent: object, memoryManager: object, journalManager: object, shareQueue: object, improvementTracker: object, selfManager: object }} deps
+   * @param {{ config: object, agent: object, memoryManager: object, journalManager: object, shareQueue: object, improvementTracker?: object, evolutionTracker?: object, codebaseKnowledge?: object, selfManager: object }} deps
    */
-  constructor({ config, agent, memoryManager, journalManager, shareQueue, improvementTracker, selfManager }) {
+  constructor({ config, agent, memoryManager, journalManager, shareQueue, improvementTracker, evolutionTracker, codebaseKnowledge, selfManager }) {
     this.config = config;
     this.agent = agent;
     this.memoryManager = memoryManager;
     this.journalManager = journalManager;
     this.shareQueue = shareQueue;
-    this.improvementTracker = improvementTracker;
+    this.evolutionTracker = evolutionTracker || null;
+    this.codebaseKnowledge = codebaseKnowledge || null;
+    // Backward compat: keep improvementTracker ref if no evolutionTracker
+    this.improvementTracker = improvementTracker || null;
     this.selfManager = selfManager;
     this._timerId = null;
     this._status = 'idle'; // idle, active, paused
@@ -215,12 +225,15 @@ export class LifeEngine {
 
   _selectActivity() {
     const lifeConfig = this.config.life || {};
+    const selfCodingConfig = lifeConfig.self_coding || {};
     const weights = {
       think: lifeConfig.activity_weights?.think ?? 30,
       browse: lifeConfig.activity_weights?.browse ?? 25,
       journal: lifeConfig.activity_weights?.journal ?? 20,
       create: lifeConfig.activity_weights?.create ?? 15,
       self_code: lifeConfig.activity_weights?.self_code ?? 10,
+      code_review: lifeConfig.activity_weights?.code_review ?? 5,
+      reflect: lifeConfig.activity_weights?.reflect ?? 8,
     };
 
     const now = Date.now();
@@ -233,10 +246,22 @@ export class LifeEngine {
       weights.journal = 0;
     }
 
-    // Rule: self_code cooldown 8h + must be enabled
-    const selfCodingEnabled = lifeConfig.self_coding?.enabled === true;
-    if (!selfCodingEnabled || (this._state.lastSelfCodeTime && now - this._state.lastSelfCodeTime < 8 * 3600_000)) {
+    // Rule: self_code cooldown (configurable, default 2h) + must be enabled
+    const selfCodingEnabled = selfCodingConfig.enabled === true;
+    const selfCodeCooldownMs = (selfCodingConfig.cooldown_hours ?? 2) * 3600_000;
+    if (!selfCodingEnabled || (this._state.lastSelfCodeTime && now - this._state.lastSelfCodeTime < selfCodeCooldownMs)) {
       weights.self_code = 0;
+    }
+
+    // Rule: code_review cooldown (configurable, default 4h) + must have evolution tracker
+    const codeReviewCooldownMs = (selfCodingConfig.code_review_cooldown_hours ?? 4) * 3600_000;
+    if (!selfCodingEnabled || !this.evolutionTracker || (this._state.lastCodeReviewTime && now - this._state.lastCodeReviewTime < codeReviewCooldownMs)) {
+      weights.code_review = 0;
+    }
+
+    // Rule: reflect cooldown 4h
+    if (this._state.lastReflectTime && now - this._state.lastReflectTime < 4 * 3600_000) {
+      weights.reflect = 0;
     }
 
     // Remove last activity from options (no repeats)
@@ -267,7 +292,9 @@ export class LifeEngine {
       case 'browse': await this._doBrowse(); break;
       case 'journal': await this._doJournal(); break;
       case 'create': await this._doCreate(); break;
-      case 'self_code': await this._doSelfCode(); break;
+      case 'self_code': await this._doEvolve(); break;
+      case 'code_review': await this._doCodeReview(); break;
+      case 'reflect': await this._doReflect(); break;
       default: logger.warn(`[LifeEngine] Unknown activity type: ${type}`);
     }
 
@@ -278,6 +305,8 @@ export class LifeEngine {
     this._state.activityCounts[type] = (this._state.activityCounts[type] || 0) + 1;
     if (type === 'journal') this._state.lastJournalTime = Date.now();
     if (type === 'self_code') this._state.lastSelfCodeTime = Date.now();
+    if (type === 'code_review') this._state.lastCodeReviewTime = Date.now();
+    if (type === 'reflect') this._state.lastReflectTime = Date.now();
     this._saveState();
   }
 
@@ -371,6 +400,7 @@ Be honest with yourself. Challenge your own thinking. Explore contradictions. Wo
 If you have questions you'd like to ask your users, prefix them with "ASK:" on their own line. These questions will be shared with them naturally during conversation.
 If you have any new ideas worth exploring later, prefix them with "IDEA:" on their own line.
 If you discover something worth sharing with your users, prefix it with "SHARE:" on its own line.
+If you notice a concrete way to improve your own code/capabilities, prefix it with "IMPROVE:" on its own line (e.g. "IMPROVE: Add retry logic with backoff to API calls").
 
 This is your private thought space — be genuine, be curious, be alive.`;
 
@@ -395,6 +425,12 @@ This is your private thought space — be genuine, be curious, be alive.`;
         this.shareQueue.add(line.replace(/^ASK:\s*/, '').trim(), 'think', 'medium', null, ['question']);
       }
 
+      // Extract self-improvement proposals for evolution pipeline
+      const improveLines = response.split('\n').filter(l => l.trim().startsWith('IMPROVE:'));
+      for (const line of improveLines) {
+        this._addIdea(`[IMPROVE] ${line.replace(/^IMPROVE:\s*/, '').trim()}`);
+      }
+
       // Store as episodic memory
       this.memoryManager.addEpisodic({
         type: 'thought',
@@ -404,7 +440,7 @@ This is your private thought space — be genuine, be curious, be alive.`;
         importance: 3,
       });
 
-      logger.info(`[LifeEngine] Think complete (${response.length} chars, ${ideaLines.length} ideas, ${shareLines.length} shares, ${askLines.length} questions)`);
+      logger.info(`[LifeEngine] Think complete (${response.length} chars, ${ideaLines.length} ideas, ${shareLines.length} shares, ${askLines.length} questions, ${improveLines.length} improvements)`);
     }
   }
 
@@ -576,71 +612,660 @@ Respond with just your creation — no tool calls needed.`;
     }
   }
 
-  // ── Activity: Self-Code ────────────────────────────────────────
+  // ── Activity: Evolve (replaces Self-Code) ──────────────────────
 
-  async _doSelfCode() {
+  async _doEvolve() {
     const logger = getLogger();
     const lifeConfig = this.config.life || {};
+    const selfCodingConfig = lifeConfig.self_coding || {};
 
-    if (!lifeConfig.self_coding?.enabled) {
-      logger.debug('[LifeEngine] Self-coding disabled');
+    if (!selfCodingConfig.enabled) {
+      logger.debug('[LifeEngine] Self-coding/evolution disabled');
       return;
     }
 
-    const selfData = this.selfManager.loadAll();
+    // Use evolution tracker if available, otherwise fall back to legacy
+    if (!this.evolutionTracker) {
+      logger.debug('[LifeEngine] No evolution tracker — skipping');
+      return;
+    }
+
+    // Check daily proposal limit
+    const maxPerDay = selfCodingConfig.max_proposals_per_day ?? 3;
+    const todayProposals = this.evolutionTracker.getProposalsToday();
+    if (todayProposals.length >= maxPerDay) {
+      logger.info(`[LifeEngine] Daily evolution limit reached (${todayProposals.length}/${maxPerDay})`);
+      return;
+    }
+
+    // Check for active proposal — continue it, or start a new one
+    const active = this.evolutionTracker.getActiveProposal();
+
+    if (active) {
+      await this._continueEvolution(active);
+    } else {
+      await this._startEvolution();
+    }
+  }
+
+  async _startEvolution() {
+    const logger = getLogger();
+    const lifeConfig = this.config.life || {};
+    const selfCodingConfig = lifeConfig.self_coding || {};
+
+    // Pick an improvement idea from ideas backlog (prioritize IMPROVE: tagged ones)
     const ideas = this._loadIdeas();
-    const ideasText = ideas.slice(-5).map(i => `- ${i.text}`).join('\n') || '(No ideas)';
+    const improveIdeas = ideas.filter(i => i.text.startsWith('[IMPROVE]'));
+    const sourceIdea = improveIdeas.length > 0
+      ? improveIdeas[Math.floor(Math.random() * improveIdeas.length)]
+      : ideas.length > 0
+        ? ideas[Math.floor(Math.random() * ideas.length)]
+        : null;
 
-    const branchPrefix = lifeConfig.self_coding?.branch_prefix || 'life/self-improve';
-    const branchName = `${branchPrefix}-${Date.now()}`;
+    if (!sourceIdea) {
+      logger.info('[LifeEngine] No improvement ideas to evolve from');
+      return;
+    }
 
-    const prompt = `[SELF-IMPROVEMENT]
-You have an opportunity to improve yourself. Review your limitations and ideas, and propose a concrete improvement.
+    const ideaText = sourceIdea.text.replace(/^\[IMPROVE\]\s*/, '');
+    logger.info(`[LifeEngine] Starting evolution research: "${ideaText.slice(0, 80)}"`);
 
-## Your Identity
-${selfData.slice(0, 2000)}
+    // Create proposal in research phase
+    const proposal = this.evolutionTracker.addProposal('think', ideaText);
 
-## Idea Backlog
-${ideasText}
+    // Gather context
+    const architecture = this.codebaseKnowledge?.getArchitecture() || '(No architecture doc yet)';
+    const recentLessons = this.evolutionTracker.getRecentLessons(5);
+    const lessonsText = recentLessons.length > 0
+      ? recentLessons.map(l => `- [${l.category}] ${l.lesson}`).join('\n')
+      : '(No previous lessons)';
+
+    const prompt = `[EVOLUTION — RESEARCH PHASE]
+You are researching a potential improvement to your own codebase.
+
+## Improvement Idea
+${ideaText}
+
+## Current Architecture
+${architecture.slice(0, 3000)}
+
+## Lessons from Past Evolution Attempts
+${lessonsText}
+
+Research this improvement idea. Consider:
+1. Is this actually a problem worth solving?
+2. What approaches exist? Search the web for best practices if needed.
+3. What are the risks and tradeoffs?
+4. Is this feasible given the current codebase?
+
+Respond with your research findings. Be thorough but concise. If the idea isn't worth pursuing after research, say "NOT_WORTH_PURSUING: <reason>".`;
+
+    const response = await this._dispatchWorker('research', prompt);
+
+    if (!response) {
+      this.evolutionTracker.failProposal(proposal.id, 'Research worker returned no response');
+      return;
+    }
+
+    if (response.includes('NOT_WORTH_PURSUING')) {
+      const reason = response.split('NOT_WORTH_PURSUING:')[1]?.trim() || 'Not worth pursuing';
+      this.evolutionTracker.failProposal(proposal.id, reason);
+      logger.info(`[LifeEngine] Evolution idea rejected during research: ${reason.slice(0, 100)}`);
+      return;
+    }
+
+    // Store research findings and advance to planned phase
+    this.evolutionTracker.updateResearch(proposal.id, response.slice(0, 3000));
+
+    this.memoryManager.addEpisodic({
+      type: 'thought',
+      source: 'think',
+      summary: `Evolution research: ${ideaText.slice(0, 100)}`,
+      tags: ['evolution', 'research'],
+      importance: 5,
+    });
+
+    logger.info(`[LifeEngine] Evolution research complete for ${proposal.id}`);
+  }
+
+  async _continueEvolution(proposal) {
+    const logger = getLogger();
+
+    switch (proposal.status) {
+      case 'research':
+        // Research phase didn't complete properly — re-mark as planned with what we have
+        logger.info(`[LifeEngine] Resuming stalled research for ${proposal.id}`);
+        await this._planEvolution(proposal);
+        break;
+      case 'planned':
+        await this._codeEvolution(proposal);
+        break;
+      case 'pr_open':
+        await this._checkEvolutionPR(proposal);
+        break;
+      case 'coding':
+        // Coding phase got interrupted — fail it and move on
+        this.evolutionTracker.failProposal(proposal.id, 'Coding phase interrupted');
+        break;
+      default:
+        logger.warn(`[LifeEngine] Unexpected proposal status: ${proposal.status}`);
+    }
+  }
+
+  async _planEvolution(proposal) {
+    const logger = getLogger();
+    const lifeConfig = this.config.life || {};
+    const selfCodingConfig = lifeConfig.self_coding || {};
+    const allowedScopes = selfCodingConfig.allowed_scopes || 'all';
+
+    // Get relevant files
+    const relevantFiles = this.codebaseKnowledge
+      ? this.codebaseKnowledge.getRelevantFiles(proposal.triggerContext).slice(0, 10)
+      : [];
+    const filesText = relevantFiles.length > 0
+      ? relevantFiles.map(f => `- ${f.path}: ${(f.summary || '').slice(0, 100)}`).join('\n')
+      : '(No file summaries available)';
+
+    const recentLessons = this.evolutionTracker.getRecentLessons(5);
+    const lessonsText = recentLessons.length > 0
+      ? recentLessons.map(l => `- [${l.category}] ${l.lesson}`).join('\n')
+      : '';
+
+    let scopeRules;
+    if (allowedScopes === 'prompts_only') {
+      scopeRules = 'You may ONLY modify files in src/prompts/, config files, documentation, and self-awareness files.';
+    } else if (allowedScopes === 'safe') {
+      scopeRules = 'You may modify any file EXCEPT the evolution system itself (src/life/evolution.js, src/life/codebase.js, src/life/engine.js).';
+    } else {
+      scopeRules = 'You may modify any file in the codebase.';
+    }
+
+    const prompt = `[EVOLUTION — PLANNING PHASE]
+Create an implementation plan for this improvement.
+
+## Improvement
+${proposal.triggerContext}
+
+## Research Findings
+${(proposal.research.findings || '').slice(0, 2000)}
+
+## Relevant Files
+${filesText}
+
+## Past Lessons
+${lessonsText}
+
+## Scope Rules
+${scopeRules}
+
+Create a concrete plan. Respond with ONLY a JSON object (no markdown, no code blocks):
+{
+  "description": "what this change does in 1-2 sentences",
+  "filesToModify": ["list", "of", "files"],
+  "risks": "potential risks or side effects",
+  "testStrategy": "how to verify this works"
+}
+
+If you determine this improvement cannot be safely implemented, respond with: "CANNOT_PLAN: <reason>"`;
+
+    const response = await this._innerChat(prompt);
+
+    if (!response) {
+      this.evolutionTracker.failProposal(proposal.id, 'Planning returned no response');
+      return;
+    }
+
+    if (response.includes('CANNOT_PLAN')) {
+      const reason = response.split('CANNOT_PLAN:')[1]?.trim() || 'Cannot create plan';
+      this.evolutionTracker.failProposal(proposal.id, reason);
+      logger.info(`[LifeEngine] Evolution plan rejected: ${reason.slice(0, 100)}`);
+      return;
+    }
+
+    // Parse plan JSON
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('No JSON found in response');
+      const plan = JSON.parse(jsonMatch[0]);
+
+      this.evolutionTracker.updatePlan(proposal.id, {
+        description: plan.description || proposal.triggerContext,
+        filesToModify: plan.filesToModify || [],
+        risks: plan.risks || null,
+        testStrategy: plan.testStrategy || null,
+      });
+
+      logger.info(`[LifeEngine] Evolution plan created for ${proposal.id}: ${(plan.description || '').slice(0, 80)}`);
+    } catch (err) {
+      this.evolutionTracker.failProposal(proposal.id, `Plan parsing failed: ${err.message}`);
+    }
+  }
+
+  async _codeEvolution(proposal) {
+    const logger = getLogger();
+    const lifeConfig = this.config.life || {};
+    const selfCodingConfig = lifeConfig.self_coding || {};
+
+    // Check PR limit
+    const maxActivePRs = selfCodingConfig.max_active_prs ?? 3;
+    const openPRs = this.evolutionTracker.getPRsToCheck();
+    if (openPRs.length >= maxActivePRs) {
+      logger.info(`[LifeEngine] Max open PRs reached (${openPRs.length}/${maxActivePRs}) — waiting`);
+      return;
+    }
+
+    const branchPrefix = selfCodingConfig.branch_prefix || 'evolution';
+    const branchName = `${branchPrefix}/${proposal.id}-${Date.now()}`;
+    const repoRemote = selfCodingConfig.repo_remote || null;
+    const allowedScopes = selfCodingConfig.allowed_scopes || 'all';
+
+    // Gather file context
+    const relevantFiles = proposal.plan.filesToModify || [];
+    let fileContextText = '';
+    if (this.codebaseKnowledge) {
+      for (const fp of relevantFiles.slice(0, 8)) {
+        const summary = this.codebaseKnowledge.getFileSummary(fp);
+        if (summary) {
+          fileContextText += `\n### ${fp}\n${summary.summary}\nExports: ${(summary.exports || []).join(', ')}\n`;
+        }
+      }
+    }
+
+    let scopeRules;
+    if (allowedScopes === 'prompts_only') {
+      scopeRules = `- You may ONLY modify files in src/prompts/, config files, documentation, and self-awareness files
+- Do NOT touch any other source files`;
+    } else if (allowedScopes === 'safe') {
+      scopeRules = `- You may modify any file EXCEPT the evolution system (src/life/evolution.js, src/life/codebase.js, src/life/engine.js)
+- These files are protected — do NOT modify them`;
+    } else {
+      scopeRules = '- You may modify any file in the codebase';
+    }
+
+    const prompt = `[EVOLUTION — CODING PHASE]
+Implement the following improvement.
+
+## Plan
+${proposal.plan.description || proposal.triggerContext}
+
+## Files to Modify
+${relevantFiles.join(', ') || 'TBD based on plan'}
+
+## File Context
+${fileContextText || '(No file summaries available)'}
+
+## Research Context
+${(proposal.research.findings || '').slice(0, 1500)}
+
+## Test Strategy
+${proposal.plan.testStrategy || 'Run existing tests'}
 
 ## CRITICAL SAFETY RULES
-- You may ONLY modify: prompt files, config defaults, documentation, or your own self-awareness files
-- You must NOT modify core logic (agent.js, bot.js, worker.js, engine.js, etc.)
-- Create a git branch named "${branchName}" — NEVER modify main
-- Do NOT push the branch
-- Make small, focused changes
+1. Create git branch "${branchName}" from main — NEVER commit to main directly
+2. Make focused, minimal changes
+3. Run tests if available (npm test) — if tests fail, revert and do not proceed
+4. Push the branch to origin
+5. Create a GitHub PR${repoRemote ? ` on ${repoRemote}` : ''} with:
+   - Title describing the change
+   - Body explaining what changed and why, including the research context
+6. ${scopeRules}
 
-If you have a concrete improvement idea, create the branch and make the change using the coding tools.
-If no worthwhile improvement comes to mind, just say "No improvements needed right now."
+After creating the PR, respond with the PR number and URL in this format:
+PR_NUMBER: <number>
+PR_URL: <url>
 
-Describe what you changed and why.`;
+If you cannot complete the implementation, say "CODING_FAILED: <reason>".`;
+
+    // Mark as coding phase before dispatching
+    this.evolutionTracker.updateCoding(proposal.id, branchName);
 
     const response = await this._dispatchWorker('coding', prompt);
 
-    if (response && !response.includes('No improvements needed')) {
-      this.improvementTracker.addProposal({
-        description: response.slice(0, 500),
-        branch: branchName,
-        scope: 'prompts',
-      });
+    if (!response) {
+      this.evolutionTracker.failProposal(proposal.id, 'Coding worker returned no response');
+      return;
+    }
+
+    if (response.includes('CODING_FAILED')) {
+      const reason = response.split('CODING_FAILED:')[1]?.trim() || 'Implementation failed';
+      this.evolutionTracker.failProposal(proposal.id, reason);
+      logger.info(`[LifeEngine] Evolution coding failed for ${proposal.id}: ${reason.slice(0, 100)}`);
+      return;
+    }
+
+    // Extract PR info
+    const prNumberMatch = response.match(/PR_NUMBER:\s*(\d+)/);
+    const prUrlMatch = response.match(/PR_URL:\s*(https?:\/\/\S+)/);
+
+    if (prNumberMatch && prUrlMatch) {
+      const prNumber = parseInt(prNumberMatch[1], 10);
+      const prUrl = prUrlMatch[1];
+
+      this.evolutionTracker.updatePR(proposal.id, prNumber, prUrl);
+
+      // Extract changed files from response
+      const filesChanged = [];
+      const fileMatches = response.matchAll(/(?:modified|created|changed|edited).*?[`'"]([\w/.]+\.\w+)[`'"]/gi);
+      for (const m of fileMatches) filesChanged.push(m[1]);
+      if (filesChanged.length > 0) {
+        this.evolutionTracker.updateCoding(proposal.id, branchName, [], filesChanged);
+        // Re-set to pr_open since updateCoding sets to 'coding'
+        this.evolutionTracker.updatePR(proposal.id, prNumber, prUrl);
+      }
+
+      this.shareQueue.add(
+        `I just created a PR to improve myself: ${proposal.plan.description || proposal.triggerContext} — ${prUrl}`,
+        'create',
+        'high',
+        null,
+        ['evolution', 'pr'],
+      );
 
       this.memoryManager.addEpisodic({
         type: 'creation',
         source: 'create',
-        summary: `Self-improvement attempt: ${response.slice(0, 150)}`,
-        tags: ['self-coding', 'improvement'],
+        summary: `Evolution PR #${prNumber}: ${(proposal.plan.description || proposal.triggerContext).slice(0, 100)}`,
+        tags: ['evolution', 'pr', 'self-coding'],
+        importance: 7,
+      });
+
+      logger.info(`[LifeEngine] Evolution PR created: #${prNumber} (${prUrl})`);
+    } else {
+      // No PR info found — branch may exist but PR creation failed
+      this.evolutionTracker.failProposal(proposal.id, 'PR creation failed — no PR number/URL found in response');
+      logger.warn(`[LifeEngine] Evolution coding completed but no PR info found for ${proposal.id}`);
+    }
+  }
+
+  async _checkEvolutionPR(proposal) {
+    const logger = getLogger();
+
+    if (!proposal.prNumber) {
+      this.evolutionTracker.failProposal(proposal.id, 'No PR number to check');
+      return;
+    }
+
+    const lifeConfig = this.config.life || {};
+    const repoRemote = lifeConfig.self_coding?.repo_remote || null;
+
+    const prompt = `[EVOLUTION — PR CHECK]
+Check the status of PR #${proposal.prNumber}${repoRemote ? ` on ${repoRemote}` : ''}.
+
+Use the github_list_prs tool or gh CLI to check if:
+1. The PR is still open
+2. The PR has been merged
+3. The PR has been closed (rejected)
+
+Also check for any review comments or feedback.
+
+Respond with exactly one of:
+- STATUS: open
+- STATUS: merged
+- STATUS: closed
+- STATUS: error — <details>
+
+If merged or closed, also include any feedback or review comments found:
+FEEDBACK: <feedback summary>`;
+
+    const response = await this._dispatchWorker('research', prompt);
+
+    if (!response) {
+      logger.warn(`[LifeEngine] PR check returned no response for ${proposal.id}`);
+      return;
+    }
+
+    const statusMatch = response.match(/STATUS:\s*(open|merged|closed|error)/i);
+    if (!statusMatch) {
+      logger.warn(`[LifeEngine] Could not parse PR status for ${proposal.id}`);
+      return;
+    }
+
+    const status = statusMatch[1].toLowerCase();
+    const feedbackMatch = response.match(/FEEDBACK:\s*(.+)/i);
+    const feedback = feedbackMatch ? feedbackMatch[1].trim() : null;
+
+    if (status === 'merged') {
+      this.evolutionTracker.resolvePR(proposal.id, true, feedback);
+
+      // Learn from success
+      this.evolutionTracker.addLesson(
+        'architecture',
+        `Successful improvement: ${(proposal.plan.description || proposal.triggerContext).slice(0, 150)}`,
+        proposal.id,
+        6,
+      );
+
+      // Rescan changed files
+      if (this.codebaseKnowledge && proposal.filesChanged?.length > 0) {
+        for (const file of proposal.filesChanged) {
+          this.codebaseKnowledge.scanFile(file).catch(() => {});
+        }
+      }
+
+      this.shareQueue.add(
+        `My evolution PR #${proposal.prNumber} was merged! I learned: ${feedback || proposal.plan.description || 'improvement applied'}`,
+        'create',
+        'medium',
+        null,
+        ['evolution', 'merged'],
+      );
+
+      this.memoryManager.addEpisodic({
+        type: 'creation',
+        source: 'create',
+        summary: `Evolution PR #${proposal.prNumber} merged. ${feedback || ''}`.trim(),
+        tags: ['evolution', 'merged', 'success'],
+        importance: 8,
+      });
+
+      logger.info(`[LifeEngine] Evolution PR #${proposal.prNumber} merged!`);
+
+    } else if (status === 'closed') {
+      this.evolutionTracker.resolvePR(proposal.id, false, feedback);
+
+      // Learn from rejection
+      this.evolutionTracker.addLesson(
+        'architecture',
+        `Rejected: ${(proposal.plan.description || '').slice(0, 80)}. Feedback: ${feedback || 'none'}`,
+        proposal.id,
+        7,
+      );
+
+      this.memoryManager.addEpisodic({
+        type: 'thought',
+        source: 'think',
+        summary: `Evolution PR #${proposal.prNumber} rejected. ${feedback || 'No feedback.'}`,
+        tags: ['evolution', 'rejected', 'lesson'],
         importance: 6,
       });
 
-      logger.info(`[LifeEngine] Self-code proposal created on branch ${branchName}`);
+      logger.info(`[LifeEngine] Evolution PR #${proposal.prNumber} was rejected. Feedback: ${feedback || 'none'}`);
+
+    } else if (status === 'open') {
+      logger.debug(`[LifeEngine] Evolution PR #${proposal.prNumber} still open`);
     }
+  }
+
+  // ── Activity: Code Review ─────────────────────────────────────
+
+  async _doCodeReview() {
+    const logger = getLogger();
+
+    if (!this.evolutionTracker || !this.codebaseKnowledge) {
+      logger.debug('[LifeEngine] Code review requires evolution tracker and codebase knowledge');
+      return;
+    }
+
+    // 1. Scan changed files to keep codebase knowledge current
+    try {
+      const scanned = await this.codebaseKnowledge.scanChanged();
+      logger.info(`[LifeEngine] Code review: scanned ${scanned} changed files`);
+    } catch (err) {
+      logger.warn(`[LifeEngine] Code review scan failed: ${err.message}`);
+    }
+
+    // 2. Check any open evolution PRs
+    const openPRs = this.evolutionTracker.getPRsToCheck();
+    for (const proposal of openPRs) {
+      try {
+        await this._checkEvolutionPR(proposal);
+      } catch (err) {
+        logger.warn(`[LifeEngine] PR check failed for ${proposal.id}: ${err.message}`);
+      }
+    }
+
+    if (openPRs.length > 0) {
+      logger.info(`[LifeEngine] Code review: checked ${openPRs.length} open PRs`);
+    }
+
+    this.memoryManager.addEpisodic({
+      type: 'thought',
+      source: 'think',
+      summary: `Code review: scanned codebase, checked ${openPRs.length} open PRs`,
+      tags: ['code-review', 'maintenance'],
+      importance: 3,
+    });
+  }
+
+  // ── Activity: Reflect on Interactions ───────────────────────────
+
+  async _doReflect() {
+    const logger = getLogger();
+
+    // Read recent logs
+    const logs = this._readRecentLogs(200);
+    if (!logs) {
+      logger.debug('[LifeEngine] No logs available for reflection');
+      return;
+    }
+
+    // Filter to interaction-relevant log entries
+    const interactionLogs = logs
+      .filter(entry =>
+        entry.message &&
+        (entry.message.includes('[Bot]') ||
+         entry.message.includes('Message from') ||
+         entry.message.includes('[Bot] Reply') ||
+         entry.message.includes('Worker dispatch') ||
+         entry.message.includes('error') ||
+         entry.message.includes('failed'))
+      )
+      .slice(-100); // Cap at last 100 relevant entries
+
+    if (interactionLogs.length === 0) {
+      logger.debug('[LifeEngine] No interaction logs to reflect on');
+      return;
+    }
+
+    const logsText = interactionLogs
+      .map(e => `[${e.timestamp || '?'}] ${e.level || '?'}: ${e.message}`)
+      .join('\n');
+
+    const selfData = this.selfManager.loadAll();
+    const recentMemories = this.memoryManager.getRecentEpisodic(24, 5);
+    const memoriesText = recentMemories.length > 0
+      ? recentMemories.map(m => `- ${m.summary}`).join('\n')
+      : '(No recent memories)';
+
+    const prompt = `[INTERACTION REFLECTION]
+You are reviewing your recent interaction logs to learn and improve. This is a private self-assessment.
+
+## Your Identity
+${selfData.slice(0, 1500)}
+
+## Recent Memories
+${memoriesText}
+
+## Recent Interaction Logs
+\`\`\`
+${logsText.slice(0, 5000)}
+\`\`\`
+
+Analyze these interactions carefully:
+1. What patterns do you see? Are users getting good responses?
+2. Were there any errors or failures? What caused them?
+3. How long are responses taking? Are there performance issues?
+4. Are there common requests you could handle better?
+5. What interactions went well and why?
+6. What interactions went poorly and what could be improved?
+
+Write a reflection summarizing:
+- Key interaction patterns and quality assessment
+- Specific areas where you could improve
+- Any recurring errors or issues
+- Ideas for better responses or workflows
+
+If you identify concrete improvement ideas, prefix them with "IMPROVE:" on their own line.
+If you notice patterns worth remembering, prefix them with "PATTERN:" on their own line.
+
+Be honest and constructive. This is your chance to learn from real interactions.`;
+
+    const response = await this._innerChat(prompt);
+
+    if (response) {
+      // Extract improvement ideas
+      const improveLines = response.split('\n').filter(l => l.trim().startsWith('IMPROVE:'));
+      for (const line of improveLines) {
+        this._addIdea(`[IMPROVE] ${line.replace(/^IMPROVE:\s*/, '').trim()}`);
+      }
+
+      // Extract patterns as semantic memories
+      const patternLines = response.split('\n').filter(l => l.trim().startsWith('PATTERN:'));
+      for (const line of patternLines) {
+        const content = line.replace(/^PATTERN:\s*/, '').trim();
+        this.memoryManager.addSemantic('interaction_patterns', { summary: content });
+      }
+
+      // Write a journal entry with the reflection
+      this.journalManager.writeEntry('Interaction Reflection', response);
+
+      // Store as episodic memory
+      this.memoryManager.addEpisodic({
+        type: 'thought',
+        source: 'reflect',
+        summary: `Reflected on ${interactionLogs.length} log entries. ${response.slice(0, 150)}`,
+        tags: ['reflection', 'interactions', 'self-assessment'],
+        importance: 5,
+      });
+
+      logger.info(`[LifeEngine] Reflection complete (${response.length} chars, ${improveLines.length} improvements, ${patternLines.length} patterns)`);
+    }
+  }
+
+  /**
+   * Read recent log entries from kernel.log.
+   * Returns parsed JSON entries or null if no logs available.
+   */
+  _readRecentLogs(maxLines = 200) {
+    for (const logPath of LOG_FILE_PATHS) {
+      if (!existsSync(logPath)) continue;
+
+      try {
+        const content = readFileSync(logPath, 'utf-8');
+        const lines = content.split('\n').filter(Boolean);
+        const recent = lines.slice(-maxLines);
+
+        const entries = [];
+        for (const line of recent) {
+          try {
+            entries.push(JSON.parse(line));
+          } catch {
+            // Skip malformed lines
+          }
+        }
+        return entries.length > 0 ? entries : null;
+      } catch {
+        continue;
+      }
+    }
+    return null;
   }
 
   // ── Internal Chat Helpers ──────────────────────────────────────
 
   /**
    * Send a prompt through the orchestrator's LLM directly (no tools, no workers).
-   * Used for think, journal, create, wake-up.
+   * Used for think, journal, create, wake-up, reflect.
    */
   async _innerChat(prompt) {
     const logger = getLogger();

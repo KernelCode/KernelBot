@@ -68,13 +68,22 @@ life:
     browse: 25                   # Explore interests via web search
     journal: 20                  # Write daily journal entries
     create: 15                   # Creative expression (poems, stories, thoughts)
-    self_code: 10                # Self-improvement proposals (requires self_coding.enabled)
+    self_code: 10                # Self-evolution proposals (requires self_coding.enabled)
+    code_review: 5               # Codebase scanning + PR status checks
+    reflect: 8                   # Read logs, analyze interactions, find improvement patterns
   proactive_sharing: true        # Share discoveries with users proactively
   proactive_max_per_day: 3       # Max proactive messages per day
   memory_retention_days: 90      # Days to keep episodic memories
   self_coding:
-    enabled: false               # Allow self-improvement code proposals (safety-gated)
-    branch_prefix: "life/self-improve"  # Git branch prefix for proposals
+    enabled: false               # Allow self-evolution (safety-gated, opt-in)
+    branch_prefix: evolution     # Git branch prefix for evolution PRs
+    # repo_remote: Owner/Repo   # GitHub owner/repo for PRs (auto-detected if omitted)
+    cooldown_hours: 2            # Min hours between evolution attempts
+    max_active_prs: 3            # Max concurrent open evolution PRs
+    max_proposals_per_day: 3     # Max new proposals per day
+    allowed_scopes: all          # all | safe | prompts_only
+    code_review_cooldown_hours: 4    # Hours between code review activities
+    codebase_scan_interval_hours: 24 # Hours between full codebase scans
   quiet_hours:
     start: 2                     # Hour to start quiet period (no activities)
     end: 6                       # Hour to end quiet period

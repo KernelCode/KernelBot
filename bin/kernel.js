@@ -29,7 +29,8 @@ import { createProvider, PROVIDERS } from '../src/providers/index.js';
 import { MemoryManager } from '../src/life/memory.js';
 import { JournalManager } from '../src/life/journal.js';
 import { ShareQueue } from '../src/life/share-queue.js';
-import { ImprovementTracker } from '../src/life/improvements.js';
+import { EvolutionTracker } from '../src/life/evolution.js';
+import { CodebaseKnowledge } from '../src/life/codebase.js';
 import { LifeEngine } from '../src/life/engine.js';
 import {
   loadCustomSkills,
@@ -191,16 +192,21 @@ async function startBotFlow(config) {
   const memoryManager = new MemoryManager();
   const journalManager = new JournalManager();
   const shareQueue = new ShareQueue();
-  const improvementTracker = new ImprovementTracker();
+  const evolutionTracker = new EvolutionTracker();
+  const codebaseKnowledge = new CodebaseKnowledge({ config });
 
   const agent = new Agent({ config, conversationManager, personaManager, selfManager, jobManager, automationManager, memoryManager, shareQueue });
 
+  // Wire codebase knowledge to agent for LLM-powered scanning
+  codebaseKnowledge.setAgent(agent);
+
   // Life Engine — autonomous inner life
   const lifeEngine = new LifeEngine({
-    config, agent, memoryManager, journalManager, shareQueue, improvementTracker, selfManager,
+    config, agent, memoryManager, journalManager, shareQueue,
+    evolutionTracker, codebaseKnowledge, selfManager,
   });
 
-  startBot(config, agent, conversationManager, jobManager, automationManager, { lifeEngine, memoryManager, journalManager, shareQueue, improvementTracker });
+  startBot(config, agent, conversationManager, jobManager, automationManager, { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge });
 
   // Periodic job cleanup and timeout enforcement
   const cleanupMs = (config.swarm.cleanup_interval_minutes || 30) * 60 * 1000;
@@ -229,6 +235,15 @@ async function startBotFlow(config) {
       logger.error(`[Startup] Life engine wake-up failed: ${err.message}`);
       lifeEngine.start(); // still start heartbeat even if wake-up fails
     });
+
+    // Initial codebase scan (background, non-blocking)
+    if (config.life?.self_coding?.enabled) {
+      codebaseKnowledge.scanChanged().then(count => {
+        if (count > 0) logger.info(`[Startup] Codebase scan: ${count} files indexed`);
+      }).catch(err => {
+        logger.warn(`[Startup] Codebase scan failed: ${err.message}`);
+      });
+    }
   } else {
     logger.info('[Startup] Life engine disabled');
   }
