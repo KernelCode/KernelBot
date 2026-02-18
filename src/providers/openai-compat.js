@@ -138,7 +138,11 @@ export class OpenAICompatProvider extends BaseProvider {
       params.temperature = this.temperature;
     }
 
-    params.max_tokens = this.maxTokens;
+    if (this.isReasoningModel) {
+      params.max_completion_tokens = this.maxTokens;
+    } else {
+      params.max_tokens = this.maxTokens;
+    }
 
     const convertedTools = this._convertTools(tools);
     if (convertedTools) {
@@ -154,10 +158,12 @@ export class OpenAICompatProvider extends BaseProvider {
   async ping() {
     const params = {
       model: this.model,
-      max_tokens: 16,
       messages: [{ role: 'user', content: 'ping' }],
     };
-    if (!this.isReasoningModel) {
+    if (this.isReasoningModel) {
+      params.max_completion_tokens = 16;
+    } else {
+      params.max_tokens = 16;
       params.temperature = 0;
     }
     await this.client.chat.completions.create(params);
