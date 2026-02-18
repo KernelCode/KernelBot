@@ -35,12 +35,13 @@ export class OpenAICompatProvider extends BaseProvider {
   _convertMessages(system, messages) {
     const out = [];
 
-    // System prompt as first message (skip for reasoning models)
-    if (system && !this.isReasoningModel) {
+    // System prompt — use 'developer' role for reasoning models, 'system' for others
+    if (system) {
       const systemText = Array.isArray(system)
         ? system.map((b) => b.text).join('\n')
         : system;
-      out.push({ role: 'system', content: systemText });
+      const role = this.isReasoningModel ? 'developer' : 'system';
+      out.push({ role, content: systemText });
     }
 
     for (const msg of messages) {
