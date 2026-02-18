@@ -49,7 +49,7 @@ export class OrchestratorAgent {
   }
 
   /** Build the orchestrator system prompt. */
-  _getSystemPrompt(chatId, user) {
+  _getSystemPrompt(chatId, user, temporalContext = null) {
     const logger = getLogger();
     const skillId = this.conversationManager.getSkill(chatId);
     const skillPrompt = skillId ? getUnifiedSkillById(skillId)?.systemPrompt : null;
@@ -76,8 +76,8 @@ export class OrchestratorAgent {
       sharesBlock = this.shareQueue.buildShareBlock(user?.id || null);
     }
 
-    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skill=${skillId || 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'}`);
-    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData, memoriesBlock, sharesBlock);
+    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skill=${skillId || 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'} | temporal=${temporalContext ? 'yes' : 'none'}`);
+    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData, memoriesBlock, sharesBlock, temporalContext);
   }
 
   setSkill(chatId, skillId) {
@@ -322,6 +322,22 @@ export class OrchestratorAgent {
 
     const { max_tool_depth } = this.config.orchestrator;
 
+    // Detect time gap before adding the new message
+    let temporalContext = null;
+    const lastTs = this.conversationManager.getLastMessageTimestamp(chatId);
+    if (lastTs) {
+      const gapMs = Date.now() - lastTs;
+      const gapMinutes = Math.floor(gapMs / 60_000);
+      if (gapMinutes >= 30) {
+        const gapHours = Math.floor(gapMinutes / 60);
+        const gapText = gapHours >= 1
+          ? `${gapHours} hour(s)`
+          : `${gapMinutes} minute(s)`;
+        temporalContext = `[Time gap detected: ${gapText} since last message. User may be starting a new topic.]`;
+        logger.info(`Time gap detected for chat ${chatId}: ${gapText}`);
+      }
+    }
+
     // Add user message to persistent history
     this.conversationManager.addMessage(chatId, 'user', userMessage);
 
@@ -329,7 +345,7 @@ export class OrchestratorAgent {
     const messages = [...this.conversationManager.getSummarizedHistory(chatId)];
     logger.debug(`Orchestrator conversation context: ${messages.length} messages, max_depth=${max_tool_depth}`);
 
-    const reply = await this._runLoop(chatId, messages, user, 0, max_tool_depth);
+    const reply = await this._runLoop(chatId, messages, user, 0, max_tool_depth, temporalContext);
 
     logger.info(`Orchestrator reply for chat ${chatId}: "${(reply || '').slice(0, 150)}"`);
 
@@ -881,20 +897,28 @@ export class OrchestratorAgent {
     return `[Active Workers]\n${lines.join('\n')}`;
   }
 
-  async _runLoop(chatId, messages, user, startDepth, maxDepth) {
+  async _runLoop(chatId, messages, user, startDepth, maxDepth, temporalContext = null) {
     const logger = getLogger();
 
     for (let depth = startDepth; depth < maxDepth; depth++) {
       logger.info(`[Orchestrator] LLM call ${depth + 1}/${maxDepth} for chat ${chatId} — sending ${messages.length} messages`);
 
-      // Inject worker activity digest (transient — not stored in conversation history)
+      // Inject transient context messages (not stored in conversation history)
+      let workingMessages = [...messages];
+
+      // On first iteration, inject temporal context if present
+      if (depth === 0 && temporalContext) {
+        workingMessages = [{ role: 'user', content: `[Temporal Context]\n${temporalContext}` }, ...workingMessages];
+      }
+
+      // Inject worker activity digest
       const digest = this._buildWorkerDigest(chatId);
-      const workingMessages = digest
-        ? [{ role: 'user', content: `[Worker Status]\n${digest}` }, ...messages]
-        : messages;
+      if (digest) {
+        workingMessages = [{ role: 'user', content: `[Worker Status]\n${digest}` }, ...workingMessages];
+      }
 
       const response = await this.orchestratorProvider.chat({
-        system: this._getSystemPrompt(chatId, user),
+        system: this._getSystemPrompt(chatId, user, temporalContext),
         messages: workingMessages,
         tools: orchestratorToolDefinitions,
       });

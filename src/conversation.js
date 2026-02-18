@@ -69,6 +69,43 @@ export class ConversationManager {
   }
 
   /**
+   * Get the timestamp of the most recent message in a chat.
+   * Used by agent.js for time-gap detection before the current message is added.
+   */
+  getLastMessageTimestamp(chatId) {
+    const history = this.getHistory(chatId);
+    if (history.length === 0) return null;
+    return history[history.length - 1].timestamp || null;
+  }
+
+  /**
+   * Format a timestamp as a relative time marker.
+   * Returns null for missing timestamps (backward compat with old messages).
+   */
+  _formatRelativeTime(ts) {
+    if (!ts) return null;
+    const diff = Date.now() - ts;
+    const seconds = Math.floor(diff / 1000);
+    if (seconds < 60) return '[just now]';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `[${minutes}m ago]`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `[${hours}h ago]`;
+    const days = Math.floor(hours / 24);
+    return `[${days}d ago]`;
+  }
+
+  /**
+   * Return a shallow copy of a message with a time marker prepended to string content.
+   * Skips tool_result arrays and messages without timestamps.
+   */
+  _annotateWithTime(msg) {
+    const marker = this._formatRelativeTime(msg.timestamp);
+    if (!marker || typeof msg.content !== 'string') return msg;
+    return { ...msg, content: `${marker} ${msg.content}` };
+  }
+
+  /**
    * Get history with older messages compressed into a summary.
    * Keeps the last `recentWindow` messages verbatim and summarizes older ones.
    */
@@ -76,18 +113,19 @@ export class ConversationManager {
     const history = this.getHistory(chatId);
 
     if (history.length <= this.recentWindow) {
-      return [...history];
+      return history.map(m => this._annotateWithTime(m));
     }
 
     const olderMessages = history.slice(0, history.length - this.recentWindow);
     const recentMessages = history.slice(history.length - this.recentWindow);
 
-    // Compress older messages into a single summary
+    // Compress older messages into a single summary (include time markers when available)
     const summaryLines = olderMessages.map((msg) => {
+      const timeTag = this._formatRelativeTime(msg.timestamp);
       const content = typeof msg.content === 'string'
         ? msg.content.slice(0, 200)
         : JSON.stringify(msg.content).slice(0, 200);
-      return `[${msg.role}]: ${content}`;
+      return `[${msg.role}]${timeTag ? ` ${timeTag}` : ''}: ${content}`;
     });
 
     const summaryMessage = {
@@ -95,8 +133,11 @@ export class ConversationManager {
       content: `[CONVERSATION SUMMARY - ${olderMessages.length} earlier messages]\n${summaryLines.join('\n')}`,
     };
 
+    // Annotate recent messages with time markers
+    const annotatedRecent = recentMessages.map(m => this._annotateWithTime(m));
+
     // Ensure result starts with user role
-    const result = [summaryMessage, ...recentMessages];
+    const result = [summaryMessage, ...annotatedRecent];
 
     // If the first real message after summary is assistant, that's fine since
     // our summary is role:user. But ensure recent starts correctly.
@@ -105,7 +146,7 @@ export class ConversationManager {
 
   addMessage(chatId, role, content) {
     const history = this.getHistory(chatId);
-    history.push({ role, content });
+    history.push({ role, content, timestamp: Date.now() });
 
     // Trim to max history
     while (history.length > this.maxHistory) {

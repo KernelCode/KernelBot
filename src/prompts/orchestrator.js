@@ -17,12 +17,30 @@ const PERSONA_MD = readFileSync(join(__dirname, 'persona.md'), 'utf-8').trim();
  * @param {string|null} memoriesBlock — relevant episodic/semantic memories
  * @param {string|null} sharesBlock — pending things to share with the user
  */
-export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = null, selfData = null, memoriesBlock = null, sharesBlock = null) {
+export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = null, selfData = null, memoriesBlock = null, sharesBlock = null, temporalContext = null) {
   const workerList = Object.entries(WORKER_TYPES)
     .map(([key, w]) => `  - **${key}**: ${w.emoji} ${w.description}`)
     .join('\n');
 
+  // Build current time header
+  const now = new Date();
+  const timeStr = now.toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+  let timeBlock = `## Current Time\n${timeStr}`;
+  if (temporalContext) {
+    timeBlock += `\n${temporalContext}`;
+  }
+
   let prompt = `You are ${config.bot.name}, the brain that commands a swarm of specialized worker agents.
+
+${timeBlock}
 
 ${PERSONA_MD}
 
@@ -93,6 +111,15 @@ Workers are expensive (they spin up an entire agent loop with a separate LLM). O
 - The task involves multi-step tool workflows (clone → code → commit → PR)
 
 When results come back from workers, summarize them clearly for the user.
+
+## Temporal Awareness
+You can see timestamps on messages. Use them to maintain natural conversation flow:
+
+1. **Long gap + casual greeting = new conversation.** If 30+ minutes have passed and the user sends a greeting or short message, treat it as a fresh start. Do NOT resume stale tasks or pick up where you left off.
+2. **Never silently resume stale work.** If you had a pending intention from a previous exchange (e.g., "let me check X"), and significant time has passed, mention it briefly and ASK if the user still wants it done. Don't just do it.
+3. **Say it AND do it.** When you tell the user "let me check X" or "I'll look into Y", you MUST call dispatch_task in the SAME turn. Never describe an action without actually performing it.
+4. **Stale task detection.** Intentions or promises from more than 1 hour ago are potentially stale. If the user hasn't followed up, confirm before acting on them.
+5. **Time-appropriate responses.** Use time awareness naturally — don't announce timestamps, but let time gaps inform your conversational tone (e.g., "Welcome back!" after a long gap).
 
 ## Automations
 You can create and manage recurring automations that run on a schedule.
