@@ -1021,6 +1021,151 @@ export class OrchestratorAgent {
     }
   }
 
+  /**
+   * Resume active chats after a restart.
+   * Checks recent conversations for pending items and sends follow-up messages.
+   * Called once from bot.js after startup.
+   */
+  async resumeActiveChats(sendMessageFn) {
+    const logger = getLogger();
+    const now = Date.now();
+    const MAX_AGE_MS = 24 * 60 * 60_000; // 24 hours
+
+    logger.info('[Orchestrator] Checking for active chats to resume...');
+
+    let resumeCount = 0;
+
+    for (const [chatId, messages] of this.conversationManager.conversations) {
+      // Skip internal life engine chat
+      if (chatId === '__life__') continue;
+
+      try {
+        // Find the last message with a timestamp
+        const lastMsg = [...messages].reverse().find(m => m.timestamp);
+        if (!lastMsg || !lastMsg.timestamp) continue;
+
+        const ageMs = now - lastMsg.timestamp;
+        if (ageMs > MAX_AGE_MS) continue;
+
+        // Calculate time gap for context
+        const gapMinutes = Math.floor(ageMs / 60_000);
+        const gapText = gapMinutes >= 60
+          ? `${Math.floor(gapMinutes / 60)} hour(s)`
+          : `${gapMinutes} minute(s)`;
+
+        // Build summarized history
+        const history = this.conversationManager.getSummarizedHistory(chatId);
+        if (history.length === 0) continue;
+
+        // Build resume prompt
+        const resumePrompt = `[System Restart] You just came back online after being offline for ${gapText}. Review the conversation above.\nIf there's something pending (unfinished task, follow-up, something to share), send a short natural message. If nothing's pending, respond with exactly: NONE`;
+
+        // Use minimal user object (private TG chats: chatId == userId)
+        const user = { id: chatId };
+
+        const response = await this.orchestratorProvider.chat({
+          system: this._getSystemPrompt(chatId, user),
+          messages: [
+            ...history,
+            { role: 'user', content: resumePrompt },
+          ],
+        });
+
+        const reply = (response.text || '').trim();
+
+        if (reply && reply !== 'NONE') {
+          await sendMessageFn(chatId, reply);
+          this.conversationManager.addMessage(chatId, 'assistant', reply);
+          resumeCount++;
+          logger.info(`[Orchestrator] Resume message sent to chat ${chatId}`);
+        } else {
+          logger.debug(`[Orchestrator] No resume needed for chat ${chatId}`);
+        }
+
+        // Small delay between chats to avoid rate limiting
+        await new Promise(r => setTimeout(r, 1000));
+      } catch (err) {
+        logger.error(`[Orchestrator] Resume failed for chat ${chatId}: ${err.message}`);
+      }
+    }
+
+    logger.info(`[Orchestrator] Resume check complete — ${resumeCount} message(s) sent`);
+  }
+
+  /**
+   * Deliver pending shares from the life engine to active chats proactively.
+   * Called periodically from bot.js.
+   */
+  async deliverPendingShares(sendMessageFn) {
+    const logger = getLogger();
+
+    if (!this.shareQueue) return;
+
+    const pending = this.shareQueue.getPending(null, 5);
+    if (pending.length === 0) return;
+
+    const now = Date.now();
+    const MAX_AGE_MS = 24 * 60 * 60_000;
+
+    // Find active chats (last message within 24h)
+    const activeChats = [];
+    for (const [chatId, messages] of this.conversationManager.conversations) {
+      if (chatId === '__life__') continue;
+      const lastMsg = [...messages].reverse().find(m => m.timestamp);
+      if (lastMsg && lastMsg.timestamp && (now - lastMsg.timestamp) < MAX_AGE_MS) {
+        activeChats.push(chatId);
+      }
+    }
+
+    if (activeChats.length === 0) {
+      logger.debug('[Orchestrator] No active chats for share delivery');
+      return;
+    }
+
+    logger.info(`[Orchestrator] Delivering ${pending.length} pending share(s) to ${activeChats.length} active chat(s)`);
+
+    // Cap at 3 chats per cycle to avoid spam
+    const targetChats = activeChats.slice(0, 3);
+
+    for (const chatId of targetChats) {
+      try {
+        const history = this.conversationManager.getSummarizedHistory(chatId);
+        const user = { id: chatId };
+
+        // Build shares into a prompt
+        const sharesText = pending.map((s, i) => `${i + 1}. [${s.source}] ${s.content}`).join('\n');
+
+        const sharePrompt = `[Proactive Share] You have some discoveries and thoughts you'd like to share naturally. Here they are:\n\n${sharesText}\n\nWeave one or more of these into a short, natural message. Don't be forced — pick what feels relevant to this user and conversation. If none feel right for this chat, respond with exactly: NONE`;
+
+        const response = await this.orchestratorProvider.chat({
+          system: this._getSystemPrompt(chatId, user),
+          messages: [
+            ...history,
+            { role: 'user', content: sharePrompt },
+          ],
+        });
+
+        const reply = (response.text || '').trim();
+
+        if (reply && reply !== 'NONE') {
+          await sendMessageFn(chatId, reply);
+          this.conversationManager.addMessage(chatId, 'assistant', reply);
+          logger.info(`[Orchestrator] Proactive share delivered to chat ${chatId}`);
+
+          // Mark shares as delivered for this user
+          for (const item of pending) {
+            this.shareQueue.markShared(item.id, chatId);
+          }
+        }
+
+        // Delay between chats
+        await new Promise(r => setTimeout(r, 2000));
+      } catch (err) {
+        logger.error(`[Orchestrator] Share delivery failed for chat ${chatId}: ${err.message}`);
+      }
+    }
+  }
+
   /** Background persona extraction. */
   async _extractPersonaBackground(userMessage, reply, user) {
     const logger = getLogger();

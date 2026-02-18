@@ -1769,5 +1769,68 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     logger.error(`Telegram polling error: ${err.message}`);
   });
 
+  // ── Resume active chats after restart ────────────────────────
+  setTimeout(async () => {
+    const sendMsg = async (chatId, text) => {
+      try {
+        await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+      } catch {
+        await bot.sendMessage(chatId, text);
+      }
+    };
+    try {
+      await agent.resumeActiveChats(sendMsg);
+    } catch (err) {
+      logger.error(`[Bot] Resume active chats failed: ${err.message}`);
+    }
+  }, 5000);
+
+  // ── Proactive share delivery (randomized, self-rearming) ────
+  const lifeConfig = config.life || {};
+  const quietStart = lifeConfig.quiet_hours?.start ?? 2;
+  const quietEnd = lifeConfig.quiet_hours?.end ?? 6;
+
+  const armShareDelivery = (delivered) => {
+    // If we just delivered something, wait longer (1–4h) before next check
+    // If nothing was delivered, check again sooner (10–45min) in case new shares appear
+    const minMin = delivered ? 60 : 10;
+    const maxMin = delivered ? 240 : 45;
+    const delayMs = (minMin + Math.random() * (maxMin - minMin)) * 60_000;
+
+    logger.debug(`[Bot] Next share check in ${Math.round(delayMs / 60_000)}m`);
+
+    setTimeout(async () => {
+      // Respect quiet hours
+      const hour = new Date().getHours();
+      if (hour >= quietStart && hour < quietEnd) {
+        armShareDelivery(false);
+        return;
+      }
+
+      const sendMsg = async (chatId, text) => {
+        try {
+          await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+        } catch {
+          await bot.sendMessage(chatId, text);
+        }
+      };
+
+      let didDeliver = false;
+      try {
+        const before = shareQueue ? shareQueue.getPending(null, 1).length : 0;
+        await agent.deliverPendingShares(sendMsg);
+        const after = shareQueue ? shareQueue.getPending(null, 1).length : 0;
+        didDeliver = before > 0 && after < before;
+      } catch (err) {
+        logger.error(`[Bot] Proactive share delivery failed: ${err.message}`);
+      }
+
+      armShareDelivery(didDeliver);
+    }, delayMs);
+  };
+
+  // Start the first check after a random 10–30 min
+  armShareDelivery(false);
+
   return bot;
 }
