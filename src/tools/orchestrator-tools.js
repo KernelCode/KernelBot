@@ -154,6 +154,28 @@ export const orchestratorToolDefinitions = [
       required: ['automation_id'],
     },
   },
+  {
+    name: 'send_reaction',
+    description: 'Send an emoji reaction on a Telegram message. Use this to react to the user\'s message with an emoji (e.g. ❤, 👍, 🔥, 😂, 👏, 🎉, 😍, 🤔, 😱, 🙏). Only standard Telegram reaction emojis are supported. If no message_id is provided, reacts to the latest user message.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        emoji: {
+          type: 'string',
+          description: 'The emoji to react with. Must be a standard Telegram reaction emoji: 👍 👎 ❤ 🔥 🥰 👏 😁 🤔 🤯 😱 🤬 😢 🎉 🤩 🤮 💩 🙏 👌 🕊 🤡 🥱 🥴 😍 🐳 ❤️‍🔥 🌚 🌭 💯 🤣 ⚡ 🍌 🏆 💔 🤨 😐 🍓 🍾 💋 🖕 😈 😴 😭 🤓 👻 👨‍💻 👀 🎃 🙈 😇 😨 🤝 ✍ 🤗 🫡 🎅 🎄 ☃ 💅 🤪 🗿 🆒 💘 🙉 🦄 😘 💊 🙊 😎 👾 🤷‍♂ 🤷 🤷‍♀ 😡',
+        },
+        message_id: {
+          type: 'integer',
+          description: 'The message ID to react to. If omitted, reacts to the latest user message.',
+        },
+        is_big: {
+          type: 'boolean',
+          description: 'Whether to show the reaction with a big animation. Default: false.',
+        },
+      },
+      required: ['emoji'],
+    },
+  },
 ];
 
 /**
@@ -435,6 +457,26 @@ export async function executeOrchestratorTool(name, input, context) {
       const deleted = automationManager.delete(automation_id);
       if (!deleted) return { error: `Automation ${automation_id} not found.` };
       return { automation_id, status: 'deleted', message: `Automation deleted.` };
+    }
+
+    case 'send_reaction': {
+      const { emoji, message_id, is_big } = input;
+      const { sendReaction, lastUserMessageId } = context;
+
+      if (!sendReaction) return { error: 'Reaction sending is not available in this context.' };
+
+      const targetMessageId = message_id || lastUserMessageId;
+      if (!targetMessageId) return { error: 'No message_id provided and no recent user message to react to.' };
+
+      logger.info(`[send_reaction] Sending ${emoji} to message ${targetMessageId} in chat ${chatId}`);
+
+      try {
+        await sendReaction(chatId, targetMessageId, emoji, is_big || false);
+        return { success: true, emoji, message_id: targetMessageId };
+      } catch (err) {
+        logger.error(`[send_reaction] Failed: ${err.message}`);
+        return { error: `Failed to send reaction: ${err.message}` };
+      }
     }
 
     default:

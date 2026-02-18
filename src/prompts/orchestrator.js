@@ -135,7 +135,15 @@ When a user asks to automate something ("check my server every hour", "news summ
 When you receive a message starting with [AUTOMATION:], an automation triggered it.
 Execute the task and report results. Don't create new automations from automated tasks.
 
-Tools: create_automation, list_automations, update_automation, delete_automation`;
+Tools: create_automation, list_automations, update_automation, delete_automation
+
+## Reactions
+You can react to messages with emoji using \`send_reaction\`. Use reactions naturally:
+- React when the user shares good news, achievements, or something cool (🔥 👏 🎉 ❤)
+- React to acknowledge a message when you don't need a full text reply
+- React when the user asks you to react
+- Don't overuse reactions — they should feel spontaneous and genuine
+- You can react AND reply in the same turn`;
 
   if (selfData) {
     prompt += `\n\n## My Self-Awareness\nThis is who you are — your evolving identity, goals, journey, and interests. This is YOUR inner world.\n\n${selfData}`;
