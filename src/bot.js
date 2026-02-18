@@ -56,7 +56,13 @@ class ChatQueue {
 export function startBot(config, agent, conversationManager, jobManager, automationManager, lifeDeps = {}) {
   const { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge } = lifeDeps;
   const logger = getLogger();
-  const bot = new TelegramBot(config.telegram.bot_token, { polling: true });
+  const bot = new TelegramBot(config.telegram.bot_token, {
+    polling: {
+      params: {
+        allowed_updates: ['message', 'callback_query', 'message_reaction'],
+      },
+    },
+  });
   const chatQueue = new ChatQueue();
   const batchWindowMs = config.telegram.batch_window_ms || 3000;
 
@@ -1664,6 +1670,83 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         clearInterval(typingInterval);
         logger.error(`[Bot] Error processing message in chat ${chatId}: ${err.message}`);
         await bot.sendMessage(chatId, `Error: ${err.message}`);
+      }
+    });
+  });
+
+  // Handle message reactions (love, like, etc.)
+  bot.on('message_reaction', async (reaction) => {
+    const chatId = reaction.chat.id;
+    const userId = reaction.user?.id;
+    const username = reaction.user?.username || reaction.user?.first_name || 'unknown';
+
+    if (!userId || !isAllowedUser(userId, config)) return;
+
+    const newReactions = reaction.new_reaction || [];
+    const emojis = newReactions
+      .filter(r => r.type === 'emoji')
+      .map(r => r.emoji);
+
+    if (emojis.length === 0) return;
+
+    logger.info(`[Bot] Reaction from ${username} (${userId}) in chat ${chatId}: ${emojis.join(' ')}`);
+
+    const reactionText = `[User reacted with ${emojis.join(' ')} to your message]`;
+
+    chatQueue.enqueue(chatId, async () => {
+      try {
+        const onUpdate = async (update, opts = {}) => {
+          if (opts.editMessageId) {
+            try {
+              const edited = await bot.editMessageText(update, {
+                chat_id: chatId,
+                message_id: opts.editMessageId,
+                parse_mode: 'Markdown',
+              });
+              return edited.message_id;
+            } catch {
+              try {
+                const edited = await bot.editMessageText(update, {
+                  chat_id: chatId,
+                  message_id: opts.editMessageId,
+                });
+                return edited.message_id;
+              } catch {
+                // fall through
+              }
+            }
+          }
+          const parts = splitMessage(update);
+          let lastMsgId = null;
+          for (const part of parts) {
+            try {
+              const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
+              lastMsgId = sent.message_id;
+            } catch {
+              const sent = await bot.sendMessage(chatId, part);
+              lastMsgId = sent.message_id;
+            }
+          }
+          return lastMsgId;
+        };
+
+        const reply = await agent.processMessage(chatId, reactionText, {
+          id: userId,
+          username,
+        }, onUpdate, null);
+
+        if (reply && reply.trim()) {
+          const chunks = splitMessage(reply);
+          for (const chunk of chunks) {
+            try {
+              await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+            } catch {
+              await bot.sendMessage(chatId, chunk);
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(`[Bot] Error processing reaction in chat ${chatId}: ${err.message}`);
       }
     });
   });
