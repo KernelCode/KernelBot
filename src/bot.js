@@ -1636,11 +1636,18 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           }
         };
 
+        const sendReaction = async (targetChatId, targetMsgId, emoji, isBig = false) => {
+          await bot.setMessageReaction(targetChatId, targetMsgId, {
+            reaction: [{ type: 'emoji', emoji }],
+            is_big: isBig,
+          });
+        };
+
         logger.debug(`[Bot] Sending to orchestrator: chat ${chatId}, text="${mergedText.slice(0, 80)}"`);
         const reply = await agent.processMessage(chatId, mergedText, {
           id: userId,
           username,
-        }, onUpdate, sendPhoto);
+        }, onUpdate, sendPhoto, { sendReaction, messageId: msg.message_id });
 
         clearInterval(typingInterval);
 
@@ -1730,10 +1737,17 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           return lastMsgId;
         };
 
+        const sendReaction = async (targetChatId, targetMsgId, emoji, isBig = false) => {
+          await bot.setMessageReaction(targetChatId, targetMsgId, {
+            reaction: [{ type: 'emoji', emoji }],
+            is_big: isBig,
+          });
+        };
+
         const reply = await agent.processMessage(chatId, reactionText, {
           id: userId,
           username,
-        }, onUpdate, null);
+        }, onUpdate, null, { sendReaction, messageId: reaction.message_id });
 
         if (reply && reply.trim()) {
           const chunks = splitMessage(reply);

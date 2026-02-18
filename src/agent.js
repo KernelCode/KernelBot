@@ -301,13 +301,13 @@ export class OrchestratorAgent {
     return str.slice(0, MAX_RESULT_LENGTH) + `\n... [truncated, total ${str.length} chars]`;
   }
 
-  async processMessage(chatId, userMessage, user, onUpdate, sendPhoto) {
+  async processMessage(chatId, userMessage, user, onUpdate, sendPhoto, opts = {}) {
     const logger = getLogger();
 
     logger.info(`Orchestrator processing message for chat ${chatId} from ${user?.username || user?.id || 'unknown'}: "${userMessage.slice(0, 120)}"`);
 
     // Store callbacks so workers can use them later
-    this._chatCallbacks.set(chatId, { onUpdate, sendPhoto });
+    this._chatCallbacks.set(chatId, { onUpdate, sendPhoto, sendReaction: opts.sendReaction, lastUserMessageId: opts.messageId });
 
     // Handle pending responses (confirmation or credential)
     const pending = this._pending.get(chatId);
@@ -947,6 +947,7 @@ export class OrchestratorAgent {
           logger.debug(`[Orchestrator] Tool input: ${JSON.stringify(block.input).slice(0, 300)}`);
           await this._sendUpdate(chatId, `⚡ ${summary}`);
 
+          const chatCallbacks = this._chatCallbacks.get(chatId) || {};
           const result = await executeOrchestratorTool(block.name, block.input, {
             chatId,
             jobManager: this.jobManager,
@@ -954,6 +955,8 @@ export class OrchestratorAgent {
             spawnWorker: (job) => this._spawnWorker(job),
             automationManager: this.automationManager,
             user,
+            sendReaction: chatCallbacks.sendReaction || null,
+            lastUserMessageId: chatCallbacks.lastUserMessageId || null,
           });
 
           logger.info(`[Orchestrator] Tool result for ${block.name}: ${JSON.stringify(result).slice(0, 200)}`);
@@ -1002,6 +1005,8 @@ export class OrchestratorAgent {
         return `Updating automation ${input.automation_id}`;
       case 'delete_automation':
         return `Deleting automation ${input.automation_id}`;
+      case 'send_reaction':
+        return `Reacting with ${input.emoji}`;
       default:
         return name;
     }
