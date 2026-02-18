@@ -5,7 +5,7 @@ import { getLogger } from '../utils/logger.js';
 
 let spawner = null;
 
-function getSpawner(config) {
+export function getSpawner(config) {
   if (!spawner) spawner = new ClaudeCodeSpawner(config);
   return spawner;
 }

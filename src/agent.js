@@ -8,7 +8,7 @@ import { getUnifiedSkillById } from './skills/custom.js';
 import { WorkerAgent } from './worker.js';
 import { getLogger } from './utils/logger.js';
 import { getMissingCredential, saveCredential, saveProviderToYaml, saveOrchestratorToYaml, saveClaudeCodeModelToYaml, saveClaudeCodeAuth } from './utils/config.js';
-import { resetClaudeCodeSpawner } from './tools/coding.js';
+import { resetClaudeCodeSpawner, getSpawner } from './tools/coding.js';
 
 const MAX_RESULT_LENGTH = 3000;
 const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
@@ -664,6 +664,12 @@ export class OrchestratorAgent {
    */
   async _spawnWorker(job) {
     const logger = getLogger();
+
+    // Direct dispatch for coding tasks — bypass worker LLM, go straight to Claude Code CLI
+    if (job.workerType === 'coding') {
+      return this._spawnDirectCoding(job);
+    }
+
     const chatId = job.chatId;
     const callbacks = this._chatCallbacks.get(chatId) || {};
     const onUpdate = callbacks.onUpdate;
@@ -763,6 +769,59 @@ export class OrchestratorAgent {
 
     // Fire and forget — return the promise so .catch() in orchestrator-tools works
     return worker.run(job.task);
+  }
+
+  /**
+   * Direct coding dispatch — runs Claude Code CLI without a middleman worker LLM.
+   * The orchestrator's task description goes straight to Claude Code as the prompt.
+   */
+  async _spawnDirectCoding(job) {
+    const logger = getLogger();
+    const chatId = job.chatId;
+    const callbacks = this._chatCallbacks.get(chatId) || {};
+    const onUpdate = callbacks.onUpdate;
+    const workerDef = WORKER_TYPES[job.workerType] || {};
+    const label = workerDef.label || job.workerType;
+
+    logger.info(`[Orchestrator] Direct coding dispatch for job ${job.id} in chat ${chatId} — task: "${job.task.slice(0, 120)}"`);
+
+    // AbortController for cancellation — duck-typed so JobManager.cancelJob() works unchanged
+    const abortController = new AbortController();
+    job.worker = { cancel: () => abortController.abort() };
+
+    // Build context from conversation history, persona, dependency results
+    const workerContext = this._buildWorkerContext(job);
+    const prompt = workerContext
+      ? `${workerContext}\n\n---\n\n${job.task}`
+      : job.task;
+
+    // Working directory
+    const workingDirectory = this.config.claude_code?.workspace_dir || process.cwd();
+
+    // Start the job
+    this.jobManager.startJob(job.id);
+
+    try {
+      const spawner = getSpawner(this.config);
+      const result = await spawner.run({
+        workingDirectory,
+        prompt,
+        onOutput: onUpdate,
+        signal: abortController.signal,
+      });
+
+      const output = result.output || 'Done.';
+      logger.info(`[Orchestrator] Direct coding job ${job.id} completed — output: ${output.length} chars`);
+      this.jobManager.completeJob(job.id, output, {
+        structured: true,
+        summary: output.slice(0, 500),
+        status: 'success',
+        details: output,
+      });
+    } catch (err) {
+      logger.error(`[Orchestrator] Direct coding job ${job.id} failed: ${err.message}`);
+      this.jobManager.failJob(job.id, err.message || String(err));
+    }
   }
 
   /**
