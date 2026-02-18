@@ -105,6 +105,11 @@ export class ConversationManager {
     return { ...msg, content: `${marker} ${msg.content}` };
   }
 
+  /** Strip internal metadata fields, returning only API-safe {role, content}. */
+  _sanitize(msg) {
+    return { role: msg.role, content: msg.content };
+  }
+
   /**
    * Get history with older messages compressed into a summary.
    * Keeps the last `recentWindow` messages verbatim and summarizes older ones.
@@ -113,7 +118,7 @@ export class ConversationManager {
     const history = this.getHistory(chatId);
 
     if (history.length <= this.recentWindow) {
-      return history.map(m => this._annotateWithTime(m));
+      return history.map(m => this._sanitize(this._annotateWithTime(m)));
     }
 
     const olderMessages = history.slice(0, history.length - this.recentWindow);
@@ -133,8 +138,8 @@ export class ConversationManager {
       content: `[CONVERSATION SUMMARY - ${olderMessages.length} earlier messages]\n${summaryLines.join('\n')}`,
     };
 
-    // Annotate recent messages with time markers
-    const annotatedRecent = recentMessages.map(m => this._annotateWithTime(m));
+    // Annotate recent messages with time markers and strip metadata
+    const annotatedRecent = recentMessages.map(m => this._sanitize(this._annotateWithTime(m)));
 
     // Ensure result starts with user role
     const result = [summaryMessage, ...annotatedRecent];
