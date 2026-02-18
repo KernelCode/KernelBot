@@ -7,9 +7,16 @@ export const PROVIDERS = {
     name: 'Anthropic (Claude)',
     envKey: 'ANTHROPIC_API_KEY',
     models: [
+      // Latest generation
+      { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+      { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+      { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+      // Previous generation
+      { id: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
+      { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
+      { id: 'claude-opus-4-1-20250805', label: 'Claude Opus 4.1' },
       { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
       { id: 'claude-opus-4-20250514', label: 'Claude Opus 4' },
-      { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
     ],
   },
   openai: {
