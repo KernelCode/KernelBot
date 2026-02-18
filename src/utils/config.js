@@ -271,6 +271,65 @@ export function saveClaudeCodeAuth(config, mode, value) {
 }
 
 /**
+ * Full interactive flow: change orchestrator model + optionally enter API key.
+ */
+export async function changeOrchestratorModel(config, rl) {
+  const { createProvider } = await import('../providers/index.js');
+  const { providerKey, modelId } = await promptProviderSelection(rl);
+
+  const providerDef = PROVIDERS[providerKey];
+
+  // Resolve API key
+  const envKey = providerDef.envKey;
+  let apiKey = process.env[envKey];
+  if (!apiKey) {
+    const key = await ask(rl, chalk.cyan(`\n  ${providerDef.name} API key (${envKey}): `));
+    if (!key.trim()) {
+      console.log(chalk.yellow('\n  No API key provided. Orchestrator not changed.\n'));
+      return config;
+    }
+    apiKey = key.trim();
+  }
+
+  // Validate the new provider before saving anything
+  console.log(chalk.dim(`\n  Verifying ${providerDef.name} / ${modelId}...`));
+  const testConfig = {
+    brain: {
+      provider: providerKey,
+      model: modelId,
+      max_tokens: config.orchestrator.max_tokens,
+      temperature: config.orchestrator.temperature,
+      api_key: apiKey,
+    },
+  };
+  try {
+    const testProvider = createProvider(testConfig);
+    await testProvider.ping();
+  } catch (err) {
+    console.log(chalk.red(`\n  ✖ Verification failed: ${err.message}`));
+    console.log(chalk.yellow(`  Orchestrator not changed. Keeping current model.\n`));
+    return config;
+  }
+
+  // Validation passed — save everything
+  const savedPath = saveOrchestratorToYaml(providerKey, modelId);
+  console.log(chalk.dim(`  Saved to ${savedPath}`));
+
+  config.orchestrator.provider = providerKey;
+  config.orchestrator.model = modelId;
+  config.orchestrator.api_key = apiKey;
+
+  // Save the key if it was newly entered
+  if (!process.env[envKey]) {
+    saveCredential(config, envKey, apiKey);
+    console.log(chalk.dim('  API key saved.\n'));
+  }
+
+  console.log(chalk.green(`  ✔ Orchestrator switched to ${providerDef.name} / ${modelId}\n`));
+  return config;
+}
+
+/**
  * Full interactive flow: change brain model + optionally enter API key.
  */
 export async function changeBrainModel(config, rl) {

@@ -9,7 +9,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import chalk from 'chalk';
-import { loadConfig, loadConfigInteractive, changeBrainModel } from '../src/utils/config.js';
+import { loadConfig, loadConfigInteractive, changeBrainModel, changeOrchestratorModel } from '../src/utils/config.js';
 import { createLogger, getLogger } from '../src/utils/logger.js';
 import {
   showLogo,
@@ -40,11 +40,16 @@ import {
 } from '../src/skills/custom.js';
 
 function showMenu(config) {
+  const orchProviderDef = PROVIDERS[config.orchestrator.provider];
+  const orchProviderName = orchProviderDef ? orchProviderDef.name : config.orchestrator.provider;
+  const orchModelId = config.orchestrator.model;
+
   const providerDef = PROVIDERS[config.brain.provider];
   const providerName = providerDef ? providerDef.name : config.brain.provider;
   const modelId = config.brain.model;
 
   console.log('');
+  console.log(chalk.dim(`  Current orchestrator: ${orchProviderName} / ${orchModelId}`));
   console.log(chalk.dim(`  Current brain: ${providerName} / ${modelId}`));
   console.log('');
   console.log(chalk.bold('  What would you like to do?\n'));
@@ -53,9 +58,10 @@ function showMenu(config) {
   console.log(`  ${chalk.cyan('3.')} View logs`);
   console.log(`  ${chalk.cyan('4.')} View audit logs`);
   console.log(`  ${chalk.cyan('5.')} Change brain model`);
-  console.log(`  ${chalk.cyan('6.')} Manage custom skills`);
-  console.log(`  ${chalk.cyan('7.')} Manage automations`);
-  console.log(`  ${chalk.cyan('8.')} Exit`);
+  console.log(`  ${chalk.cyan('6.')} Change orchestrator model`);
+  console.log(`  ${chalk.cyan('7.')} Manage custom skills`);
+  console.log(`  ${chalk.cyan('8.')} Manage automations`);
+  console.log(`  ${chalk.cyan('9.')} Exit`);
   console.log('');
 }
 
@@ -95,21 +101,51 @@ function viewLog(filename) {
 }
 
 async function runCheck(config) {
+  // Orchestrator check
+  const orchProviderKey = config.orchestrator.provider || 'anthropic';
+  const orchProviderDef = PROVIDERS[orchProviderKey];
+  const orchLabel = orchProviderDef ? orchProviderDef.name : orchProviderKey;
+  const orchEnvKey = orchProviderDef ? orchProviderDef.envKey : 'ANTHROPIC_API_KEY';
+
+  await showStartupCheck(`Orchestrator ${orchEnvKey}`, async () => {
+    const orchestratorKey = config.orchestrator.api_key
+      || (orchProviderDef && process.env[orchProviderDef.envKey])
+      || process.env.ANTHROPIC_API_KEY;
+    if (!orchestratorKey) throw new Error('Not set');
+  });
+
+  await showStartupCheck(`Orchestrator (${orchLabel}) API connection`, async () => {
+    const orchestratorKey = config.orchestrator.api_key
+      || (orchProviderDef && process.env[orchProviderDef.envKey])
+      || process.env.ANTHROPIC_API_KEY;
+    const provider = createProvider({
+      brain: {
+        provider: orchProviderKey,
+        model: config.orchestrator.model,
+        max_tokens: config.orchestrator.max_tokens,
+        temperature: config.orchestrator.temperature,
+        api_key: orchestratorKey,
+      },
+    });
+    await provider.ping();
+  });
+
+  // Worker brain check
   const providerDef = PROVIDERS[config.brain.provider];
   const providerLabel = providerDef ? providerDef.name : config.brain.provider;
   const envKeyLabel = providerDef ? providerDef.envKey : 'API_KEY';
 
-  await showStartupCheck(envKeyLabel, async () => {
+  await showStartupCheck(`Worker ${envKeyLabel}`, async () => {
     if (!config.brain.api_key) throw new Error('Not set');
+  });
+
+  await showStartupCheck(`Worker (${providerLabel}) API connection`, async () => {
+    const provider = createProvider(config);
+    await provider.ping();
   });
 
   await showStartupCheck('TELEGRAM_BOT_TOKEN', async () => {
     if (!config.telegram.bot_token) throw new Error('Not set');
-  });
-
-  await showStartupCheck(`${providerLabel} API connection`, async () => {
-    const provider = createProvider(config);
-    await provider.ping();
   });
 
   await showStartupCheck('Telegram Bot API', async () => {
@@ -429,12 +465,15 @@ async function main() {
         await changeBrainModel(config, rl);
         break;
       case '6':
-        await manageCustomSkills(rl);
+        await changeOrchestratorModel(config, rl);
         break;
       case '7':
-        await manageAutomations(rl);
+        await manageCustomSkills(rl);
         break;
       case '8':
+        await manageAutomations(rl);
+        break;
+      case '9':
         running = false;
         break;
       default:
