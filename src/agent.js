@@ -754,6 +754,7 @@ export class OrchestratorAgent {
       callbacks: {
         onProgress: (text) => addActivity(text),
         onHeartbeat: (text) => job.addProgress(text),
+        onStats: (stats) => job.updateStats(stats),
         onUpdate, // Real bot onUpdate for tools (coder.js smart output needs message_id)
         onComplete: (result, parsedResult) => {
           logger.info(`[Worker ${job.id}] Completed — structured=${!!parsedResult?.structured}, result: "${(result || '').slice(0, 150)}"`);
@@ -856,8 +857,16 @@ export class OrchestratorAgent {
     for (const job of running) {
       const workerDef = WORKER_TYPES[job.workerType] || {};
       const dur = job.startedAt ? Math.round((now - job.startedAt) / 1000) : 0;
-      const recentActivity = job.progress.slice(-8).join(' → ');
-      lines.push(`- ${workerDef.label || job.workerType} (${job.id}) — running ${dur}s${recentActivity ? `\n  Recent: ${recentActivity}` : ''}`);
+      const stats = `${job.llmCalls} LLM calls, ${job.toolCalls} tools`;
+      const recentActivity = job.progress.slice(-5).join(' → ');
+      let line = `- ${workerDef.label || job.workerType} (${job.id}) — running ${dur}s [${stats}]`;
+      if (job.lastThinking) {
+        line += `\n  Thinking: "${job.lastThinking.slice(0, 150)}"`;
+      }
+      if (recentActivity) {
+        line += `\n  Recent: ${recentActivity}`;
+      }
+      lines.push(line);
     }
 
     // Queued/waiting jobs

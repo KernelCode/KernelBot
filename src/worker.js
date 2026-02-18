@@ -41,6 +41,7 @@ export class WorkerAgent {
     this.abortController = abortController || new AbortController();
     this._cancelled = false;
     this._toolCallCount = 0;
+    this._llmCallCount = 0;
     this._errors = [];
 
     // Create provider from worker brain config
@@ -121,7 +122,11 @@ export class WorkerAgent {
         signal: this.abortController.signal,
       });
 
+      this._llmCallCount++;
       logger.info(`[Worker ${this.jobId}] LLM response: stopReason=${response.stopReason}, text=${(response.text || '').length} chars, toolCalls=${(response.toolCalls || []).length}`);
+
+      // Report stats to the job after each LLM call
+      this._reportStats(response.text || null);
 
       if (this._cancelled) {
         logger.info(`[Worker ${this.jobId}] Cancelled after LLM response`);
@@ -350,6 +355,18 @@ export class WorkerAgent {
     }
     if (this.callbacks.onHeartbeat) {
       try { this.callbacks.onHeartbeat(text); } catch {}
+    }
+  }
+
+  _reportStats(thinking) {
+    if (this.callbacks.onStats) {
+      try {
+        this.callbacks.onStats({
+          llmCalls: this._llmCallCount,
+          toolCalls: this._toolCallCount,
+          lastThinking: thinking || null,
+        });
+      } catch {}
     }
   }
 

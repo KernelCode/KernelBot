@@ -33,6 +33,9 @@ export class Job {
     this.timeoutMs = null;                              // Per-job timeout (set from worker type config)
     this.progress = [];                                 // Recent activity entries
     this.lastActivity = null;                           // Timestamp of last activity
+    this.llmCalls = 0;                                  // LLM iterations so far
+    this.toolCalls = 0;                                 // Total tool executions
+    this.lastThinking = null;                           // Worker's latest reasoning text
   }
 
   /** Transition to a new status. Throws if the transition is invalid. */
@@ -57,6 +60,14 @@ export class Job {
   addProgress(text) {
     this.progress.push(text);
     if (this.progress.length > 20) this.progress.shift();
+    this.lastActivity = Date.now();
+  }
+
+  /** Update live stats from the worker. */
+  updateStats({ llmCalls, toolCalls, lastThinking }) {
+    if (llmCalls != null) this.llmCalls = llmCalls;
+    if (toolCalls != null) this.toolCalls = toolCalls;
+    if (lastThinking) this.lastThinking = lastThinking;
     this.lastActivity = Date.now();
   }
 
