@@ -9,9 +9,7 @@ import { WorkerAgent } from './worker.js';
 import { getLogger } from './utils/logger.js';
 import { getMissingCredential, saveCredential, saveProviderToYaml, saveOrchestratorToYaml, saveClaudeCodeModelToYaml, saveClaudeCodeAuth } from './utils/config.js';
 import { resetClaudeCodeSpawner, getSpawner } from './tools/coding.js';
-
-const MAX_RESULT_LENGTH = 3000;
-const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
+import { truncateToolResult } from './utils/truncate.js';
 
 export class OrchestratorAgent {
   constructor({ config, conversationManager, personaManager, selfManager, jobManager, automationManager, memoryManager, shareQueue }) {
@@ -282,23 +280,9 @@ export class OrchestratorAgent {
     }
   }
 
-  /** Truncate a tool result. */
+  /** Truncate a tool result. Delegates to shared utility. */
   _truncateResult(name, result) {
-    let str = JSON.stringify(result);
-    if (str.length <= MAX_RESULT_LENGTH) return str;
-
-    if (result && typeof result === 'object') {
-      const truncated = { ...result };
-      for (const field of LARGE_FIELDS) {
-        if (typeof truncated[field] === 'string' && truncated[field].length > 500) {
-          truncated[field] = truncated[field].slice(0, 500) + `\n... [truncated ${truncated[field].length - 500} chars]`;
-        }
-      }
-      str = JSON.stringify(truncated);
-      if (str.length <= MAX_RESULT_LENGTH) return str;
-    }
-
-    return str.slice(0, MAX_RESULT_LENGTH) + `\n... [truncated, total ${str.length} chars]`;
+    return truncateToolResult(name, result);
   }
 
   async processMessage(chatId, userMessage, user, onUpdate, sendPhoto, opts = {}) {
