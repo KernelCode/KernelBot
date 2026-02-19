@@ -34,9 +34,14 @@ export const PROVIDERS = {
     envKey: 'GOOGLE_API_KEY',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     models: [
+      // Gemini 3 series
+      { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
+      { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash' },
+      { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro' },
+      // Gemini 2.5 series
       { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
       { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+      { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
     ],
   },
   groq: {
