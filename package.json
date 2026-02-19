@@ -31,6 +31,7 @@
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
+    "@google/genai": "^1.42.0",
     "@octokit/rest": "^22.0.1",
     "axios": "^1.13.5",
     "boxen": "^8.0.1",

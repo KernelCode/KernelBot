@@ -32,7 +32,6 @@ export const PROVIDERS = {
   google: {
     name: 'Google (Gemini)',
     envKey: 'GOOGLE_API_KEY',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     models: [
       // Gemini 3 series
       { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },

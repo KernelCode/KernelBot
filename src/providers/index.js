@@ -1,5 +1,6 @@
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAICompatProvider } from './openai-compat.js';
+import { GoogleGenaiProvider } from './google-genai.js';
 import { PROVIDERS } from './models.js';
 
 export { PROVIDERS } from './models.js';
@@ -29,7 +30,11 @@ export function createProvider(config) {
     return new AnthropicProvider(opts);
   }
 
-  // OpenAI, Google, Groq — all use OpenAI-compatible API
+  if (provider === 'google') {
+    return new GoogleGenaiProvider(opts);
+  }
+
+  // OpenAI, Groq — use OpenAI-compatible API
   return new OpenAICompatProvider({
     ...opts,
     baseUrl: providerDef.baseUrl || undefined,
