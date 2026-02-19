@@ -65,7 +65,12 @@ export class GoogleGenaiProvider extends BaseProvider {
             if (block.type === 'text' && block.text) {
               parts.push({ text: block.text });
             } else if (block.type === 'tool_use') {
-              parts.push({ functionCall: { name: block.name, args: block.input } });
+              const part = { functionCall: { name: block.name, args: block.input } };
+              // Replay thought signature for thinking models
+              if (block.thoughtSignature) {
+                part.thoughtSignature = block.thoughtSignature;
+              }
+              parts.push(part);
             }
           }
         }
@@ -81,12 +86,18 @@ export class GoogleGenaiProvider extends BaseProvider {
   /** Google response → normalized format with rawContent in Anthropic format */
   _normalizeResponse(response) {
     const text = response.text || '';
-    const functionCalls = response.functionCalls || [];
 
-    const toolCalls = functionCalls.map((fc, i) => ({
+    // Access raw parts to preserve thoughtSignature for thinking models
+    const candidate = response.candidates?.[0];
+    const parts = candidate?.content?.parts || [];
+
+    const functionCallParts = parts.filter((p) => p.functionCall);
+    const toolCalls = functionCallParts.map((p, i) => ({
       id: `toolu_google_${Date.now()}_${i}`,
-      name: fc.name,
-      input: fc.args || {},
+      name: p.functionCall.name,
+      input: p.functionCall.args || {},
+      // Preserve thought signature for thinking models (sibling of functionCall)
+      ...(p.thoughtSignature && { thoughtSignature: p.thoughtSignature }),
     }));
 
     const stopReason = toolCalls.length > 0 ? 'tool_use' : 'end_turn';
@@ -97,7 +108,13 @@ export class GoogleGenaiProvider extends BaseProvider {
       rawContent.push({ type: 'text', text });
     }
     for (const tc of toolCalls) {
-      rawContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
+      rawContent.push({
+        type: 'tool_use',
+        id: tc.id,
+        name: tc.name,
+        input: tc.input,
+        ...(tc.thoughtSignature && { thoughtSignature: tc.thoughtSignature }),
+      });
     }
 
     return { stopReason, text, toolCalls, rawContent };
