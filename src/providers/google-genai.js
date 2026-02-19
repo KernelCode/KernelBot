@@ -30,6 +30,19 @@ export class GoogleGenaiProvider extends BaseProvider {
   _convertMessages(messages) {
     const contents = [];
 
+    // Build a map of tool_use_id → tool_name from assistant messages
+    // so we can resolve function names when converting tool_result blocks
+    const toolIdToName = new Map();
+    for (const msg of messages) {
+      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === 'tool_use') {
+            toolIdToName.set(block.id, block.name);
+          }
+        }
+      }
+    }
+
     for (const msg of messages) {
       if (msg.role === 'user') {
         if (typeof msg.content === 'string') {
@@ -39,7 +52,7 @@ export class GoogleGenaiProvider extends BaseProvider {
           if (msg.content[0]?.type === 'tool_result') {
             const parts = msg.content.map((tr) => ({
               functionResponse: {
-                name: tr.tool_use_id,
+                name: toolIdToName.get(tr.tool_use_id) || tr.tool_use_id,
                 response: {
                   result:
                     typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content),
