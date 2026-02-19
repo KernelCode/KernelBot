@@ -16,6 +16,33 @@ import { TTSService } from './services/tts.js';
 import { STTService } from './services/stt.js';
 import { getClaudeAuthStatus, claudeLogout } from './claude-auth.js';
 
+/**
+ * Simulate a human-like typing delay based on response length.
+ * Short replies (casual chat) get a brief pause; longer replies get more.
+ * Keeps the typing indicator alive during the delay so the user sees "typing...".
+ *
+ * @param {TelegramBot} bot - Telegram bot instance
+ * @param {number} chatId - Chat to show typing in
+ * @param {string} text - The reply text (used to calculate delay)
+ * @returns {Promise<void>}
+ */
+async function simulateTypingDelay(bot, chatId, text) {
+  const length = (text || '').length;
+
+  // ~25ms per character, clamped between 0.4s and 4s
+  // Short "hey ❤️" (~6 chars) → 0.4s | Medium reply (~120 chars) → 3s | Long reply → 4s cap
+  const delay = Math.min(4000, Math.max(400, length * 25));
+
+  // Add a small random jitter (±15%) so it doesn't feel mechanical
+  const jitter = delay * (0.85 + Math.random() * 0.3);
+  const finalDelay = Math.round(jitter);
+
+  // Keep the typing indicator alive during the delay
+  bot.sendChatAction(chatId, 'typing').catch(() => {});
+
+  return new Promise((resolve) => setTimeout(resolve, finalDelay));
+}
+
 function splitMessage(text, maxLength = 4096) {
   if (text.length <= maxLength) return [text];
 
@@ -1650,6 +1677,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         }, onUpdate, sendPhoto, { sendReaction, messageId: msg.message_id });
 
         clearInterval(typingInterval);
+
+        // Simulate human-like typing delay before sending the reply
+        await simulateTypingDelay(bot, chatId, reply || '');
 
         logger.info(`[Bot] Reply for chat ${chatId}: ${(reply || '').length} chars`);
         const chunks = splitMessage(reply || 'Done.');
