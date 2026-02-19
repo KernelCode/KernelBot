@@ -98,11 +98,16 @@ export class GoogleGenaiProvider extends BaseProvider {
 
   /** Google response → normalized format with rawContent in Anthropic format */
   _normalizeResponse(response) {
-    const text = response.text || '';
-
-    // Access raw parts to preserve thoughtSignature for thinking models
+    // Access raw parts to preserve thoughtSignature and avoid SDK warning
+    // (response.text logs a warning when there are only functionCall parts)
     const candidate = response.candidates?.[0];
     const parts = candidate?.content?.parts || [];
+
+    // Extract text from raw parts instead of response.text
+    const text = parts
+      .filter((p) => p.text)
+      .map((p) => p.text)
+      .join('\n');
 
     const functionCallParts = parts.filter((p) => p.functionCall);
     const toolCalls = functionCallParts.map((p, i) => ({
