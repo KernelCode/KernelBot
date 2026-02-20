@@ -109,11 +109,18 @@ export class OpenAICompatProvider extends BaseProvider {
 
     const text = choice.message.content || '';
 
-    const toolCalls = (choice.message.tool_calls || []).map((tc) => ({
-      id: tc.id,
-      name: tc.function.name,
-      input: JSON.parse(tc.function.arguments),
-    }));
+    const toolCalls = (choice.message.tool_calls || []).map((tc) => {
+      let input = {};
+      try {
+        input = JSON.parse(tc.function.arguments);
+      } catch {
+        // LLM returned malformed JSON — use empty object so the tool call
+        // still reaches the tool executor (which can surface its own error)
+        // rather than crashing the entire chat session.
+        input = { _parseError: true, _raw: (tc.function.arguments || '').slice(0, 200) };
+      }
+      return { id: tc.id, name: tc.function.name, input };
+    });
 
     // Build rawContent in Anthropic format for message history consistency
     const rawContent = [];
