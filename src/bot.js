@@ -142,6 +142,7 @@ function createSendReaction(bot) {
 /**
  * Simple per-chat queue to serialize agent processing.
  * Each chat gets its own promise chain so messages are processed in order.
+ * Automatically cleans up finished queues to avoid unbounded Map growth.
  */
 class ChatQueue {
   constructor() {
@@ -149,9 +150,21 @@ class ChatQueue {
   }
 
   enqueue(chatId, fn) {
+    const logger = getLogger();
     const key = String(chatId);
     const prev = this.queues.get(key) || Promise.resolve();
-    const next = prev.then(() => fn()).catch(() => {});
+    const next = prev
+      .then(() => fn())
+      .catch((err) => {
+        logger.error(`[ChatQueue] Error processing message for chat ${key}: ${err.message}`);
+      })
+      .finally(() => {
+        // Clean up the queue entry once this is the last item in the chain,
+        // preventing the Map from growing unboundedly over long-running sessions.
+        if (this.queues.get(key) === next) {
+          this.queues.delete(key);
+        }
+      });
     this.queues.set(key, next);
     return next;
   }
