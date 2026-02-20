@@ -1,22 +1,42 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { getLogger } from './utils/logger.js';
 
+/**
+ * Resolve the file path for persisted conversations.
+ * Ensures the parent directory (~/.kernelbot/) exists.
+ * @returns {string} Absolute path to conversations.json.
+ */
 function getConversationsPath() {
   const dir = join(homedir(), '.kernelbot');
   mkdirSync(dir, { recursive: true });
   return join(dir, 'conversations.json');
 }
 
+/**
+ * Manages per-chat conversation history, including persistence to disk,
+ * summarization of older messages, and per-chat skill tracking.
+ */
 export class ConversationManager {
+  /**
+   * @param {object} config - Application config containing `conversation` settings.
+   * @param {number} config.conversation.max_history - Maximum messages to retain per chat.
+   * @param {number} [config.conversation.recent_window=10] - Number of recent messages kept verbatim in summarized history.
+   */
   constructor(config) {
     this.maxHistory = config.conversation.max_history;
     this.recentWindow = config.conversation.recent_window || 10;
     this.conversations = new Map();
     this.activeSkills = new Map();
     this.filePath = getConversationsPath();
+    this.logger = getLogger();
   }
 
+  /**
+   * Load persisted conversations and skills from disk.
+   * @returns {boolean} True if at least one conversation was restored.
+   */
   load() {
     if (!existsSync(this.filePath)) return false;
     try {
@@ -34,12 +54,18 @@ export class ConversationManager {
         if (chatId === '_skills') continue;
         this.conversations.set(String(chatId), messages);
       }
+      this.logger.debug(`Conversations loaded: ${this.conversations.size} chats, ${this.activeSkills.size} active skills`);
       return this.conversations.size > 0;
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Failed to load conversations from ${this.filePath}: ${err.message}`);
       return false;
     }
   }
 
+  /**
+   * Persist all conversations and active skills to disk.
+   * Failures are logged but never thrown to avoid crashing the bot.
+   */
   save() {
     try {
       const data = {};
@@ -55,11 +81,16 @@ export class ConversationManager {
         data._skills = skills;
       }
       writeFileSync(this.filePath, JSON.stringify(data, null, 2));
-    } catch {
-      // Silent fail — don't crash the bot over persistence
+    } catch (err) {
+      this.logger.warn(`Failed to save conversations: ${err.message}`);
     }
   }
 
+  /**
+   * Retrieve the message history for a chat, initializing an empty array if none exists.
+   * @param {string|number} chatId - Telegram chat identifier.
+   * @returns {Array<{role: string, content: string, timestamp?: number}>} Message array (mutable reference).
+   */
   getHistory(chatId) {
     const key = String(chatId);
     if (!this.conversations.has(key)) {
@@ -149,6 +180,13 @@ export class ConversationManager {
     return result;
   }
 
+  /**
+   * Append a message to a chat's history, trim to max length, and persist.
+   * Automatically ensures the conversation starts with a user message.
+   * @param {string|number} chatId - Telegram chat identifier.
+   * @param {'user'|'assistant'} role - Message role.
+   * @param {string} content - Message content.
+   */
   addMessage(chatId, role, content) {
     const history = this.getHistory(chatId);
     history.push({ role, content, timestamp: Date.now() });
@@ -166,31 +204,60 @@ export class ConversationManager {
     this.save();
   }
 
+  /**
+   * Delete all history and active skill for a specific chat.
+   * @param {string|number} chatId - Telegram chat identifier.
+   */
   clear(chatId) {
     this.conversations.delete(String(chatId));
     this.activeSkills.delete(String(chatId));
+    this.logger.debug(`Conversation cleared for chat ${chatId}`);
     this.save();
   }
 
+  /**
+   * Delete all conversations across every chat.
+   */
   clearAll() {
+    const count = this.conversations.size;
     this.conversations.clear();
+    this.logger.info(`All conversations cleared (${count} chats removed)`);
     this.save();
   }
 
+  /**
+   * Return the number of messages stored for a chat.
+   * @param {string|number} chatId - Telegram chat identifier.
+   * @returns {number} Message count.
+   */
   getMessageCount(chatId) {
     const history = this.getHistory(chatId);
     return history.length;
   }
 
+  /**
+   * Activate a skill for a specific chat, persisted across restarts.
+   * @param {string|number} chatId - Telegram chat identifier.
+   * @param {string} skillId - Skill identifier to activate.
+   */
   setSkill(chatId, skillId) {
     this.activeSkills.set(String(chatId), skillId);
     this.save();
   }
 
+  /**
+   * Get the currently active skill for a chat.
+   * @param {string|number} chatId - Telegram chat identifier.
+   * @returns {string|null} Active skill identifier, or null if none.
+   */
   getSkill(chatId) {
     return this.activeSkills.get(String(chatId)) || null;
   }
 
+  /**
+   * Deactivate the active skill for a chat.
+   * @param {string|number} chatId - Telegram chat identifier.
+   */
   clearSkill(chatId) {
     this.activeSkills.delete(String(chatId));
     this.save();
