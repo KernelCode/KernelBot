@@ -1,4 +1,4 @@
-import { shellRun } from '../utils/shell.js';
+import { shellRun, shellEscape } from '../utils/shell.js';
 
 const run = (cmd, timeout = 15000) => shellRun(cmd, timeout);
 
@@ -39,10 +39,11 @@ export const definitions = [
 export const handlers = {
   check_port: async (params) => {
     const host = params.host || 'localhost';
-    const { port } = params;
+    const port = parseInt(params.port, 10);
+    if (!Number.isFinite(port) || port <= 0 || port > 65535) return { error: 'Invalid port number' };
 
     // Use nc (netcat) for port check — works on both macOS and Linux
-    const result = await run(`nc -z -w 3 ${host} ${port} 2>&1 && echo "OPEN" || echo "CLOSED"`, 5000);
+    const result = await run(`nc -z -w 3 ${shellEscape(host)} ${port} 2>&1 && echo "OPEN" || echo "CLOSED"`, 5000);
 
     if (result.error) {
       return { port, host, status: 'closed', detail: result.error };
@@ -55,19 +56,19 @@ export const handlers = {
   curl_url: async (params) => {
     const { url, method = 'GET', headers, body } = params;
 
-    let cmd = `curl -s -w "\\n---HTTP_STATUS:%{http_code}" -X ${method}`;
+    let cmd = `curl -s -w "\\n---HTTP_STATUS:%{http_code}" -X ${shellEscape(method)}`;
 
     if (headers) {
       for (const [key, val] of Object.entries(headers)) {
-        cmd += ` -H "${key}: ${val}"`;
+        cmd += ` -H ${shellEscape(`${key}: ${val}`)}`;
       }
     }
 
     if (body) {
-      cmd += ` -d '${body.replace(/'/g, "'\\''")}'`;
+      cmd += ` -d ${shellEscape(body)}`;
     }
 
-    cmd += ` "${url}"`;
+    cmd += ` ${shellEscape(url)}`;
 
     const result = await run(cmd);
 

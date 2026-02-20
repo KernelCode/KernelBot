@@ -1,4 +1,4 @@
-import { shellRun as run } from '../utils/shell.js';
+import { shellRun as run, shellEscape } from '../utils/shell.js';
 
 export const definitions = [
   {
@@ -43,22 +43,24 @@ export const definitions = [
 export const handlers = {
   process_list: async (params) => {
     const filter = params.filter;
-    const cmd = filter ? `ps aux | head -1 && ps aux | grep -i "${filter}" | grep -v grep` : 'ps aux';
+    const cmd = filter ? `ps aux | head -1 && ps aux | grep -i ${shellEscape(filter)} | grep -v grep` : 'ps aux';
     return await run(cmd);
   },
 
   kill_process: async (params) => {
     if (params.pid) {
-      return await run(`kill ${params.pid}`);
+      const pid = parseInt(params.pid, 10);
+      if (!Number.isFinite(pid) || pid <= 0) return { error: 'Invalid PID' };
+      return await run(`kill ${pid}`);
     }
     if (params.name) {
-      return await run(`pkill -f "${params.name}"`);
+      return await run(`pkill -f ${shellEscape(params.name)}`);
     }
     return { error: 'Provide either pid or name' };
   },
 
   service_control: async (params) => {
     const { service, action } = params;
-    return await run(`systemctl ${action} ${service}`);
+    return await run(`systemctl ${shellEscape(action)} ${shellEscape(service)}`);
   },
 };
