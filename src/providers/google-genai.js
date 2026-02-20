@@ -165,6 +165,7 @@ export class GoogleGenaiProvider extends BaseProvider {
         contents,
         config: {
           ...config,
+          abortSignal: timedSignal,
           httpOptions: { timeout: this.timeout },
         },
       });
