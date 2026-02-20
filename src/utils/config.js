@@ -491,6 +491,13 @@ export function loadConfig() {
   if (process.env.TELEGRAM_BOT_TOKEN) {
     config.telegram.bot_token = process.env.TELEGRAM_BOT_TOKEN;
   }
+  // Merge OWNER_TELEGRAM_ID into allowed_users if set
+  if (process.env.OWNER_TELEGRAM_ID) {
+    const ownerId = Number(process.env.OWNER_TELEGRAM_ID);
+    if (!config.telegram.allowed_users.includes(ownerId)) {
+      config.telegram.allowed_users.push(ownerId);
+    }
+  }
   if (process.env.GITHUB_TOKEN) {
     if (!config.github) config.github = {};
     config.github.token = process.env.GITHUB_TOKEN;
