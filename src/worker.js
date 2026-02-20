@@ -5,9 +5,7 @@ import { getMissingCredential } from './utils/config.js';
 import { getWorkerPrompt } from './prompts/workers.js';
 import { getUnifiedSkillById } from './skills/custom.js';
 import { getLogger } from './utils/logger.js';
-
-const MAX_RESULT_LENGTH = 3000;
-const LARGE_FIELDS = ['stdout', 'stderr', 'content', 'diff', 'output', 'body', 'html', 'text', 'log', 'logs'];
+import { truncateToolResult } from './utils/truncate.js';
 
 /**
  * WorkerAgent — runs a scoped agent loop in the background.
@@ -371,21 +369,7 @@ export class WorkerAgent {
   }
 
   _truncateResult(name, result) {
-    let str = JSON.stringify(result);
-    if (str.length <= MAX_RESULT_LENGTH) return str;
-
-    if (result && typeof result === 'object') {
-      const truncated = { ...result };
-      for (const field of LARGE_FIELDS) {
-        if (typeof truncated[field] === 'string' && truncated[field].length > 500) {
-          truncated[field] = truncated[field].slice(0, 500) + `\n... [truncated ${truncated[field].length - 500} chars]`;
-        }
-      }
-      str = JSON.stringify(truncated);
-      if (str.length <= MAX_RESULT_LENGTH) return str;
-    }
-
-    return str.slice(0, MAX_RESULT_LENGTH) + `\n... [truncated, total ${str.length} chars]`;
+    return truncateToolResult(name, result);
   }
 
   _formatToolSummary(name, input) {
