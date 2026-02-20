@@ -13,7 +13,7 @@ export class BaseProvider {
   }
 
   /**
-   * Wrap an async LLM call with timeout + single retry on transient errors.
+   * Wrap an async LLM call with timeout + retries on transient errors (up to 3 attempts).
    * Composes an internal timeout AbortController with an optional external signal
    * (e.g. worker cancellation). Either aborting will cancel the call.
    *
@@ -22,7 +22,7 @@ export class BaseProvider {
    * @returns {Promise<any>}
    */
   async _callWithResilience(fn, externalSignal) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       const ac = new AbortController();
       const timer = setTimeout(
         () => ac.abort(new Error(`LLM call timed out after ${this.timeout / 1000}s`)),
@@ -55,8 +55,8 @@ export class BaseProvider {
         clearTimeout(timer);
         removeListener?.();
 
-        if (attempt < 2 && this._isTransient(err)) {
-          await new Promise((r) => setTimeout(r, 1500));
+        if (attempt < 3 && this._isTransient(err)) {
+          await new Promise((r) => setTimeout(r, 1500 * attempt));
           continue;
         }
         throw err;
@@ -80,7 +80,18 @@ export class BaseProvider {
     ) {
       return true;
     }
-    const status = err?.status || err?.statusCode;
+
+    // Check top-level status (Anthropic, OpenAI)
+    let status = err?.status || err?.statusCode;
+
+    // Google SDK nests HTTP status in JSON message — try to extract
+    if (!status && msg.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(msg);
+        status = parsed?.error?.code || parsed?.code;
+      } catch {}
+    }
+
     return (status >= 500 && status < 600) || status === 429;
   }
 

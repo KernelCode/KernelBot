@@ -159,18 +159,30 @@ export class GoogleGenaiProvider extends BaseProvider {
 
     const contents = this._convertMessages(messages);
 
-    return this._callWithResilience(async (timedSignal) => {
-      const response = await this.client.models.generateContent({
-        model: this.model,
-        contents,
-        config: {
-          ...config,
-          abortSignal: timedSignal,
-          httpOptions: { timeout: this.timeout },
-        },
-      });
-      return this._normalizeResponse(response);
-    }, signal);
+    try {
+      return await this._callWithResilience(async (timedSignal) => {
+        const response = await this.client.models.generateContent({
+          model: this.model,
+          contents,
+          config: {
+            ...config,
+            abortSignal: timedSignal,
+            httpOptions: { timeout: this.timeout },
+          },
+        });
+        return this._normalizeResponse(response);
+      }, signal);
+    } catch (err) {
+      // Normalize Google SDK error: extract clean message from JSON
+      if (err.message?.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(err.message);
+          err.message = parsed?.error?.message || err.message;
+          err.status = parsed?.error?.code;
+        } catch {}
+      }
+      throw err;
+    }
   }
 
   async ping() {
