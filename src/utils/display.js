@@ -46,7 +46,7 @@ export function showLogo() {
             'It can execute commands, read/write files, manage processes,\n' +
             'and interact with external services on your behalf.\n\n' +
             'Only run this on machines you control.\n' +
-            'Set allowed_users in config.yaml to restrict access.',
+            'Set OWNER_TELEGRAM_ID in .env or allowed_users in config.yaml.',
         ),
       {
         padding: 1,

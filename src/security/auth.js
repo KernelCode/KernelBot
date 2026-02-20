@@ -1,6 +1,6 @@
 export function isAllowedUser(userId, config) {
   const allowed = config.telegram.allowed_users;
-  if (!allowed || allowed.length === 0) return true; // dev mode
+  if (!allowed || allowed.length === 0) return false;
   return allowed.includes(userId);
 }
 
