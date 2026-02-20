@@ -1,14 +1,6 @@
-import { exec } from 'child_process';
-import { platform } from 'os';
+import { shellRun } from '../utils/shell.js';
 
-function run(cmd, timeout = 15000) {
-  return new Promise((resolve) => {
-    exec(cmd, { timeout }, (error, stdout, stderr) => {
-      if (error) return resolve({ error: stderr || error.message });
-      resolve({ output: stdout.trim() });
-    });
-  });
-}
+const run = (cmd, timeout = 15000) => shellRun(cmd, timeout);
 
 export const definitions = [
   {

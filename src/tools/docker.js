@@ -1,13 +1,6 @@
-import { exec } from 'child_process';
+import { shellRun } from '../utils/shell.js';
 
-function run(cmd, timeout = 30000) {
-  return new Promise((resolve) => {
-    exec(cmd, { timeout, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) return resolve({ error: stderr || error.message });
-      resolve({ output: stdout.trim() });
-    });
-  });
-}
+const run = (cmd, timeout = 30000) => shellRun(cmd, timeout, { maxBuffer: 10 * 1024 * 1024 });
 
 export const definitions = [
   {
