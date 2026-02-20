@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getLogger } from '../utils/logger.js';
 
 /**
  * Create an axios instance configured for the JIRA REST API.
@@ -142,6 +143,7 @@ export const handlers = {
       if (err.response?.status === 404) {
         return { error: `Ticket ${params.ticket_key} not found` };
       }
+      getLogger().error(`jira_get_ticket failed for ${params.ticket_key}: ${err.message}`);
       return { error: err.response?.data?.errorMessages?.join('; ') || err.message };
     }
   },
@@ -169,6 +171,7 @@ export const handlers = {
         tickets: (data.issues || []).map(formatIssue),
       };
     } catch (err) {
+      getLogger().error(`jira_search_tickets failed: ${err.message}`);
       return { error: err.response?.data?.errorMessages?.join('; ') || err.message };
     }
   },
@@ -198,6 +201,7 @@ export const handlers = {
         tickets: (data.issues || []).map(formatIssue),
       };
     } catch (err) {
+      getLogger().error(`jira_list_my_tickets failed: ${err.message}`);
       return { error: err.response?.data?.errorMessages?.join('; ') || err.message };
     }
   },
@@ -226,6 +230,7 @@ export const handlers = {
         tickets: (data.issues || []).map(formatIssue),
       };
     } catch (err) {
+      getLogger().error(`jira_get_project_tickets failed for ${params.project_key}: ${err.message}`);
       return { error: err.response?.data?.errorMessages?.join('; ') || err.message };
     }
   },

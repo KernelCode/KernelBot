@@ -2,6 +2,7 @@ import simpleGit from 'simple-git';
 import { join } from 'path';
 import { homedir } from 'os';
 import { mkdirSync } from 'fs';
+import { getLogger } from '../utils/logger.js';
 
 function getWorkspaceDir(config) {
   const dir = config.claude_code?.workspace_dir || join(homedir(), '.kernelbot', 'workspaces');
@@ -117,6 +118,7 @@ export const handlers = {
       await git.clone(authUrl, targetDir);
       return { success: true, path: targetDir };
     } catch (err) {
+      getLogger().error(`git_clone failed for ${params.repo}: ${err.message}`);
       return { error: err.message };
     }
   },
@@ -132,6 +134,7 @@ export const handlers = {
       }
       return { success: true, branch };
     } catch (err) {
+      getLogger().error(`git_checkout failed for branch ${params.branch}: ${err.message}`);
       return { error: err.message };
     }
   },
@@ -144,6 +147,7 @@ export const handlers = {
       const result = await git.commit(message);
       return { success: true, commit: result.commit, summary: result.summary };
     } catch (err) {
+      getLogger().error(`git_commit failed: ${err.message}`);
       return { error: err.message };
     }
   },
@@ -169,6 +173,7 @@ export const handlers = {
       await git.push('origin', branch, options);
       return { success: true, branch };
     } catch (err) {
+      getLogger().error(`git_push failed: ${err.message}`);
       return { error: err.message };
     }
   },
@@ -181,6 +186,7 @@ export const handlers = {
       const staged = await git.diff(['--cached']);
       return { unstaged: diff || '(no changes)', staged: staged || '(no staged changes)' };
     } catch (err) {
+      getLogger().error(`git_diff failed: ${err.message}`);
       return { error: err.message };
     }
   },
