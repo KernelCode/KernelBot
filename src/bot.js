@@ -63,6 +63,83 @@ function splitMessage(text, maxLength = 4096) {
 }
 
 /**
+ * Create an onUpdate callback that sends or edits Telegram messages.
+ * Tries Markdown first, falls back to plain text.
+ */
+function createOnUpdate(bot, chatId) {
+  return async (update, opts = {}) => {
+    if (opts.editMessageId) {
+      try {
+        const edited = await bot.editMessageText(update, {
+          chat_id: chatId,
+          message_id: opts.editMessageId,
+          parse_mode: 'Markdown',
+        });
+        return edited.message_id;
+      } catch {
+        try {
+          const edited = await bot.editMessageText(update, {
+            chat_id: chatId,
+            message_id: opts.editMessageId,
+          });
+          return edited.message_id;
+        } catch {
+          // Edit failed — fall through to send new message
+        }
+      }
+    }
+    const parts = splitMessage(update);
+    let lastMsgId = null;
+    for (const part of parts) {
+      try {
+        const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
+        lastMsgId = sent.message_id;
+      } catch {
+        const sent = await bot.sendMessage(chatId, part);
+        lastMsgId = sent.message_id;
+      }
+    }
+    return lastMsgId;
+  };
+}
+
+/**
+ * Create a sendPhoto callback that sends a photo with optional caption.
+ * Tries Markdown caption first, falls back to plain caption.
+ */
+function createSendPhoto(bot, chatId, logger) {
+  return async (filePath, caption) => {
+    const fileOpts = { contentType: 'image/png' };
+    try {
+      await bot.sendPhoto(chatId, createReadStream(filePath), {
+        caption: caption || '',
+        parse_mode: 'Markdown',
+      }, fileOpts);
+    } catch {
+      try {
+        await bot.sendPhoto(chatId, createReadStream(filePath), {
+          caption: caption || '',
+        }, fileOpts);
+      } catch (err) {
+        logger.error(`Failed to send photo: ${err.message}`);
+      }
+    }
+  };
+}
+
+/**
+ * Create a sendReaction callback for reacting to messages with emoji.
+ */
+function createSendReaction(bot) {
+  return async (targetChatId, targetMsgId, emoji, isBig = false) => {
+    await bot.setMessageReaction(targetChatId, targetMsgId, {
+      reaction: [{ type: 'emoji', emoji }],
+      is_big: isBig,
+    });
+  };
+}
+
+/**
  * Simple per-chat queue to serialize agent processing.
  * Each chat gets its own promise chain so messages are processed in order.
  */
@@ -146,54 +223,8 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     const sendAction = (chatId, action) => bot.sendChatAction(chatId, action).catch(() => {});
 
     const agentFactory = (chatId) => {
-      const onUpdate = async (update, opts = {}) => {
-        if (opts.editMessageId) {
-          try {
-            const edited = await bot.editMessageText(update, {
-              chat_id: chatId,
-              message_id: opts.editMessageId,
-              parse_mode: 'Markdown',
-            });
-            return edited.message_id;
-          } catch {
-            try {
-              const edited = await bot.editMessageText(update, {
-                chat_id: chatId,
-                message_id: opts.editMessageId,
-              });
-              return edited.message_id;
-            } catch {
-              // Edit failed — fall through to send new message
-            }
-          }
-        }
-        const parts = splitMessage(update);
-        let lastMsgId = null;
-        for (const part of parts) {
-          try {
-            const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
-            lastMsgId = sent.message_id;
-          } catch {
-            const sent = await bot.sendMessage(chatId, part);
-            lastMsgId = sent.message_id;
-          }
-        }
-        return lastMsgId;
-      };
-
-      const sendPhoto = async (filePath, caption) => {
-        const fileOpts = { contentType: 'image/png' };
-        try {
-          await bot.sendPhoto(chatId, createReadStream(filePath), { caption: caption || '', parse_mode: 'Markdown' }, fileOpts);
-        } catch {
-          try {
-            await bot.sendPhoto(chatId, createReadStream(filePath), { caption: caption || '' }, fileOpts);
-          } catch (err) {
-            logger.error(`[Automation] Failed to send photo: ${err.message}`);
-          }
-        }
-      };
-
+      const onUpdate = createOnUpdate(bot, chatId);
+      const sendPhoto = createSendPhoto(bot, chatId, logger);
       return { agent, onUpdate, sendPhoto };
     };
 
@@ -1607,68 +1638,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       bot.sendChatAction(chatId, 'typing').catch(() => {});
 
       try {
-        const onUpdate = async (update, opts = {}) => {
-          // Edit an existing message instead of sending a new one
-          if (opts.editMessageId) {
-            try {
-              const edited = await bot.editMessageText(update, {
-                chat_id: chatId,
-                message_id: opts.editMessageId,
-                parse_mode: 'Markdown',
-              });
-              return edited.message_id;
-            } catch {
-              try {
-                const edited = await bot.editMessageText(update, {
-                  chat_id: chatId,
-                  message_id: opts.editMessageId,
-                });
-                return edited.message_id;
-              } catch {
-                // Edit failed — fall through to send new message
-              }
-            }
-          }
-
-          // Send new message(s) — also reached when edit fails
-          const parts = splitMessage(update);
-          let lastMsgId = null;
-          for (const part of parts) {
-            try {
-              const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
-              lastMsgId = sent.message_id;
-            } catch {
-              const sent = await bot.sendMessage(chatId, part);
-              lastMsgId = sent.message_id;
-            }
-          }
-          return lastMsgId;
-        };
-
-        const sendPhoto = async (filePath, caption) => {
-          const fileOpts = { contentType: 'image/png' };
-          try {
-            await bot.sendPhoto(chatId, createReadStream(filePath), {
-              caption: caption || '',
-              parse_mode: 'Markdown',
-            }, fileOpts);
-          } catch {
-            try {
-              await bot.sendPhoto(chatId, createReadStream(filePath), {
-                caption: caption || '',
-              }, fileOpts);
-            } catch (err) {
-              logger.error(`Failed to send photo: ${err.message}`);
-            }
-          }
-        };
-
-        const sendReaction = async (targetChatId, targetMsgId, emoji, isBig = false) => {
-          await bot.setMessageReaction(targetChatId, targetMsgId, {
-            reaction: [{ type: 'emoji', emoji }],
-            is_big: isBig,
-          });
-        };
+        const onUpdate = createOnUpdate(bot, chatId);
+        const sendPhoto = createSendPhoto(bot, chatId, logger);
+        const sendReaction = createSendReaction(bot);
 
         logger.debug(`[Bot] Sending to orchestrator: chat ${chatId}, text="${mergedText.slice(0, 80)}"`);
         const reply = await agent.processMessage(chatId, mergedText, {
@@ -1732,47 +1704,8 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
     chatQueue.enqueue(chatId, async () => {
       try {
-        const onUpdate = async (update, opts = {}) => {
-          if (opts.editMessageId) {
-            try {
-              const edited = await bot.editMessageText(update, {
-                chat_id: chatId,
-                message_id: opts.editMessageId,
-                parse_mode: 'Markdown',
-              });
-              return edited.message_id;
-            } catch {
-              try {
-                const edited = await bot.editMessageText(update, {
-                  chat_id: chatId,
-                  message_id: opts.editMessageId,
-                });
-                return edited.message_id;
-              } catch {
-                // fall through
-              }
-            }
-          }
-          const parts = splitMessage(update);
-          let lastMsgId = null;
-          for (const part of parts) {
-            try {
-              const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
-              lastMsgId = sent.message_id;
-            } catch {
-              const sent = await bot.sendMessage(chatId, part);
-              lastMsgId = sent.message_id;
-            }
-          }
-          return lastMsgId;
-        };
-
-        const sendReaction = async (targetChatId, targetMsgId, emoji, isBig = false) => {
-          await bot.setMessageReaction(targetChatId, targetMsgId, {
-            reaction: [{ type: 'emoji', emoji }],
-            is_big: isBig,
-          });
-        };
+        const onUpdate = createOnUpdate(bot, chatId);
+        const sendReaction = createSendReaction(bot);
 
         const reply = await agent.processMessage(chatId, reactionText, {
           id: userId,
