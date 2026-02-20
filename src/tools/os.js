@@ -2,12 +2,24 @@ import { exec } from 'child_process';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { dirname, resolve, join } from 'path';
 import { homedir } from 'os';
+import { getLogger } from '../utils/logger.js';
 
+/**
+ * Expand a file path, resolving `~` to the user's home directory.
+ * @param {string} p - The path to expand.
+ * @returns {string} The resolved absolute path.
+ */
 function expandPath(p) {
   if (p.startsWith('~')) return join(homedir(), p.slice(1));
   return resolve(p);
 }
 
+/**
+ * Check whether a file path falls within any blocked path defined in config.
+ * @param {string} filePath - The path to check.
+ * @param {object} config - The bot configuration object.
+ * @returns {boolean} True if the path is blocked.
+ */
 function isBlocked(filePath, config) {
   const expanded = expandPath(filePath);
   const blockedPaths = config.security?.blocked_paths || [];
@@ -94,14 +106,25 @@ export const definitions = [
   },
 ];
 
-function listRecursive(dirPath, base = '') {
+/** Maximum recursion depth for directory listing to prevent stack overflow. */
+const MAX_RECURSIVE_DEPTH = 10;
+
+/**
+ * Recursively list all files and directories under a given path.
+ * @param {string} dirPath - Absolute path to the directory to list.
+ * @param {string} [base=''] - Relative path prefix for nested entries.
+ * @param {number} [depth=0] - Current recursion depth (internal).
+ * @returns {Array<{name: string, type: string}>} Flat array of entries.
+ */
+function listRecursive(dirPath, base = '', depth = 0) {
+  if (depth >= MAX_RECURSIVE_DEPTH) return [];
   const entries = [];
   for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
     const rel = base ? `${base}/${entry.name}` : entry.name;
     const type = entry.isDirectory() ? 'directory' : 'file';
     entries.push({ name: rel, type });
     if (entry.isDirectory()) {
-      entries.push(...listRecursive(join(dirPath, entry.name), rel));
+      entries.push(...listRecursive(join(dirPath, entry.name), rel, depth + 1));
     }
   }
   return entries;
@@ -109,6 +132,7 @@ function listRecursive(dirPath, base = '') {
 
 export const handlers = {
   execute_command: async (params, context) => {
+    const logger = getLogger();
     const { command, timeout_seconds = 30 } = params;
     const { config } = context;
     const blockedPaths = config.security?.blocked_paths || [];
@@ -117,9 +141,12 @@ export const handlers = {
     for (const bp of blockedPaths) {
       const expanded = expandPath(bp);
       if (command.includes(expanded)) {
+        logger.warn(`execute_command blocked: command references restricted path ${bp}`);
         return { error: `Blocked: command references restricted path ${bp}` };
       }
     }
+
+    logger.debug(`execute_command: ${command.slice(0, 120)}`);
 
     return new Promise((res) => {
       let abortHandler = null;
@@ -164,8 +191,10 @@ export const handlers = {
   },
 
   read_file: async (params, context) => {
+    const logger = getLogger();
     const { path: filePath, max_lines } = params;
     if (isBlocked(filePath, context.config)) {
+      logger.warn(`read_file blocked: access to ${filePath} is restricted`);
       return { error: `Blocked: access to ${filePath} is restricted` };
     }
 
@@ -184,8 +213,10 @@ export const handlers = {
   },
 
   write_file: async (params, context) => {
+    const logger = getLogger();
     const { path: filePath, content } = params;
     if (isBlocked(filePath, context.config)) {
+      logger.warn(`write_file blocked: access to ${filePath} is restricted`);
       return { error: `Blocked: access to ${filePath} is restricted` };
     }
 
@@ -193,15 +224,19 @@ export const handlers = {
       const expanded = expandPath(filePath);
       mkdirSync(dirname(expanded), { recursive: true });
       writeFileSync(expanded, content, 'utf-8');
+      logger.debug(`write_file: wrote ${content.length} bytes to ${expanded}`);
       return { success: true, path: expanded };
     } catch (err) {
+      logger.error(`write_file error for ${filePath}: ${err.message}`);
       return { error: err.message };
     }
   },
 
   list_directory: async (params, context) => {
+    const logger = getLogger();
     const { path: dirPath, recursive = false } = params;
     if (isBlocked(dirPath, context.config)) {
+      logger.warn(`list_directory blocked: access to ${dirPath} is restricted`);
       return { error: `Blocked: access to ${dirPath} is restricted` };
     }
 
