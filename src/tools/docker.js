@@ -1,4 +1,4 @@
-import { shellRun } from '../utils/shell.js';
+import { shellRun, shellEscape } from '../utils/shell.js';
 
 const run = (cmd, timeout = 30000) => shellRun(cmd, timeout, { maxBuffer: 10 * 1024 * 1024 });
 
@@ -58,16 +58,16 @@ export const handlers = {
   },
 
   docker_logs: async (params) => {
-    const tail = params.tail || 100;
-    return await run(`docker logs --tail ${tail} ${params.container}`);
+    const tail = parseInt(params.tail, 10) || 100;
+    return await run(`docker logs --tail ${tail} ${shellEscape(params.container)}`);
   },
 
   docker_exec: async (params) => {
-    return await run(`docker exec ${params.container} ${params.command}`);
+    return await run(`docker exec ${shellEscape(params.container)} ${params.command}`);
   },
 
   docker_compose: async (params) => {
-    const dir = params.project_dir ? `-f ${params.project_dir}/docker-compose.yml` : '';
+    const dir = params.project_dir ? `-f ${shellEscape(params.project_dir + '/docker-compose.yml')}` : '';
     return await run(`docker compose ${dir} ${params.action}`, 120000);
   },
 };

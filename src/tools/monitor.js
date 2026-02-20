@@ -1,5 +1,5 @@
 import { platform } from 'os';
-import { shellRun as run } from '../utils/shell.js';
+import { shellRun as run, shellEscape } from '../utils/shell.js';
 
 const isMac = platform() === 'darwin';
 
@@ -59,17 +59,17 @@ export const handlers = {
   },
 
   system_logs: async (params) => {
-    const lines = params.lines || 50;
+    const lines = parseInt(params.lines, 10) || 50;
     const source = params.source || 'journalctl';
     const filter = params.filter;
 
     if (source === 'journalctl') {
-      const filterArg = filter ? ` -g "${filter}"` : '';
+      const filterArg = filter ? ` -g ${shellEscape(filter)}` : '';
       return await run(`journalctl -n ${lines}${filterArg} --no-pager`);
     }
 
     // Reading a log file
-    const filterCmd = filter ? ` | grep -i "${filter}"` : '';
-    return await run(`tail -n ${lines} "${source}"${filterCmd}`);
+    const filterCmd = filter ? ` | grep -i ${shellEscape(filter)}` : '';
+    return await run(`tail -n ${lines} ${shellEscape(source)}${filterCmd}`);
   },
 };
