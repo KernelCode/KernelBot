@@ -327,6 +327,24 @@ export class OrchestratorAgent {
 
     // Build working messages from compressed history
     const messages = [...this.conversationManager.getSummarizedHistory(chatId)];
+
+    // If an image is attached, upgrade the last user message to a multimodal content array
+    if (opts.imageAttachment) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user' && typeof messages[i].content === 'string') {
+          messages[i] = {
+            role: 'user',
+            content: [
+              { type: 'image', source: opts.imageAttachment },
+              { type: 'text', text: messages[i].content },
+            ],
+          };
+          break;
+        }
+      }
+      logger.info(`[Orchestrator] Image attached to message for chat ${chatId} (${opts.imageAttachment.media_type})`);
+    }
+
     logger.debug(`Orchestrator conversation context: ${messages.length} messages, max_depth=${max_tool_depth}`);
 
     const reply = await this._runLoop(chatId, messages, user, 0, max_tool_depth, temporalContext);

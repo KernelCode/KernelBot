@@ -819,6 +819,37 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       }
     }
 
+    // Handle photo messages — download, convert to base64, and pass to LLM for vision analysis
+    let imageAttachment = null;
+    if (msg.photo && msg.photo.length > 0) {
+      logger.info(`[Bot] Photo message from ${username} (${userId}) in chat ${chatId}`);
+      try {
+        // Use highest resolution (last item in array)
+        const photo = msg.photo[msg.photo.length - 1];
+        const fileLink = await bot.getFileLink(photo.file_id);
+        const response = await fetch(fileLink);
+        if (!response.ok) throw new Error(`Failed to download photo: ${response.statusText}`);
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const base64Data = buffer.toString('base64');
+
+        // Determine media type from URL extension, default to jpeg
+        const ext = fileLink.split('.').pop().split('?')[0].toLowerCase();
+        const extToMime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+        const mediaType = extToMime[ext] || 'image/jpeg';
+
+        imageAttachment = { type: 'base64', media_type: mediaType, data: base64Data };
+        // Use caption as text, or default prompt
+        if (!msg.text) {
+          msg.text = msg.caption || 'What do you see in this image? Describe it in detail.';
+        }
+        logger.info(`[Bot] Photo downloaded and encoded (${Math.round(base64Data.length / 1024)}KB base64, ${mediaType})`);
+      } catch (err) {
+        logger.error(`[Bot] Photo processing failed: ${err.message}`);
+        await bot.sendMessage(chatId, 'Failed to process the image. Please try again.');
+        return;
+      }
+    }
+
     if (!msg.text) return; // ignore non-text (and non-document) messages
 
     let text = msg.text.trim();
@@ -1659,7 +1690,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         const reply = await agent.processMessage(chatId, mergedText, {
           id: userId,
           username,
-        }, onUpdate, sendPhoto, { sendReaction, messageId: msg.message_id });
+        }, onUpdate, sendPhoto, { sendReaction, messageId: msg.message_id, imageAttachment });
 
         clearInterval(typingInterval);
 
