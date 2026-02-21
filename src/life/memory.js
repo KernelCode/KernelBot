@@ -1,20 +1,13 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { randomBytes } from 'crypto';
 import { getLogger } from '../utils/logger.js';
+import { genId } from '../utils/ids.js';
+import { todayDateStr } from '../utils/date.js';
 
 const LIFE_DIR = join(homedir(), '.kernelbot', 'life');
 const EPISODIC_DIR = join(LIFE_DIR, 'memories', 'episodic');
 const SEMANTIC_FILE = join(LIFE_DIR, 'memories', 'semantic', 'topics.json');
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function genId(prefix = 'ep') {
-  return `${prefix}_${randomBytes(4).toString('hex')}`;
-}
 
 export class MemoryManager {
   constructor() {
@@ -56,7 +49,7 @@ export class MemoryManager {
    */
   addEpisodic(memory) {
     const logger = getLogger();
-    const date = today();
+    const date = todayDateStr();
     const entries = this._loadEpisodicDay(date);
     const entry = {
       id: genId('ep'),

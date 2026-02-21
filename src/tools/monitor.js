@@ -59,17 +59,24 @@ export const handlers = {
   },
 
   system_logs: async (params) => {
-    const lines = parseInt(params.lines, 10) || 50;
+    let finalLines = 50;
+    if (params.lines != null) {
+      const lines = parseInt(params.lines, 10);
+      if (!Number.isFinite(lines) || lines <= 0 || lines > 10000) {
+        return { error: 'Invalid lines value: must be between 1 and 10000' };
+      }
+      finalLines = lines;
+    }
     const source = params.source || 'journalctl';
     const filter = params.filter;
 
     if (source === 'journalctl') {
       const filterArg = filter ? ` -g ${shellEscape(filter)}` : '';
-      return await run(`journalctl -n ${lines}${filterArg} --no-pager`);
+      return await run(`journalctl -n ${finalLines}${filterArg} --no-pager`);
     }
 
     // Reading a log file
     const filterCmd = filter ? ` | grep -i ${shellEscape(filter)}` : '';
-    return await run(`tail -n ${lines} ${shellEscape(source)}${filterCmd}`);
+    return await run(`tail -n ${finalLines} ${shellEscape(source)}${filterCmd}`);
   },
 };

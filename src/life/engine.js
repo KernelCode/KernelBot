@@ -407,31 +407,9 @@ This is your private thought space — be genuine, be curious, be alive.`;
     const response = await this._innerChat(prompt);
 
     if (response) {
-      // Extract ideas
-      const ideaLines = response.split('\n').filter(l => l.trim().startsWith('IDEA:'));
-      for (const line of ideaLines) {
-        this._addIdea(line.replace(/^IDEA:\s*/, '').trim());
-      }
+      const extracted = this._extractTaggedLines(response, ['IDEA', 'SHARE', 'ASK', 'IMPROVE']);
+      this._processResponseTags(extracted, 'think');
 
-      // Extract shares
-      const shareLines = response.split('\n').filter(l => l.trim().startsWith('SHARE:'));
-      for (const line of shareLines) {
-        this.shareQueue.add(line.replace(/^SHARE:\s*/, '').trim(), 'think', 'medium');
-      }
-
-      // Extract questions to ask users
-      const askLines = response.split('\n').filter(l => l.trim().startsWith('ASK:'));
-      for (const line of askLines) {
-        this.shareQueue.add(line.replace(/^ASK:\s*/, '').trim(), 'think', 'medium', null, ['question']);
-      }
-
-      // Extract self-improvement proposals for evolution pipeline
-      const improveLines = response.split('\n').filter(l => l.trim().startsWith('IMPROVE:'));
-      for (const line of improveLines) {
-        this._addIdea(`[IMPROVE] ${line.replace(/^IMPROVE:\s*/, '').trim()}`);
-      }
-
-      // Store as episodic memory
       this.memoryManager.addEpisodic({
         type: 'thought',
         source: 'think',
@@ -440,7 +418,7 @@ This is your private thought space — be genuine, be curious, be alive.`;
         importance: 3,
       });
 
-      logger.info(`[LifeEngine] Think complete (${response.length} chars, ${ideaLines.length} ideas, ${shareLines.length} shares, ${askLines.length} questions, ${improveLines.length} improvements)`);
+      logger.info(`[LifeEngine] Think complete (${response.length} chars, ${extracted.IDEA.length} ideas, ${extracted.SHARE.length} shares, ${extracted.ASK.length} questions, ${extracted.IMPROVE.length} improvements)`);
     }
   }
 
@@ -477,25 +455,9 @@ If you learn a key fact or concept, prefix it with "LEARNED:" followed by "topic
     const response = await this._dispatchWorker('research', prompt);
 
     if (response) {
-      // Extract shares
-      const shareLines = response.split('\n').filter(l => l.trim().startsWith('SHARE:'));
-      for (const line of shareLines) {
-        this.shareQueue.add(line.replace(/^SHARE:\s*/, '').trim(), 'browse', 'medium');
-      }
+      const extracted = this._extractTaggedLines(response, ['SHARE', 'LEARNED']);
+      this._processResponseTags(extracted, 'browse');
 
-      // Extract learned facts
-      const learnedLines = response.split('\n').filter(l => l.trim().startsWith('LEARNED:'));
-      for (const line of learnedLines) {
-        const content = line.replace(/^LEARNED:\s*/, '').trim();
-        const colonIdx = content.indexOf(':');
-        if (colonIdx > 0) {
-          const topicKey = content.slice(0, colonIdx).trim();
-          const summary = content.slice(colonIdx + 1).trim();
-          this.memoryManager.addSemantic(topicKey, { summary });
-        }
-      }
-
-      // Store as episodic memory
       this.memoryManager.addEpisodic({
         type: 'discovery',
         source: 'browse',
@@ -594,10 +556,10 @@ Respond with just your creation — no tool calls needed.`;
     const response = await this._innerChat(prompt);
 
     if (response) {
-      // Extract shares
-      const shareLines = response.split('\n').filter(l => l.trim().startsWith('SHARE:'));
-      for (const line of shareLines) {
-        this.shareQueue.add(line.replace(/^SHARE:\s*/, '').trim(), 'create', 'medium', null, ['creation']);
+      const extracted = this._extractTaggedLines(response, ['SHARE']);
+      // Creative shares get a 'creation' tag for richer attribution
+      for (const text of extracted.SHARE) {
+        this.shareQueue.add(text, 'create', 'medium', null, ['creation']);
       }
 
       this.memoryManager.addEpisodic({
@@ -1203,23 +1165,11 @@ Be honest and constructive. This is your chance to learn from real interactions.
     const response = await this._innerChat(prompt);
 
     if (response) {
-      // Extract improvement ideas
-      const improveLines = response.split('\n').filter(l => l.trim().startsWith('IMPROVE:'));
-      for (const line of improveLines) {
-        this._addIdea(`[IMPROVE] ${line.replace(/^IMPROVE:\s*/, '').trim()}`);
-      }
+      const extracted = this._extractTaggedLines(response, ['IMPROVE', 'PATTERN']);
+      this._processResponseTags(extracted, 'reflect');
 
-      // Extract patterns as semantic memories
-      const patternLines = response.split('\n').filter(l => l.trim().startsWith('PATTERN:'));
-      for (const line of patternLines) {
-        const content = line.replace(/^PATTERN:\s*/, '').trim();
-        this.memoryManager.addSemantic('interaction_patterns', { summary: content });
-      }
-
-      // Write a journal entry with the reflection
       this.journalManager.writeEntry('Interaction Reflection', response);
 
-      // Store as episodic memory
       this.memoryManager.addEpisodic({
         type: 'thought',
         source: 'reflect',
@@ -1228,7 +1178,7 @@ Be honest and constructive. This is your chance to learn from real interactions.
         importance: 5,
       });
 
-      logger.info(`[LifeEngine] Reflection complete (${response.length} chars, ${improveLines.length} improvements, ${patternLines.length} patterns)`);
+      logger.info(`[LifeEngine] Reflection complete (${response.length} chars, ${extracted.IMPROVE.length} improvements, ${extracted.PATTERN.length} patterns)`);
     }
   }
 
@@ -1306,6 +1256,78 @@ Be honest and constructive. This is your chance to learn from real interactions.
   }
 
   // ── Utilities ──────────────────────────────────────────────────
+
+  /**
+   * Extract tagged lines from an LLM response.
+   * Tags are prefixes like "SHARE:", "IDEA:", "IMPROVE:", etc. that the LLM
+   * uses to signal structured intents within free-form text.
+   *
+   * @param {string} response - Raw LLM response text.
+   * @param {string[]} tags - List of tag prefixes to extract (e.g. ['SHARE', 'IDEA']).
+   * @returns {Record<string, string[]>} Map of tag → array of extracted values (prefix stripped, trimmed).
+   */
+  _extractTaggedLines(response, tags) {
+    const lines = response.split('\n');
+    const result = {};
+    for (const tag of tags) {
+      result[tag] = [];
+    }
+    for (const line of lines) {
+      const trimmed = line.trim();
+      for (const tag of tags) {
+        if (trimmed.startsWith(`${tag}:`)) {
+          result[tag].push(trimmed.slice(tag.length + 1).trim());
+          break;
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Process common tagged lines from an activity response, routing each tag
+   * to the appropriate handler (share queue, ideas backlog, semantic memory).
+   *
+   * @param {Record<string, string[]>} extracted - Output from _extractTaggedLines.
+   * @param {string} source - Activity source for share queue attribution (e.g. 'think', 'browse').
+   */
+  _processResponseTags(extracted, source) {
+    if (extracted.SHARE) {
+      for (const text of extracted.SHARE) {
+        this.shareQueue.add(text, source, 'medium');
+      }
+    }
+    if (extracted.IDEA) {
+      for (const text of extracted.IDEA) {
+        this._addIdea(text);
+      }
+    }
+    if (extracted.IMPROVE) {
+      for (const text of extracted.IMPROVE) {
+        this._addIdea(`[IMPROVE] ${text}`);
+      }
+    }
+    if (extracted.ASK) {
+      for (const text of extracted.ASK) {
+        this.shareQueue.add(text, source, 'medium', null, ['question']);
+      }
+    }
+    if (extracted.LEARNED) {
+      for (const text of extracted.LEARNED) {
+        const colonIdx = text.indexOf(':');
+        if (colonIdx > 0) {
+          const topicKey = text.slice(0, colonIdx).trim();
+          const summary = text.slice(colonIdx + 1).trim();
+          this.memoryManager.addSemantic(topicKey, { summary });
+        }
+      }
+    }
+    if (extracted.PATTERN) {
+      for (const text of extracted.PATTERN) {
+        this.memoryManager.addSemantic('interaction_patterns', { summary: text });
+      }
+    }
+  }
 
   _formatDuration(ms) {
     const hours = Math.floor(ms / 3600_000);

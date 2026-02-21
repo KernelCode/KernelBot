@@ -64,9 +64,18 @@ export const handlers = {
 
   docker_logs: async (params) => {
     const logger = getLogger();
-    const tail = parseInt(params.tail, 10) || 100;
-    logger.debug(`docker_logs: fetching ${tail} lines from ${params.container}`);
-    const result = await run(`docker logs --tail ${tail} ${shellEscape(params.container)}`);
+    if (params.tail != null) {
+      const tail = parseInt(params.tail, 10);
+      if (!Number.isFinite(tail) || tail <= 0 || tail > 10000) {
+        return { error: 'Invalid tail value: must be between 1 and 10000' };
+      }
+      logger.debug(`docker_logs: fetching ${tail} lines from ${params.container}`);
+      const result = await run(`docker logs --tail ${tail} ${shellEscape(params.container)}`);
+      if (result.error) logger.error(`docker_logs failed for ${params.container}: ${result.error}`);
+      return result;
+    }
+    logger.debug(`docker_logs: fetching 100 lines from ${params.container}`);
+    const result = await run(`docker logs --tail 100 ${shellEscape(params.container)}`);
     if (result.error) logger.error(`docker_logs failed for ${params.container}: ${result.error}`);
     return result;
   },
