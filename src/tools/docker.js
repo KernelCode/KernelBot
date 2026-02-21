@@ -82,8 +82,11 @@ export const handlers = {
 
   docker_exec: async (params) => {
     const logger = getLogger();
+    if (!params.command || !params.command.trim()) {
+      return { error: 'Command must not be empty' };
+    }
     logger.debug(`docker_exec: running command in ${params.container}`);
-    const result = await run(`docker exec ${shellEscape(params.container)} ${params.command}`);
+    const result = await run(`docker exec ${shellEscape(params.container)} sh -c ${shellEscape(params.command)}`);
     if (result.error) logger.error(`docker_exec failed in ${params.container}: ${result.error}`);
     return result;
   },
