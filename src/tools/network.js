@@ -1,4 +1,5 @@
 import { shellRun, shellEscape } from '../utils/shell.js';
+import { getLogger } from '../utils/logger.js';
 
 const run = (cmd, timeout = 15000) => shellRun(cmd, timeout);
 
@@ -38,14 +39,17 @@ export const definitions = [
 
 export const handlers = {
   check_port: async (params) => {
+    const logger = getLogger();
     const host = params.host || 'localhost';
     const port = parseInt(params.port, 10);
     if (!Number.isFinite(port) || port <= 0 || port > 65535) return { error: 'Invalid port number' };
 
+    logger.debug(`check_port: checking ${host}:${port}`);
     // Use nc (netcat) for port check — works on both macOS and Linux
     const result = await run(`nc -z -w 3 ${shellEscape(host)} ${port} 2>&1 && echo "OPEN" || echo "CLOSED"`, 5000);
 
     if (result.error) {
+      logger.error(`check_port failed for ${host}:${port}: ${result.error}`);
       return { port, host, status: 'closed', detail: result.error };
     }
 
@@ -82,15 +86,22 @@ export const handlers = {
   },
 
   nginx_reload: async () => {
+    const logger = getLogger();
     // Test config first
+    logger.debug('nginx_reload: testing configuration');
     const test = await run('nginx -t 2>&1');
     if (test.error || (test.output && test.output.includes('failed'))) {
+      logger.error(`nginx_reload: config test failed: ${test.error || test.output}`);
       return { error: `Config test failed: ${test.error || test.output}` };
     }
 
     const reload = await run('nginx -s reload 2>&1');
-    if (reload.error) return reload;
+    if (reload.error) {
+      logger.error(`nginx_reload failed: ${reload.error}`);
+      return reload;
+    }
 
+    logger.debug('nginx_reload: successfully reloaded');
     return { success: true, test_output: test.output };
   },
 };

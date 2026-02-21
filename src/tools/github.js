@@ -1,4 +1,5 @@
 import { Octokit } from '@octokit/rest';
+import { getLogger } from '../utils/logger.js';
 
 function getOctokit(config) {
   const token = config.github?.token || process.env.GITHUB_TOKEN;
@@ -104,6 +105,7 @@ export const handlers = {
 
       return { success: true, pr_number: data.number, url: data.html_url };
     } catch (err) {
+      getLogger().error(`github_create_pr failed: ${err.message}`);
       return { error: err.message };
     }
   },
@@ -122,6 +124,7 @@ export const handlers = {
 
       return { diff: data };
     } catch (err) {
+      getLogger().error(`github_get_pr_diff failed: ${err.message}`);
       return { error: err.message };
     }
   },
@@ -141,6 +144,7 @@ export const handlers = {
 
       return { success: true, review_id: data.id };
     } catch (err) {
+      getLogger().error(`github_post_review failed: ${err.message}`);
       return { error: err.message };
     }
   },
@@ -169,6 +173,7 @@ export const handlers = {
 
       return { success: true, url: data.html_url, clone_url: data.clone_url };
     } catch (err) {
+      getLogger().error(`github_create_repo failed: ${err.message}`);
       return { error: err.message };
     }
   },
@@ -195,6 +200,7 @@ export const handlers = {
 
       return { prs };
     } catch (err) {
+      getLogger().error(`github_list_prs failed: ${err.message}`);
       return { error: err.message };
     }
   },
