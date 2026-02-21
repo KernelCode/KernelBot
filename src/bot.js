@@ -1677,8 +1677,10 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           }
         }
 
-        // Send voice reply if TTS is available and the reply isn't too short
-        if (ttsService.isAvailable() && reply && reply.length > 5) {
+        // Send voice reply only when the user explicitly requests it
+        const voiceKeywords = ['صوت', 'صوتك', 'صوتية', 'صوتي', 'voice', 'speak', 'hear you'];
+        const wantsVoice = voiceKeywords.some((kw) => mergedText.toLowerCase().includes(kw));
+        if (wantsVoice && ttsService.isAvailable() && reply && reply.length > 5) {
           try {
             const audioPath = await ttsService.synthesize(reply);
             if (audioPath) {
