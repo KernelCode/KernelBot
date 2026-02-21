@@ -1,15 +1,11 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { randomBytes } from 'crypto';
 import { getLogger } from '../utils/logger.js';
+import { genId } from '../utils/ids.js';
 
 const LIFE_DIR = join(homedir(), '.kernelbot', 'life');
 const IMPROVEMENTS_FILE = join(LIFE_DIR, 'improvements.json');
-
-function genId() {
-  return `imp_${randomBytes(4).toString('hex')}`;
-}
 
 export class ImprovementTracker {
   constructor() {
@@ -39,7 +35,7 @@ export class ImprovementTracker {
   addProposal(proposal) {
     const logger = getLogger();
     const entry = {
-      id: genId(),
+      id: genId('imp'),
       createdAt: Date.now(),
       status: 'pending', // pending, approved, rejected
       description: proposal.description,

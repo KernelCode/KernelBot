@@ -1,15 +1,12 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { randomBytes } from 'crypto';
 import { getLogger } from '../utils/logger.js';
+import { genId } from '../utils/ids.js';
+import { getStartOfDayMs } from '../utils/date.js';
 
 const LIFE_DIR = join(homedir(), '.kernelbot', 'life');
 const EVOLUTION_FILE = join(LIFE_DIR, 'evolution.json');
-
-function genId(prefix = 'evo') {
-  return `${prefix}_${randomBytes(4).toString('hex')}`;
-}
 
 const VALID_STATUSES = ['research', 'planned', 'coding', 'pr_open', 'merged', 'rejected', 'failed'];
 const TERMINAL_STATUSES = ['merged', 'rejected', 'failed'];
@@ -231,9 +228,8 @@ export class EvolutionTracker {
   }
 
   getProposalsToday() {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    return this._data.proposals.filter(p => p.createdAt >= startOfDay.getTime());
+    const cutoff = getStartOfDayMs();
+    return this._data.proposals.filter(p => p.createdAt >= cutoff);
   }
 
   // ── Internal ──────────────────────────────────────────────────

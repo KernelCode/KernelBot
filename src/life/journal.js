@@ -2,12 +2,9 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 
 import { join } from 'path';
 import { homedir } from 'os';
 import { getLogger } from '../utils/logger.js';
+import { todayDateStr } from '../utils/date.js';
 
 const JOURNAL_DIR = join(homedir(), '.kernelbot', 'life', 'journals');
-
-function todayDate() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function formatDate(date) {
   return new Date(date + 'T00:00:00').toLocaleDateString('en-US', {
@@ -38,7 +35,7 @@ export class JournalManager {
    */
   writeEntry(title, content) {
     const logger = getLogger();
-    const date = todayDate();
+    const date = todayDateStr();
     const filePath = this._journalPath(date);
     const time = timeNow();
 
@@ -58,7 +55,7 @@ export class JournalManager {
    * Get today's journal content.
    */
   getToday() {
-    const filePath = this._journalPath(todayDate());
+    const filePath = this._journalPath(todayDateStr());
     if (!existsSync(filePath)) return null;
     return readFileSync(filePath, 'utf-8');
   }
