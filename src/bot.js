@@ -43,6 +43,27 @@ async function simulateTypingDelay(bot, chatId, text) {
   return new Promise((resolve) => setTimeout(resolve, finalDelay));
 }
 
+/**
+ * Simulate a brief pause between consecutive message chunks.
+ * When a long reply is split into multiple Telegram messages, firing them
+ * all instantly feels robotic. This adds a short, natural delay with a
+ * typing indicator so multi-part replies feel more human.
+ *
+ * @param {TelegramBot} bot - Telegram bot instance
+ * @param {number} chatId - Chat to show typing in
+ * @param {string} nextChunk - The upcoming chunk (used to scale the pause)
+ * @returns {Promise<void>}
+ */
+async function simulateInterChunkDelay(bot, chatId, nextChunk) {
+  // Shorter than the initial typing delay: 0.3s – 1.5s based on chunk length
+  const length = (nextChunk || '').length;
+  const base = Math.min(1500, Math.max(300, length * 8));
+  const jitter = base * (0.85 + Math.random() * 0.3);
+
+  bot.sendChatAction(chatId, 'typing').catch(() => {});
+  return new Promise((resolve) => setTimeout(resolve, Math.round(jitter)));
+}
+
 function splitMessage(text, maxLength = 4096) {
   if (text.length <= maxLength) return [text];
 
@@ -1699,12 +1720,14 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
         logger.info(`[Bot] Reply for chat ${chatId}: ${(reply || '').length} chars`);
         const chunks = splitMessage(reply || 'Done.');
-        for (const chunk of chunks) {
+        for (let i = 0; i < chunks.length; i++) {
+          // Brief pause between consecutive chunks so multi-part replies feel natural
+          if (i > 0) await simulateInterChunkDelay(bot, chatId, chunks[i]);
           try {
-            await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+            await bot.sendMessage(chatId, chunks[i], { parse_mode: 'Markdown' });
           } catch {
             // Fallback to plain text if Markdown fails
-            await bot.sendMessage(chatId, chunk);
+            await bot.sendMessage(chatId, chunks[i]);
           }
         }
 
@@ -1760,11 +1783,12 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
         if (reply && reply.trim()) {
           const chunks = splitMessage(reply);
-          for (const chunk of chunks) {
+          for (let i = 0; i < chunks.length; i++) {
+            if (i > 0) await simulateInterChunkDelay(bot, chatId, chunks[i]);
             try {
-              await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+              await bot.sendMessage(chatId, chunks[i], { parse_mode: 'Markdown' });
             } catch {
-              await bot.sendMessage(chatId, chunk);
+              await bot.sendMessage(chatId, chunks[i]);
             }
           }
         }
