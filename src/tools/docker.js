@@ -58,8 +58,14 @@ export const handlers = {
   },
 
   docker_logs: async (params) => {
-    const tail = parseInt(params.tail, 10) || 100;
-    return await run(`docker logs --tail ${tail} ${shellEscape(params.container)}`);
+    if (params.tail != null) {
+      const tail = parseInt(params.tail, 10);
+      if (!Number.isFinite(tail) || tail <= 0 || tail > 10000) {
+        return { error: 'Invalid tail value: must be between 1 and 10000' };
+      }
+      return await run(`docker logs --tail ${tail} ${shellEscape(params.container)}`);
+    }
+    return await run(`docker logs --tail 100 ${shellEscape(params.container)}`);
   },
 
   docker_exec: async (params) => {
