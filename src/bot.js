@@ -88,6 +88,7 @@ function splitMessage(text, maxLength = 4096) {
  * Tries Markdown first, falls back to plain text.
  */
 function createOnUpdate(bot, chatId) {
+  const logger = getLogger();
   return async (update, opts = {}) => {
     if (opts.editMessageId) {
       try {
@@ -97,15 +98,16 @@ function createOnUpdate(bot, chatId) {
           parse_mode: 'Markdown',
         });
         return edited.message_id;
-      } catch {
+      } catch (mdErr) {
+        logger.debug(`[Bot] Markdown edit failed for chat ${chatId}, retrying plain: ${mdErr.message}`);
         try {
           const edited = await bot.editMessageText(update, {
             chat_id: chatId,
             message_id: opts.editMessageId,
           });
           return edited.message_id;
-        } catch {
-          // Edit failed — fall through to send new message
+        } catch (plainErr) {
+          logger.debug(`[Bot] Plain-text edit also failed for chat ${chatId}, sending new message: ${plainErr.message}`);
         }
       }
     }
@@ -115,7 +117,8 @@ function createOnUpdate(bot, chatId) {
       try {
         const sent = await bot.sendMessage(chatId, part, { parse_mode: 'Markdown' });
         lastMsgId = sent.message_id;
-      } catch {
+      } catch (mdErr) {
+        logger.debug(`[Bot] Markdown send failed for chat ${chatId}, falling back to plain: ${mdErr.message}`);
         const sent = await bot.sendMessage(chatId, part);
         lastMsgId = sent.message_id;
       }
@@ -1772,6 +1775,12 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     const reactionText = `[User reacted with ${emojis.join(' ')} to your message]`;
 
     chatQueue.enqueue(chatId, async () => {
+      // Show typing indicator while processing the reaction
+      const typingInterval = setInterval(() => {
+        bot.sendChatAction(chatId, 'typing').catch(() => {});
+      }, 4000);
+      bot.sendChatAction(chatId, 'typing').catch(() => {});
+
       try {
         const onUpdate = createOnUpdate(bot, chatId);
         const sendReaction = createSendReaction(bot);
@@ -1781,7 +1790,12 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           username,
         }, onUpdate, null, { sendReaction, messageId: reaction.message_id });
 
+        clearInterval(typingInterval);
+
         if (reply && reply.trim()) {
+          // Simulate human-like typing delay before responding to the reaction
+          await simulateTypingDelay(bot, chatId, reply);
+
           const chunks = splitMessage(reply);
           for (let i = 0; i < chunks.length; i++) {
             if (i > 0) await simulateInterChunkDelay(bot, chatId, chunks[i]);
@@ -1793,6 +1807,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           }
         }
       } catch (err) {
+        clearInterval(typingInterval);
         logger.error(`[Bot] Error processing reaction in chat ${chatId}: ${err.message}`);
       }
     });
