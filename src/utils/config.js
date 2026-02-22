@@ -15,14 +15,14 @@ const DEFAULTS = {
   orchestrator: {
     provider: 'anthropic',
     model: 'claude-opus-4-6',
-    max_tokens: 2048,
+    max_tokens: 4096,
     temperature: 0.3,
     max_tool_depth: 5,
   },
   brain: {
     provider: 'anthropic',
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 4096,
+    max_tokens: 8192,
     temperature: 0.3,
   },
   swarm: {
