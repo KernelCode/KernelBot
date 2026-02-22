@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { getLogger } from '../utils/logger.js';
+import { isQuietHours } from '../utils/timeUtils.js';
 
 const LIFE_DIR = join(homedir(), '.kernelbot', 'life');
 const STATE_FILE = join(LIFE_DIR, 'state.json');
@@ -195,12 +196,8 @@ export class LifeEngine {
     const logger = getLogger();
     this._timerId = null;
 
-    // Check quiet hours
-    const lifeConfig = this.config.life || {};
-    const quietStart = lifeConfig.quiet_hours?.start ?? 2;
-    const quietEnd = lifeConfig.quiet_hours?.end ?? 6;
-    const currentHour = new Date().getHours();
-    if (currentHour >= quietStart && currentHour < quietEnd) {
+    // Check quiet hours (env vars → YAML config → defaults 02:00–06:00)
+    if (isQuietHours(this.config.life)) {
       logger.debug('[LifeEngine] Quiet hours — skipping tick');
       this._armNext();
       return;

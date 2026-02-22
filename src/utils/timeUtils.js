@@ -1,42 +1,58 @@
 /**
  * Quiet Hours utility — configurable "Do Not Disturb" schedule.
  *
- * Set QUIET_HOURS_START and QUIET_HOURS_END in your .env to define
- * a window during which KernelBot will be more considerate: lower
- * notification frequency, softer tone, or skip non-urgent automations.
+ * Resolution order (first defined wins):
+ *   1. Environment variables  QUIET_HOURS_START / QUIET_HOURS_END  (HH:mm)
+ *   2. YAML config values     config.life.quiet_hours.start / .end (integer hour)
+ *   3. Built-in defaults      02:00 – 06:00
  *
  * If neither variable is set, quiet hours are disabled (returns false).
  */
 
+/** Default quiet-hours window (integer hours). */
+const DEFAULT_START = 2;
+const DEFAULT_END = 6;
+
 /**
  * Check whether the current time falls within "quiet hours".
  *
- * Reads QUIET_HOURS_START and QUIET_HOURS_END from environment variables
- * (format: "HH:mm", e.g. "05:00" and "18:00").
- *
- * @returns {boolean} `true` if the current time is inside the configured window;
- *                    `false` if the variables are not set or the time is outside.
+ * @param {object} [lifeConfig] - Optional `config.life` object from YAML.
+ *   When provided, `lifeConfig.quiet_hours.start` / `.end` (integer hours)
+ *   act as the second-priority source before the hardcoded defaults.
+ * @returns {boolean} `true` when the current time is inside the quiet window.
  */
-export function isQuietHours() {
-  const start = process.env.QUIET_HOURS_START;
-  const end = process.env.QUIET_HOURS_END;
+export function isQuietHours(lifeConfig) {
+  const envStart = process.env.QUIET_HOURS_START;
+  const envEnd = process.env.QUIET_HOURS_END;
 
-  if (!start || !end) return false;
+  // ── Path A: env vars are set (HH:mm format, minute-level precision) ──
+  if (envStart && envEnd) {
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-  const now = new Date();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const [startH, startM] = envStart.split(':').map(Number);
+    const [endH, endM] = envEnd.split(':').map(Number);
 
-  const [startH, startM] = start.split(':').map(Number);
-  const [endH, endM] = end.split(':').map(Number);
+    if (isNaN(startH) || isNaN(startM) || isNaN(endH) || isNaN(endM)) return false;
 
-  if (isNaN(startH) || isNaN(startM) || isNaN(endH) || isNaN(endM)) return false;
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
 
-  const startMinutes = startH * 60 + startM;
-  const endMinutes = endH * 60 + endM;
-
-  // Supports ranges that cross midnight (e.g. 22:00 – 06:00)
-  if (startMinutes <= endMinutes) {
-    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+    // Supports ranges that cross midnight (e.g. 22:00 – 06:00)
+    if (startMinutes <= endMinutes) {
+      return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+    }
+    return currentMinutes >= startMinutes || currentMinutes < endMinutes;
   }
-  return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+
+  // ── Path B: fall back to YAML config → hardcoded defaults (hour-level) ──
+  const quietStart = lifeConfig?.quiet_hours?.start ?? DEFAULT_START;
+  const quietEnd = lifeConfig?.quiet_hours?.end ?? DEFAULT_END;
+  const currentHour = new Date().getHours();
+
+  if (quietStart <= quietEnd) {
+    return currentHour >= quietStart && currentHour < quietEnd;
+  }
+  // Midnight-crossing support for integer-hour ranges too
+  return currentHour >= quietStart || currentHour < quietEnd;
 }

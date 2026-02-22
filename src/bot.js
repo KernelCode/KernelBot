@@ -15,6 +15,7 @@ import {
 import { TTSService } from './services/tts.js';
 import { STTService } from './services/stt.js';
 import { getClaudeAuthStatus, claudeLogout } from './claude-auth.js';
+import { isQuietHours } from './utils/timeUtils.js';
 
 /**
  * Simulate a human-like typing delay based on response length.
@@ -1834,10 +1835,6 @@ export function startBot(config, agent, conversationManager, jobManager, automat
   }, 5000);
 
   // ── Proactive share delivery (randomized, self-rearming) ────
-  const lifeConfig = config.life || {};
-  const quietStart = lifeConfig.quiet_hours?.start ?? 2;
-  const quietEnd = lifeConfig.quiet_hours?.end ?? 6;
-
   const armShareDelivery = (delivered) => {
     // If we just delivered something, wait longer (1–4h) before next check
     // If nothing was delivered, check again sooner (10–45min) in case new shares appear
@@ -1848,9 +1845,8 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     logger.debug(`[Bot] Next share check in ${Math.round(delayMs / 60_000)}m`);
 
     setTimeout(async () => {
-      // Respect quiet hours
-      const hour = new Date().getHours();
-      if (hour >= quietStart && hour < quietEnd) {
+      // Respect quiet hours (env vars → YAML config → defaults 02:00–06:00)
+      if (isQuietHours(config.life)) {
         armShareDelivery(false);
         return;
       }
