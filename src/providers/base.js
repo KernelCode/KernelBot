@@ -13,9 +13,28 @@ export class BaseProvider {
   }
 
   /**
+   * Compute retry delay using exponential backoff with full jitter.
+   * Formula: random(0, min(MAX_BACKOFF, BASE * 2^attempt))
+   * This distributes retries across time and avoids thundering-herd
+   * when multiple workers retry simultaneously after a service hiccup.
+   *
+   * @param {number} attempt - Current attempt (1-indexed)
+   * @returns {number} Delay in milliseconds
+   */
+  _retryDelay(attempt) {
+    const BASE_MS = 1000;
+    const MAX_BACKOFF_MS = 30_000;
+    const ceiling = Math.min(MAX_BACKOFF_MS, BASE_MS * Math.pow(2, attempt));
+    return Math.round(Math.random() * ceiling);
+  }
+
+  /**
    * Wrap an async LLM call with timeout + retries on transient errors (up to 3 attempts).
    * Composes an internal timeout AbortController with an optional external signal
    * (e.g. worker cancellation). Either aborting will cancel the call.
+   *
+   * Uses exponential backoff with full jitter between retries to avoid
+   * thundering-herd effects when services recover from outages.
    *
    * @param {(signal: AbortSignal) => Promise<any>} fn - The API call, receives composed signal
    * @param {AbortSignal} [externalSignal] - Optional external abort signal
@@ -56,7 +75,8 @@ export class BaseProvider {
         removeListener?.();
 
         if (attempt < 3 && this._isTransient(err)) {
-          await new Promise((r) => setTimeout(r, 1500 * attempt));
+          const delay = this._retryDelay(attempt);
+          await new Promise((r) => setTimeout(r, delay));
           continue;
         }
         throw err;
@@ -66,17 +86,28 @@ export class BaseProvider {
 
   /**
    * Determine if an error is transient and worth retrying.
-   * Covers connection errors, timeouts, 5xx, and 429 rate limits.
+   * Covers connection errors, DNS failures, timeouts, 5xx, and 429 rate limits.
    */
   _isTransient(err) {
     const msg = err?.message || '';
+
+    // Network-level & connection errors
     if (
       msg.includes('Connection error') ||
       msg.includes('ECONNRESET') ||
+      msg.includes('ECONNREFUSED') ||
+      msg.includes('ECONNABORTED') ||
+      msg.includes('EPIPE') ||
+      msg.includes('ENETUNREACH') ||
+      msg.includes('EHOSTUNREACH') ||
       msg.includes('socket hang up') ||
       msg.includes('ETIMEDOUT') ||
+      msg.includes('ENOTFOUND') ||
+      msg.includes('EAI_AGAIN') ||
       msg.includes('fetch failed') ||
-      msg.includes('timed out')
+      msg.includes('timed out') ||
+      msg.includes('network socket disconnected') ||
+      msg.includes('other side closed')
     ) {
       return true;
     }
@@ -92,7 +123,8 @@ export class BaseProvider {
       } catch {}
     }
 
-    return (status >= 500 && status < 600) || status === 429;
+    // Anthropic overloaded (529) is also transient
+    return (status >= 500 && status < 600) || status === 429 || status === 529;
   }
 
   /**
