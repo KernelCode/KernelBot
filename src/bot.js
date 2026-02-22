@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { createReadStream, readFileSync } from 'fs';
-import { isAllowedUser, getUnauthorizedMessage } from './security/auth.js';
+import { isAllowedUser, getUnauthorizedMessage, alertAdmin } from './security/auth.js';
 import { getLogger } from './utils/logger.js';
 import { PROVIDERS } from './providers/models.js';
 import {
@@ -290,6 +290,13 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
     if (!isAllowedUser(query.from.id, config)) {
       await bot.answerCallbackQuery(query.id, { text: 'Unauthorized' });
+      await alertAdmin(bot, {
+        userId: query.from.id,
+        username: query.from.username,
+        firstName: query.from.first_name,
+        text: `🔘 زر: ${query.data || 'unknown'}`,
+        type: 'callback',
+      });
       return;
     }
 
@@ -779,6 +786,13 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       if (msg.text || msg.document) {
         logger.warn(`Unauthorized access attempt from ${username} (${userId})`);
         await bot.sendMessage(chatId, getUnauthorizedMessage());
+        await alertAdmin(bot, {
+          userId,
+          username: msg.from.username,
+          firstName: msg.from.first_name,
+          text: msg.text || (msg.document ? `📎 ملف: ${msg.document.file_name || 'unknown'}` : undefined),
+          type: 'رسالة',
+        });
       }
       return;
     }
@@ -1762,7 +1776,18 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     const userId = reaction.user?.id;
     const username = reaction.user?.username || reaction.user?.first_name || 'unknown';
 
-    if (!userId || !isAllowedUser(userId, config)) return;
+    if (!userId || !isAllowedUser(userId, config)) {
+      if (userId) {
+        await alertAdmin(bot, {
+          userId,
+          username: reaction.user?.username,
+          firstName: reaction.user?.first_name,
+          text: `${(reaction.new_reaction || []).filter(r => r.type === 'emoji').map(r => r.emoji).join(' ') || 'reaction'}`,
+          type: 'تفاعل',
+        });
+      }
+      return;
+    }
 
     const newReactions = reaction.new_reaction || [];
     const emojis = newReactions
