@@ -4,13 +4,14 @@ import { randomBytes } from 'crypto';
  * A single recurring automation — a scheduled task that the orchestrator runs.
  */
 export class Automation {
-  constructor({ chatId, name, description, schedule }) {
+  constructor({ chatId, name, description, schedule, respectQuietHours }) {
     this.id = randomBytes(4).toString('hex');
     this.chatId = String(chatId);
     this.name = name;
     this.description = description; // the task prompt
     this.schedule = schedule;       // { type, expression?, minutes?, minMinutes?, maxMinutes? }
     this.enabled = true;
+    this.respectQuietHours = respectQuietHours !== false; // default true — skip during quiet hours
     this.lastRun = null;
     this.nextRun = null;
     this.runCount = 0;
@@ -26,7 +27,8 @@ export class Automation {
       ? `next: ${new Date(this.nextRun).toLocaleString()}`
       : 'not scheduled';
     const runs = this.runCount > 0 ? ` | ${this.runCount} runs` : '';
-    return `${status} \`${this.id}\` **${this.name}** — ${scheduleStr} (${nextStr}${runs})`;
+    const quiet = this.respectQuietHours ? '' : ' | 🔔 ignores quiet hours';
+    return `${status} \`${this.id}\` **${this.name}** — ${scheduleStr} (${nextStr}${runs}${quiet})`;
   }
 
   /** Serialize for persistence. */
@@ -38,6 +40,7 @@ export class Automation {
       description: this.description,
       schedule: this.schedule,
       enabled: this.enabled,
+      respectQuietHours: this.respectQuietHours,
       lastRun: this.lastRun,
       nextRun: this.nextRun,
       runCount: this.runCount,
@@ -55,6 +58,7 @@ export class Automation {
     auto.description = data.description;
     auto.schedule = data.schedule;
     auto.enabled = data.enabled;
+    auto.respectQuietHours = data.respectQuietHours !== false; // backward-compat: default true
     auto.lastRun = data.lastRun;
     auto.nextRun = data.nextRun;
     auto.runCount = data.runCount;

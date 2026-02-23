@@ -4,6 +4,7 @@ import { homedir } from 'os';
 import { Automation } from './automation.js';
 import { scheduleNext, cancel } from './scheduler.js';
 import { getLogger } from '../utils/logger.js';
+import { isQuietHours, msUntilQuietEnd } from '../utils/timeUtils.js';
 
 const DATA_DIR = join(homedir(), '.kernelbot');
 const DATA_FILE = join(DATA_DIR, 'automations.json');
@@ -92,6 +93,7 @@ export class AutomationManager {
       name: data.name,
       description: data.description,
       schedule: data.schedule,
+      respectQuietHours: data.respectQuietHours,
     });
 
     this.automations.set(auto.id, auto);
@@ -131,6 +133,7 @@ export class AutomationManager {
 
     if (changes.name !== undefined) auto.name = changes.name;
     if (changes.description !== undefined) auto.description = changes.description;
+    if (changes.respectQuietHours !== undefined) auto.respectQuietHours = changes.respectQuietHours;
 
     if (changes.schedule !== undefined) {
       this._validateSchedule(changes.schedule);
@@ -221,6 +224,19 @@ export class AutomationManager {
     const current = this.automations.get(auto.id);
     if (!current || !current.enabled) {
       logger.debug(`[AutomationManager] Timer fired for ${auto.id} but automation is disabled/deleted — skipping`);
+      return;
+    }
+
+    // Quiet-hours deferral: postpone non-essential automations until the window ends
+    if (current.respectQuietHours && isQuietHours(this._config?.life)) {
+      const deferMs = msUntilQuietEnd(this._config?.life) + 60_000; // +1 min buffer
+      logger.info(`[AutomationManager] Quiet hours — deferring "${current.name}" (${current.id}) for ${Math.round(deferMs / 60_000)}m`);
+
+      // Cancel any existing timer and re-arm to fire after quiet hours
+      this._disarm(current);
+      const timerId = setTimeout(() => this._onTimerFire(current), deferMs);
+      current.nextRun = Date.now() + deferMs;
+      this.timers.set(current.id, timerId);
       return;
     }
 
