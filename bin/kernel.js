@@ -69,6 +69,80 @@ function ask(rl, question) {
   return new Promise((res) => rl.question(question, res));
 }
 
+/**
+ * Register SIGINT/SIGTERM handlers to shut down the bot cleanly.
+ * Stops polling, cancels running jobs, persists conversations,
+ * disarms automations, stops the life engine, and clears intervals.
+ */
+function setupGracefulShutdown({ bot, lifeEngine, automationManager, jobManager, conversationManager, intervals }) {
+  let shuttingDown = false;
+
+  const shutdown = async (signal) => {
+    if (shuttingDown) return; // prevent double-shutdown
+    shuttingDown = true;
+
+    const logger = getLogger();
+    logger.info(`[Shutdown] ${signal} received — shutting down gracefully...`);
+
+    // 1. Stop Telegram polling so no new messages arrive
+    try {
+      bot.stopPolling();
+      logger.info('[Shutdown] Telegram polling stopped');
+    } catch (err) {
+      logger.error(`[Shutdown] Failed to stop polling: ${err.message}`);
+    }
+
+    // 2. Stop life engine heartbeat
+    try {
+      lifeEngine.stop();
+      logger.info('[Shutdown] Life engine stopped');
+    } catch (err) {
+      logger.error(`[Shutdown] Failed to stop life engine: ${err.message}`);
+    }
+
+    // 3. Disarm all automation timers
+    try {
+      automationManager.shutdown();
+      logger.info('[Shutdown] Automation timers cancelled');
+    } catch (err) {
+      logger.error(`[Shutdown] Failed to shutdown automations: ${err.message}`);
+    }
+
+    // 4. Cancel all running jobs
+    try {
+      const running = [...jobManager.jobs.values()].filter(j => !j.isTerminal);
+      for (const job of running) {
+        jobManager.cancelJob(job.id);
+      }
+      if (running.length > 0) {
+        logger.info(`[Shutdown] Cancelled ${running.length} running job(s)`);
+      }
+    } catch (err) {
+      logger.error(`[Shutdown] Failed to cancel jobs: ${err.message}`);
+    }
+
+    // 5. Persist conversations to disk
+    try {
+      conversationManager.save();
+      logger.info('[Shutdown] Conversations saved');
+    } catch (err) {
+      logger.error(`[Shutdown] Failed to save conversations: ${err.message}`);
+    }
+
+    // 6. Clear periodic intervals
+    for (const id of intervals) {
+      clearInterval(id);
+    }
+    logger.info('[Shutdown] Periodic timers cleared');
+
+    logger.info('[Shutdown] Graceful shutdown complete');
+    process.exit(0);
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
+
 function viewLog(filename) {
   const paths = [
     join(process.cwd(), filename),
@@ -242,18 +316,18 @@ async function startBotFlow(config) {
     evolutionTracker, codebaseKnowledge, selfManager,
   });
 
-  startBot(config, agent, conversationManager, jobManager, automationManager, { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge });
+  const bot = startBot(config, agent, conversationManager, jobManager, automationManager, { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge });
 
   // Periodic job cleanup and timeout enforcement
   const cleanupMs = (config.swarm.cleanup_interval_minutes || 30) * 60 * 1000;
-  setInterval(() => {
+  const cleanupInterval = setInterval(() => {
     jobManager.cleanup();
     jobManager.enforceTimeouts();
   }, Math.min(cleanupMs, 60_000)); // enforce timeouts every minute at most
 
   // Periodic memory pruning (daily)
   const retentionDays = config.life?.memory_retention_days || 90;
-  setInterval(() => {
+  const pruneInterval = setInterval(() => {
     memoryManager.pruneOld(retentionDays);
     shareQueue.prune(7);
   }, 24 * 3600_000);
@@ -283,6 +357,12 @@ async function startBotFlow(config) {
   } else {
     logger.info('[Startup] Life engine disabled');
   }
+
+  // Register graceful shutdown handlers
+  setupGracefulShutdown({
+    bot, lifeEngine, automationManager, jobManager,
+    conversationManager, intervals: [cleanupInterval, pruneInterval],
+  });
 
   return true;
 }
