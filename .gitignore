@@ -4,3 +4,6 @@ node_modules/
 config.yaml
 initplan.md
 self/
+local_context.json
+# Local Knowledge Base
+knowledge_base/
