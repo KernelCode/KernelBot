@@ -1,7 +1,48 @@
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import { getLogger } from '../utils/logger.js';
+
 export function isAllowedUser(userId, config) {
   const allowed = config.telegram.allowed_users;
-  if (!allowed || allowed.length === 0) return false;
+
+  // Auto-register the first user as owner when no allowed users exist
+  if (!allowed || allowed.length === 0) {
+    config.telegram.allowed_users = [userId];
+    _persistOwner(userId);
+    const logger = getLogger();
+    logger.info(`[Auth] Auto-registered first user ${userId} as owner`);
+    return true;
+  }
+
   return allowed.includes(userId);
+}
+
+/**
+ * Persist the auto-registered owner ID to ~/.kernelbot/.env
+ */
+function _persistOwner(userId) {
+  try {
+    const configDir = join(homedir(), '.kernelbot');
+    mkdirSync(configDir, { recursive: true });
+    const envPath = join(configDir, '.env');
+
+    let content = '';
+    if (existsSync(envPath)) {
+      content = readFileSync(envPath, 'utf-8').trimEnd() + '\n';
+    }
+
+    const regex = /^OWNER_TELEGRAM_ID=.*$/m;
+    const line = `OWNER_TELEGRAM_ID=${userId}`;
+    if (regex.test(content)) {
+      content = content.replace(regex, line);
+    } else {
+      content += line + '\n';
+    }
+    writeFileSync(envPath, content);
+  } catch {
+    // Non-fatal — owner is still in memory for this session
+  }
 }
 
 export function getUnauthorizedMessage() {
