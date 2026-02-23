@@ -38,9 +38,18 @@ export class STTService {
 
     return new Promise((resolve, reject) => {
       const writer = createWriteStream(tmpPath);
+
+      const fail = (err) => {
+        writer.destroy();
+        // Clean up the partial temp file so it doesn't leak on disk
+        try { unlinkSync(tmpPath); } catch {}
+        reject(err);
+      };
+
+      response.data.on('error', fail);
       response.data.pipe(writer);
       writer.on('finish', () => resolve(tmpPath));
-      writer.on('error', reject);
+      writer.on('error', fail);
     });
   }
 
