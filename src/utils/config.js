@@ -401,7 +401,8 @@ async function promptForMissing(config) {
   }
 
   if (!mutableConfig.brain.api_key) {
-    // Run provider selection flow
+    // Run brain provider selection flow
+    console.log(chalk.bold('\n  🧠 Worker Brain'));
     const { providerKey, modelId } = await promptProviderSelection(rl);
     mutableConfig.brain.provider = providerKey;
     mutableConfig.brain.model = modelId;
@@ -413,6 +414,38 @@ async function promptForMissing(config) {
     const key = await ask(rl, chalk.cyan(`\n  ${providerDef.name} API key: `));
     mutableConfig.brain.api_key = key.trim();
     envLines.push(`${envKey}=${key.trim()}`);
+
+    // Orchestrator provider selection
+    console.log(chalk.bold('\n  🎛️  Orchestrator'));
+    const sameChoice = await ask(rl, chalk.cyan(`  Use same provider (${providerDef.name} / ${modelId}) for orchestrator? [Y/n]: `));
+    if (!sameChoice.trim() || sameChoice.trim().toLowerCase() === 'y') {
+      mutableConfig.orchestrator.provider = providerKey;
+      mutableConfig.orchestrator.model = modelId;
+      mutableConfig.orchestrator.api_key = key.trim();
+      saveOrchestratorToYaml(providerKey, modelId);
+    } else {
+      const orch = await promptProviderSelection(rl);
+      mutableConfig.orchestrator.provider = orch.providerKey;
+      mutableConfig.orchestrator.model = orch.modelId;
+      saveOrchestratorToYaml(orch.providerKey, orch.modelId);
+
+      const orchProviderDef = PROVIDERS[orch.providerKey];
+      if (orch.providerKey === providerKey) {
+        // Same provider — reuse the API key
+        mutableConfig.orchestrator.api_key = key.trim();
+      } else {
+        // Different provider — need a separate key
+        const orchEnvKey = orchProviderDef.envKey;
+        const orchExisting = process.env[orchEnvKey];
+        if (orchExisting) {
+          mutableConfig.orchestrator.api_key = orchExisting;
+        } else {
+          const orchKey = await ask(rl, chalk.cyan(`\n  ${orchProviderDef.name} API key: `));
+          mutableConfig.orchestrator.api_key = orchKey.trim();
+          envLines.push(`${orchEnvKey}=${orchKey.trim()}`);
+        }
+      }
+    }
   }
 
   if (!mutableConfig.telegram.bot_token) {
@@ -468,24 +501,20 @@ export function loadConfig() {
 
   const config = deepMerge(DEFAULTS, fileConfig);
 
+  // Brain — resolve API key from env based on configured provider
+  const providerDef = PROVIDERS[config.brain.provider];
+  if (providerDef && process.env[providerDef.envKey]) {
+    config.brain.api_key = process.env[providerDef.envKey];
+  }
+
   // Orchestrator — resolve API key based on configured provider
   const orchProvider = PROVIDERS[config.orchestrator.provider];
   if (orchProvider && process.env[orchProvider.envKey]) {
     config.orchestrator.api_key = process.env[orchProvider.envKey];
   }
-  // Legacy fallback: ANTHROPIC_API_KEY for anthropic orchestrator
-  if (config.orchestrator.provider === 'anthropic' && !config.orchestrator.api_key && process.env.ANTHROPIC_API_KEY) {
-    config.orchestrator.api_key = process.env.ANTHROPIC_API_KEY;
-  }
-
-  // Overlay env vars for brain API key based on provider
-  const providerDef = PROVIDERS[config.brain.provider];
-  if (providerDef && process.env[providerDef.envKey]) {
-    config.brain.api_key = process.env[providerDef.envKey];
-  }
-  // Legacy fallback: ANTHROPIC_API_KEY for anthropic provider
-  if (config.brain.provider === 'anthropic' && !config.brain.api_key && process.env.ANTHROPIC_API_KEY) {
-    config.brain.api_key = process.env.ANTHROPIC_API_KEY;
+  // If orchestrator uses the same provider as brain, share the key
+  if (!config.orchestrator.api_key && config.orchestrator.provider === config.brain.provider && config.brain.api_key) {
+    config.orchestrator.api_key = config.brain.api_key;
   }
 
   if (process.env.TELEGRAM_BOT_TOKEN) {

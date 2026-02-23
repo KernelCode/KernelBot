@@ -179,26 +179,20 @@ async function runCheck(config) {
   const orchProviderKey = config.orchestrator.provider || 'anthropic';
   const orchProviderDef = PROVIDERS[orchProviderKey];
   const orchLabel = orchProviderDef ? orchProviderDef.name : orchProviderKey;
-  const orchEnvKey = orchProviderDef ? orchProviderDef.envKey : 'ANTHROPIC_API_KEY';
+  const orchEnvKey = orchProviderDef ? orchProviderDef.envKey : 'API_KEY';
 
   await showStartupCheck(`Orchestrator ${orchEnvKey}`, async () => {
-    const orchestratorKey = config.orchestrator.api_key
-      || (orchProviderDef && process.env[orchProviderDef.envKey])
-      || process.env.ANTHROPIC_API_KEY;
-    if (!orchestratorKey) throw new Error('Not set');
+    if (!config.orchestrator.api_key) throw new Error('Not set');
   });
 
   await showStartupCheck(`Orchestrator (${orchLabel}) API connection`, async () => {
-    const orchestratorKey = config.orchestrator.api_key
-      || (orchProviderDef && process.env[orchProviderDef.envKey])
-      || process.env.ANTHROPIC_API_KEY;
     const provider = createProvider({
       brain: {
         provider: orchProviderKey,
         model: config.orchestrator.model,
         max_tokens: config.orchestrator.max_tokens,
         temperature: config.orchestrator.temperature,
-        api_key: orchestratorKey,
+        api_key: config.orchestrator.api_key,
       },
     });
     await provider.ping();
@@ -246,12 +240,11 @@ async function startBotFlow(config) {
   const orchProviderKey = config.orchestrator.provider || 'anthropic';
   const orchProviderDef = PROVIDERS[orchProviderKey];
   const orchLabel = orchProviderDef ? orchProviderDef.name : orchProviderKey;
+  const orchEnvKey = orchProviderDef?.envKey || 'API_KEY';
   checks.push(
     await showStartupCheck(`Orchestrator (${orchLabel}) API`, async () => {
-      const orchestratorKey = config.orchestrator.api_key
-        || (orchProviderDef && process.env[orchProviderDef.envKey])
-        || process.env.ANTHROPIC_API_KEY;
-      if (!orchestratorKey) throw new Error(`${orchProviderDef?.envKey || 'ANTHROPIC_API_KEY'} is required for the orchestrator`);
+      const orchestratorKey = config.orchestrator.api_key;
+      if (!orchestratorKey) throw new Error(`${orchEnvKey} is required for the orchestrator (${orchLabel})`);
       const provider = createProvider({
         brain: {
           provider: orchProviderKey,

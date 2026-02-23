@@ -27,7 +27,7 @@ export class OrchestratorAgent {
     // Orchestrator provider (30s timeout — lean dispatch/summarize calls)
     const orchProviderKey = config.orchestrator.provider || 'anthropic';
     const orchProviderDef = PROVIDERS[orchProviderKey];
-    const orchApiKey = config.orchestrator.api_key || (orchProviderDef && process.env[orchProviderDef.envKey]) || process.env.ANTHROPIC_API_KEY;
+    const orchApiKey = config.orchestrator.api_key || (orchProviderDef && process.env[orchProviderDef.envKey]);
     this.orchestratorProvider = createProvider({
       brain: {
         provider: orchProviderKey,
