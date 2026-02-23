@@ -14,6 +14,47 @@ const DEFAULT_START = 2;
 const DEFAULT_END = 6;
 
 /**
+ * Resolve the active quiet-hours window into a normalised { startMinutes, endMinutes } pair.
+ * Both values are in "minutes since midnight" (0 – 1439).
+ *
+ * @param {object} [lifeConfig] - Optional `config.life` object from YAML.
+ * @returns {{ startMinutes: number, endMinutes: number }}
+ */
+function resolveWindow(lifeConfig) {
+  const envStart = process.env.QUIET_HOURS_START;
+  const envEnd = process.env.QUIET_HOURS_END;
+
+  if (envStart && envEnd) {
+    const [startH, startM] = envStart.split(':').map(Number);
+    const [endH, endM] = envEnd.split(':').map(Number);
+
+    if (!isNaN(startH) && !isNaN(startM) && !isNaN(endH) && !isNaN(endM)) {
+      return { startMinutes: startH * 60 + startM, endMinutes: endH * 60 + endM };
+    }
+  }
+
+  const startHour = lifeConfig?.quiet_hours?.start ?? DEFAULT_START;
+  const endHour = lifeConfig?.quiet_hours?.end ?? DEFAULT_END;
+  return { startMinutes: startHour * 60, endMinutes: endHour * 60 };
+}
+
+/**
+ * Check whether a given "minutes since midnight" value falls inside a quiet window.
+ *
+ * @param {number} current - Current minutes since midnight.
+ * @param {number} start   - Window start (minutes since midnight).
+ * @param {number} end     - Window end   (minutes since midnight).
+ * @returns {boolean}
+ */
+function insideWindow(current, start, end) {
+  if (start <= end) {
+    return current >= start && current < end;
+  }
+  // Window crosses midnight (e.g. 22:00 – 06:00)
+  return current >= start || current < end;
+}
+
+/**
  * Check whether the current time falls within "quiet hours".
  *
  * @param {object} [lifeConfig] - Optional `config.life` object from YAML.
@@ -22,37 +63,48 @@ const DEFAULT_END = 6;
  * @returns {boolean} `true` when the current time is inside the quiet window.
  */
 export function isQuietHours(lifeConfig) {
-  const envStart = process.env.QUIET_HOURS_START;
-  const envEnd = process.env.QUIET_HOURS_END;
+  const { startMinutes, endMinutes } = resolveWindow(lifeConfig);
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  return insideWindow(currentMinutes, startMinutes, endMinutes);
+}
 
-  // ── Path A: env vars are set (HH:mm format, minute-level precision) ──
-  if (envStart && envEnd) {
-    const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+/**
+ * Return the resolved quiet-hours configuration for logging / status display.
+ *
+ * @param {object} [lifeConfig] - Optional `config.life` object from YAML.
+ * @returns {{ start: string, end: string, active: boolean }}
+ *   `start` / `end` are formatted as "HH:MM", `active` reflects the current state.
+ */
+export function getQuietHoursConfig(lifeConfig) {
+  const { startMinutes, endMinutes } = resolveWindow(lifeConfig);
+  const pad = (n) => String(n).padStart(2, '0');
+  const fmt = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+  return {
+    start: fmt(startMinutes),
+    end: fmt(endMinutes),
+    active: isQuietHours(lifeConfig),
+  };
+}
 
-    const [startH, startM] = envStart.split(':').map(Number);
-    const [endH, endM] = envEnd.split(':').map(Number);
+/**
+ * Calculate the number of milliseconds remaining until the current quiet-hours
+ * window ends.  Returns `0` when quiet hours are not active.
+ *
+ * Useful for deferring non-essential work until the window closes.
+ *
+ * @param {object} [lifeConfig] - Optional `config.life` object from YAML.
+ * @returns {number} Milliseconds until quiet hours end (0 if not currently quiet).
+ */
+export function msUntilQuietEnd(lifeConfig) {
+  if (!isQuietHours(lifeConfig)) return 0;
 
-    if (isNaN(startH) || isNaN(startM) || isNaN(endH) || isNaN(endM)) return false;
+  const { endMinutes } = resolveWindow(lifeConfig);
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    const startMinutes = startH * 60 + startM;
-    const endMinutes = endH * 60 + endM;
+  let diff = endMinutes - currentMinutes;
+  if (diff <= 0) diff += 24 * 60; // crosses midnight
 
-    // Supports ranges that cross midnight (e.g. 22:00 – 06:00)
-    if (startMinutes <= endMinutes) {
-      return currentMinutes >= startMinutes && currentMinutes < endMinutes;
-    }
-    return currentMinutes >= startMinutes || currentMinutes < endMinutes;
-  }
-
-  // ── Path B: fall back to YAML config → hardcoded defaults (hour-level) ──
-  const quietStart = lifeConfig?.quiet_hours?.start ?? DEFAULT_START;
-  const quietEnd = lifeConfig?.quiet_hours?.end ?? DEFAULT_END;
-  const currentHour = new Date().getHours();
-
-  if (quietStart <= quietEnd) {
-    return currentHour >= quietStart && currentHour < quietEnd;
-  }
-  // Midnight-crossing support for integer-hour ranges too
-  return currentHour >= quietStart || currentHour < quietEnd;
+  return diff * 60_000;
 }
