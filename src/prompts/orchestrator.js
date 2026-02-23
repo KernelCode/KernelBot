@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { WORKER_TYPES } from '../swarm/worker-registry.js';
+import { buildTemporalAwareness } from '../utils/temporal-awareness.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PERSONA_MD = readFileSync(join(__dirname, 'persona.md'), 'utf-8').trim();
@@ -22,18 +23,26 @@ export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = 
     .map(([key, w]) => `  - **${key}**: ${w.emoji} ${w.description}`)
     .join('\n');
 
-  // Build current time header
-  const now = new Date();
-  const timeStr = now.toLocaleString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
-  let timeBlock = `## Current Time\n${timeStr}`;
+  // Build current time header — enhanced with spatial/temporal awareness if local config exists
+  const awareness = buildTemporalAwareness();
+  let timeBlock;
+  if (awareness) {
+    // Full awareness block from local_context.json (timezone, location, work status)
+    timeBlock = awareness;
+  } else {
+    // Fallback: basic server time (no local context configured)
+    const now = new Date();
+    const timeStr = now.toLocaleString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    });
+    timeBlock = `## Current Time\n${timeStr}`;
+  }
   if (temporalContext) {
     timeBlock += `\n${temporalContext}`;
   }
