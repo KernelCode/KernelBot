@@ -289,6 +289,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     { command: 'journal', description: 'View today\'s journal or a past date' },
     { command: 'memories', description: 'View recent memories or search' },
     { command: 'evolution', description: 'Self-evolution status, history, and lessons' },
+    { command: 'linkedin', description: 'Link/unlink LinkedIn account' },
     { command: 'context', description: 'Show all models, auth, and context info' },
     { command: 'clean', description: 'Clear conversation and start fresh' },
     { command: 'history', description: 'Show message count in memory' },
@@ -1959,6 +1960,101 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       return;
     }
 
+    // ── /linkedin command ───────────────────────────────────────────
+    if (text === '/linkedin' || text.startsWith('/linkedin ')) {
+      logger.info(`[Bot] /linkedin command from ${username} (${userId}) in chat ${chatId}`);
+      const args = text.slice('/linkedin'.length).trim();
+
+      // /linkedin link <token> — validate token and save
+      if (args.startsWith('link')) {
+        const token = args.slice('link'.length).trim();
+        if (!token) {
+          await bot.sendMessage(chatId, [
+            '🔗 *Connect your LinkedIn account*',
+            '',
+            '1. Go to https://www.linkedin.com/developers/tools/oauth/token-generator',
+            '2. Select your app, pick scopes: `openid`, `profile`, `email`, `w_member_social`',
+            '3. Authorize and copy the token',
+            '4. Run: `/linkedin link <your-token>`',
+          ].join('\n'), { parse_mode: 'Markdown' });
+          return;
+        }
+
+        await bot.sendMessage(chatId, '⏳ Validating token...');
+
+        try {
+          // Validate token by calling LinkedIn userinfo endpoint
+          const res = await fetch('https://api.linkedin.com/v2/userinfo', {
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          if (!res.ok) {
+            const errText = await res.text().catch(() => '');
+            throw new Error(`LinkedIn API returned ${res.status}: ${errText.slice(0, 200)}`);
+          }
+          const profile = await res.json();
+          const personUrn = `urn:li:person:${profile.sub}`;
+
+          // Save credentials
+          const { saveCredential } = await import('./utils/config.js');
+          saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
+          saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
+
+          await bot.sendMessage(chatId, [
+            '✅ *LinkedIn connected!*',
+            '',
+            `👤 *${profile.name}*`,
+            profile.email ? `📧 ${profile.email}` : '',
+            '',
+            'You can now ask me to post on LinkedIn, view your posts, comment, and more.',
+          ].filter(Boolean).join('\n'), { parse_mode: 'Markdown' });
+        } catch (err) {
+          logger.error(`[Bot] LinkedIn token validation failed: ${err.message}`);
+          await bot.sendMessage(chatId, `❌ Token validation failed: ${err.message}`);
+        }
+        return;
+      }
+
+      // /linkedin unlink — clear saved token
+      if (args === 'unlink') {
+        if (!config.linkedin?.access_token) {
+          await bot.sendMessage(chatId, 'Your LinkedIn account is not connected.');
+          return;
+        }
+
+        const { saveCredential } = await import('./utils/config.js');
+        saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', '');
+        saveCredential(config, 'LINKEDIN_PERSON_URN', '');
+        // Clear from live config
+        config.linkedin.access_token = null;
+        config.linkedin.person_urn = null;
+
+        await bot.sendMessage(chatId, '✅ LinkedIn account disconnected.');
+        return;
+      }
+
+      // /linkedin (status) — show connection status
+      if (!config.linkedin?.access_token) {
+        await bot.sendMessage(chatId, [
+          '📱 *LinkedIn — Not Connected*',
+          '',
+          'Use `/linkedin link <token>` to connect your account.',
+          '',
+          'Get a token: https://www.linkedin.com/developers/tools/oauth/token-generator',
+        ].join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      await bot.sendMessage(chatId, [
+        '📱 *LinkedIn — Connected*',
+        '',
+        `🔑 Token: \`${config.linkedin.access_token.slice(0, 8)}...${config.linkedin.access_token.slice(-4)}\``,
+        config.linkedin.person_urn ? `👤 URN: \`${config.linkedin.person_urn}\`` : '',
+        '',
+        '`/linkedin unlink` — Disconnect account',
+      ].filter(Boolean).join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
     if (text === '/help') {
       const activeSkill = agent.getActiveSkill(chatId);
       const skillLine = activeSkill
@@ -1981,6 +2077,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         '/journal — View today\'s journal or a past date',
         '/memories — View recent memories or search',
         '/evolution — Self-evolution status, history, lessons',
+        '/linkedin — Link/unlink your LinkedIn account',
         '/context — Show all models, auth, and context info',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',

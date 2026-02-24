@@ -13,6 +13,7 @@ export const TOOL_CATEGORIES = {
   network: ['check_port', 'curl_url', 'nginx_reload'],
   browser: ['web_search', 'browse_website', 'screenshot_website', 'extract_content', 'send_image', 'interact_with_page'],
   jira: ['jira_get_ticket', 'jira_search_tickets', 'jira_list_my_tickets', 'jira_get_project_tickets'],
+  linkedin: ['linkedin_create_post', 'linkedin_get_my_posts', 'linkedin_get_post', 'linkedin_comment_on_post', 'linkedin_get_comments', 'linkedin_like_post', 'linkedin_get_profile', 'linkedin_delete_post'],
 };
 
 const CATEGORY_KEYWORDS = {
@@ -25,6 +26,7 @@ const CATEGORY_KEYWORDS = {
   network: ['port', 'curl', 'http', 'nginx', 'network', 'api', 'endpoint', 'request', 'url', 'fetch'],
   browser: ['search', 'find', 'look up', 'browse', 'screenshot', 'scrape', 'website', 'web page', 'webpage', 'extract content', 'html', 'css selector'],
   jira: ['jira', 'ticket', 'issue', 'sprint', 'backlog', 'story', 'epic'],
+  linkedin: ['linkedin', 'post on linkedin', 'linkedin post', 'linkedin comment', 'share on linkedin'],
 };
 
 // Categories that imply other categories

@@ -827,10 +827,26 @@ export class OrchestratorAgent {
 
     // Build worker context (conversation history, persona, dependency results)
     const workerContext = this._buildWorkerContext(job);
+
+    // LinkedIn credential check for social workers
+    let workerConfig = this.config;
+    if (job.workerType === 'social') {
+      const token = this.config.linkedin?.access_token;
+      const urn = this.config.linkedin?.person_urn;
+      if (!token) {
+        this.jobManager.failJob(job.id, 'LinkedIn not connected. Use /linkedin link <token> to connect your account first.');
+        return;
+      }
+      if (!urn) {
+        this.jobManager.failJob(job.id, 'LinkedIn person URN not set. Use /linkedin link <token> to connect (auto-detects URN).');
+        return;
+      }
+    }
+
     logger.debug(`[Orchestrator] Worker ${job.id} config: ${tools.length} tools, skill=${skillId || 'none'}, brain=${this.config.brain.provider}/${this.config.brain.model}, context=${workerContext ? 'yes' : 'none'}`);
 
     const worker = new WorkerAgent({
-      config: this.config,
+      config: workerConfig,
       workerType: job.workerType,
       jobId: job.id,
       tools,
