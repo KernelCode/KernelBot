@@ -572,9 +572,18 @@ export async function executeOrchestratorTool(name, input, context) {
         related: s.relatedTopics,
       }));
 
-      logger.info(`[recall_memories] Found ${episodicResults.length} episodic, ${semanticResults.length} semantic results`);
+      logger.info(`[recall_memories] Found ${episodicResults.length} episodic, ${semanticResults.length} semantic results for query="${query}"`);
+
+      // Detailed logging — show what was actually recalled
+      for (const m of episodicResults) {
+        logger.info(`[recall_memories]   📝 [${m.age}, imp=${m.importance}] ${m.summary.slice(0, 120)}`);
+      }
+      for (const s of semanticResults) {
+        logger.info(`[recall_memories]   🧠 [${s.topic}] ${s.summary.slice(0, 120)}`);
+      }
 
       if (episodicResults.length === 0 && semanticResults.length === 0) {
+        logger.info(`[recall_memories] No results found for query="${query}"`);
         return { message: `No memories found matching "${query}".` };
       }
 
@@ -610,7 +619,13 @@ export async function executeOrchestratorTool(name, input, context) {
 
       logger.info(`[recall_user_history] Found ${results.length} memories for user ${user_id}`);
 
+      // Detailed logging — show each recalled memory
+      for (const m of results) {
+        logger.info(`[recall_user_history]   📝 [${m.age}, imp=${m.importance}, ${m.type}] ${m.summary.slice(0, 120)}`);
+      }
+
       if (results.length === 0) {
+        logger.info(`[recall_user_history] No memories found for user ${user_id}`);
         return { message: `No memories found for user ${user_id}.` };
       }
 
@@ -651,9 +666,15 @@ export async function executeOrchestratorTool(name, input, context) {
       // Return last 10 matches (most recent)
       const results = matches.slice(-10);
 
-      logger.info(`[search_conversations] Found ${matches.length} matches, returning ${results.length}`);
+      logger.info(`[search_conversations] Found ${matches.length} total matches in chat ${targetChatId}, returning last ${results.length}`);
+
+      // Detailed logging — show matched conversation snippets
+      for (const m of results) {
+        logger.info(`[search_conversations]   💬 [${m.role}, ${m.age}] ${m.snippet.slice(0, 100)}`);
+      }
 
       if (results.length === 0) {
+        logger.info(`[search_conversations] No matches for "${query}" in chat ${targetChatId}`);
         return { message: `No messages found matching "${query}" in this chat.` };
       }
 
