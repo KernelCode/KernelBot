@@ -12,7 +12,7 @@ import { resetClaudeCodeSpawner, getSpawner } from './tools/coding.js';
 import { truncateToolResult } from './utils/truncate.js';
 
 export class OrchestratorAgent {
-  constructor({ config, conversationManager, personaManager, selfManager, jobManager, automationManager, memoryManager, shareQueue }) {
+  constructor({ config, conversationManager, personaManager, selfManager, jobManager, automationManager, memoryManager, shareQueue, characterManager }) {
     this.config = config;
     this.conversationManager = conversationManager;
     this.personaManager = personaManager;
@@ -21,7 +21,14 @@ export class OrchestratorAgent {
     this.automationManager = automationManager || null;
     this.memoryManager = memoryManager || null;
     this.shareQueue = shareQueue || null;
+    this.characterManager = characterManager || null;
+    this._activePersonaMd = null;
+    this._activeCharacterName = null;
+    this._activeCharacterId = null;
     this._pending = new Map(); // chatId -> pending state
+
+    // Character-scoped conversation keys: prefix chatId with character ID
+    // so each character has isolated conversation history.
     this._chatCallbacks = new Map(); // chatId -> { onUpdate, sendPhoto }
 
     // Orchestrator provider (30s timeout — lean dispatch/summarize calls)
@@ -49,7 +56,8 @@ export class OrchestratorAgent {
   /** Build the orchestrator system prompt. */
   _getSystemPrompt(chatId, user, temporalContext = null) {
     const logger = getLogger();
-    const skillId = this.conversationManager.getSkill(chatId);
+    const key = this._chatKey(chatId);
+    const skillId = this.conversationManager.getSkill(key);
     const skillPrompt = skillId ? getUnifiedSkillById(skillId)?.systemPrompt : null;
 
     let userPersona = null;
@@ -74,21 +82,91 @@ export class OrchestratorAgent {
       sharesBlock = this.shareQueue.buildShareBlock(user?.id || null);
     }
 
-    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skill=${skillId || 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'} | temporal=${temporalContext ? 'yes' : 'none'}`);
-    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData, memoriesBlock, sharesBlock, temporalContext);
+    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skill=${skillId || 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'} | temporal=${temporalContext ? 'yes' : 'none'} | character=${this._activeCharacterId || 'default'}`);
+    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData, memoriesBlock, sharesBlock, temporalContext, this._activePersonaMd, this._activeCharacterName);
   }
 
   setSkill(chatId, skillId) {
-    this.conversationManager.setSkill(chatId, skillId);
+    this.conversationManager.setSkill(this._chatKey(chatId), skillId);
   }
 
   clearSkill(chatId) {
-    this.conversationManager.clearSkill(chatId);
+    this.conversationManager.clearSkill(this._chatKey(chatId));
   }
 
   getActiveSkill(chatId) {
-    const skillId = this.conversationManager.getSkill(chatId);
+    const skillId = this.conversationManager.getSkill(this._chatKey(chatId));
     return skillId ? getUnifiedSkillById(skillId) : null;
+  }
+
+  /**
+   * Load a character's context into the agent.
+   * Called on startup and on character switch.
+   */
+  loadCharacter(characterId) {
+    const logger = getLogger();
+    if (!this.characterManager) return;
+
+    const ctx = this.characterManager.buildContext(characterId);
+    this._activeCharacterId = characterId;
+    this._activePersonaMd = ctx.personaMd;
+    this._activeCharacterName = ctx.profile.name;
+    this.selfManager = ctx.selfManager;
+    this.memoryManager = ctx.memoryManager;
+    this.shareQueue = ctx.shareQueue;
+
+    logger.info(`[Agent] Loaded character: ${ctx.profile.name} (${characterId})`);
+    return ctx;
+  }
+
+  /**
+   * Switch to a different character at runtime.
+   * Returns the new context for life engine rebuild.
+   */
+  switchCharacter(characterId) {
+    const logger = getLogger();
+    if (!this.characterManager) throw new Error('CharacterManager not available');
+
+    const ctx = this.loadCharacter(characterId);
+    this.characterManager.setActiveCharacter(characterId);
+
+    logger.info(`[Agent] Switched to character: ${ctx.profile.name} (${characterId})`);
+    return ctx;
+  }
+
+  /** Get active character info for display. */
+  getActiveCharacterInfo() {
+    if (!this.characterManager) return null;
+    const id = this._activeCharacterId || this.characterManager.getActiveCharacterId();
+    return this.characterManager.getCharacter(id);
+  }
+
+  /**
+   * Build a character-scoped conversation key.
+   * Prefixes chatId with the active character ID so each character
+   * has its own isolated conversation history.
+   * Raw chatId is still used for Telegram callbacks, job events, etc.
+   */
+  _chatKey(chatId) {
+    if (this._activeCharacterId) {
+      return `${this._activeCharacterId}:${chatId}`;
+    }
+    return String(chatId);
+  }
+
+  /** Clear conversation history for a chat (character-scoped). */
+  clearConversation(chatId) {
+    this.conversationManager.clear(this._chatKey(chatId));
+  }
+
+  /** Get message count for a chat (character-scoped). */
+  getMessageCount(chatId) {
+    return this.conversationManager.getMessageCount(this._chatKey(chatId));
+  }
+
+  /** Get conversation history for a chat (character-scoped). */
+  getConversationHistory(chatId) {
+    return this.conversationManager.getHistory(this._chatKey(chatId));
   }
 
   /** Return current worker brain info for display. */
@@ -306,9 +384,12 @@ export class OrchestratorAgent {
 
     const { max_tool_depth } = this.config.orchestrator;
 
+    // Character-scoped conversation key
+    const convKey = this._chatKey(chatId);
+
     // Detect time gap before adding the new message
     let temporalContext = null;
-    const lastTs = this.conversationManager.getLastMessageTimestamp(chatId);
+    const lastTs = this.conversationManager.getLastMessageTimestamp(convKey);
     if (lastTs) {
       const gapMs = Date.now() - lastTs;
       const gapMinutes = Math.floor(gapMs / 60_000);
@@ -323,10 +404,10 @@ export class OrchestratorAgent {
     }
 
     // Add user message to persistent history
-    this.conversationManager.addMessage(chatId, 'user', userMessage);
+    this.conversationManager.addMessage(convKey, 'user', userMessage);
 
     // Build working messages from compressed history
-    const messages = [...this.conversationManager.getSummarizedHistory(chatId)];
+    const messages = [...this.conversationManager.getSummarizedHistory(convKey)];
 
     // If an image is attached, upgrade the last user message to a multimodal content array
     if (opts.imageAttachment) {
@@ -402,6 +483,7 @@ export class OrchestratorAgent {
 
     this.jobManager.on('job:completed', async (job) => {
       const chatId = job.chatId;
+      const convKey = this._chatKey(chatId);
       const workerDef = WORKER_TYPES[job.workerType] || {};
       const label = workerDef.label || job.workerType;
 
@@ -416,20 +498,20 @@ export class OrchestratorAgent {
         const summary = await this._summarizeJobResult(chatId, job);
         if (summary) {
           logger.debug(`[Orchestrator] Job ${job.id} summary ready (${summary.length} chars) — delivering to user`);
-          this.conversationManager.addMessage(chatId, 'assistant', summary);
+          this.conversationManager.addMessage(convKey, 'assistant', summary);
           await this._sendUpdate(chatId, summary, { editMessageId: notifyMsgId });
         } else {
           // Summary was null — store the fallback
           const fallback = this._buildSummaryFallback(job, label);
           logger.debug(`[Orchestrator] Job ${job.id} using fallback (${fallback.length} chars) — delivering to user`);
-          this.conversationManager.addMessage(chatId, 'assistant', fallback);
+          this.conversationManager.addMessage(convKey, 'assistant', fallback);
           await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
         }
       } catch (err) {
         logger.error(`[Orchestrator] Failed to summarize job ${job.id}: ${err.message}`);
         // Store the fallback so the orchestrator retains context about what happened
         const fallback = this._buildSummaryFallback(job, label);
-        this.conversationManager.addMessage(chatId, 'assistant', fallback);
+        this.conversationManager.addMessage(convKey, 'assistant', fallback);
         await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId }).catch(() => {});
       }
     });
@@ -451,13 +533,14 @@ export class OrchestratorAgent {
 
     this.jobManager.on('job:failed', (job) => {
       const chatId = job.chatId;
+      const convKey = this._chatKey(chatId);
       const workerDef = WORKER_TYPES[job.workerType] || {};
       const label = workerDef.label || job.workerType;
 
       logger.error(`[Orchestrator] Job failed event: ${job.id} [${job.workerType}] in chat ${chatId} — ${job.error}`);
 
       const msg = `❌ **${label} failed** (\`${job.id}\`): ${job.error}`;
-      this.conversationManager.addMessage(chatId, 'assistant', msg);
+      this.conversationManager.addMessage(convKey, 'assistant', msg);
       this._sendUpdate(chatId, msg);
     });
 
@@ -513,7 +596,7 @@ export class OrchestratorAgent {
       resultContext = (job.result || 'Done.').slice(0, 8000);
     }
 
-    const history = this.conversationManager.getSummarizedHistory(chatId);
+    const history = this.conversationManager.getSummarizedHistory(this._chatKey(chatId));
 
     const response = await this.orchestratorProvider.chat({
       system: this._getSystemPrompt(chatId, null),
@@ -617,7 +700,7 @@ export class OrchestratorAgent {
 
     // 2. Last 5 user messages from conversation history
     try {
-      const history = this.conversationManager.getSummarizedHistory(job.chatId);
+      const history = this.conversationManager.getSummarizedHistory(this._chatKey(job.chatId));
       const userMessages = history
         .filter(m => m.role === 'user' && typeof m.content === 'string')
         .slice(-5)
@@ -740,7 +823,7 @@ export class OrchestratorAgent {
 
     // Get scoped tools and skill
     const tools = getToolsForWorker(job.workerType);
-    const skillId = this.conversationManager.getSkill(chatId);
+    const skillId = this.conversationManager.getSkill(this._chatKey(chatId));
 
     // Build worker context (conversation history, persona, dependency results)
     const workerContext = this._buildWorkerContext(job);
@@ -910,6 +993,7 @@ export class OrchestratorAgent {
 
   async _runLoop(chatId, messages, user, startDepth, maxDepth, temporalContext = null) {
     const logger = getLogger();
+    const convKey = this._chatKey(chatId);
 
     for (let depth = startDepth; depth < maxDepth; depth++) {
       logger.info(`[Orchestrator] LLM call ${depth + 1}/${maxDepth} for chat ${chatId} — sending ${messages.length} messages`);
@@ -939,7 +1023,7 @@ export class OrchestratorAgent {
       if (response.stopReason === 'end_turn') {
         const reply = response.text || '';
         logger.info(`[Orchestrator] End turn — final reply: "${reply.slice(0, 200)}"`);
-        this.conversationManager.addMessage(chatId, 'assistant', reply);
+        this.conversationManager.addMessage(convKey, 'assistant', reply);
         return reply;
       }
 
@@ -988,7 +1072,7 @@ export class OrchestratorAgent {
       // Unexpected stop reason
       logger.warn(`[Orchestrator] Unexpected stopReason: ${response.stopReason}`);
       if (response.text) {
-        this.conversationManager.addMessage(chatId, 'assistant', response.text);
+        this.conversationManager.addMessage(convKey, 'assistant', response.text);
         return response.text;
       }
       return 'Something went wrong — unexpected response from the model.';
@@ -996,7 +1080,7 @@ export class OrchestratorAgent {
 
     logger.warn(`[Orchestrator] Reached max depth (${maxDepth}) for chat ${chatId}`);
     const depthWarning = `Reached maximum orchestrator depth (${maxDepth}).`;
-    this.conversationManager.addMessage(chatId, 'assistant', depthWarning);
+    this.conversationManager.addMessage(convKey, 'assistant', depthWarning);
     return depthWarning;
   }
 
@@ -1045,9 +1129,18 @@ export class OrchestratorAgent {
 
     let resumeCount = 0;
 
-    for (const [chatId, messages] of this.conversationManager.conversations) {
+    // Build expected key prefix for active character
+    const charPrefix = this._activeCharacterId ? `${this._activeCharacterId}:` : '';
+
+    for (const [convKey, messages] of this.conversationManager.conversations) {
       // Skip internal life engine chat
-      if (chatId === '__life__') continue;
+      if (convKey.startsWith('__life__')) continue;
+
+      // Only resume conversations belonging to the active character
+      if (charPrefix && !convKey.startsWith(charPrefix)) continue;
+
+      // Extract raw chatId from scoped key (e.g. "alfred:12345" → "12345")
+      const rawChatId = charPrefix ? convKey.slice(charPrefix.length) : convKey;
 
       try {
         // Find the last message with a timestamp
@@ -1064,17 +1157,17 @@ export class OrchestratorAgent {
           : `${gapMinutes} minute(s)`;
 
         // Build summarized history
-        const history = this.conversationManager.getSummarizedHistory(chatId);
+        const history = this.conversationManager.getSummarizedHistory(convKey);
         if (history.length === 0) continue;
 
         // Build resume prompt
         const resumePrompt = `[System Restart] You just came back online after being offline for ${gapText}. Review the conversation above.\nIf there's something pending (unfinished task, follow-up, something to share), send a short natural message. If nothing's pending, respond with exactly: NONE`;
 
         // Use minimal user object (private TG chats: chatId == userId)
-        const user = { id: chatId };
+        const user = { id: rawChatId };
 
         const response = await this.orchestratorProvider.chat({
-          system: this._getSystemPrompt(chatId, user),
+          system: this._getSystemPrompt(rawChatId, user),
           messages: [
             ...history,
             { role: 'user', content: resumePrompt },
@@ -1084,18 +1177,18 @@ export class OrchestratorAgent {
         const reply = (response.text || '').trim();
 
         if (reply && reply !== 'NONE') {
-          await sendMessageFn(chatId, reply);
-          this.conversationManager.addMessage(chatId, 'assistant', reply);
+          await sendMessageFn(rawChatId, reply);
+          this.conversationManager.addMessage(convKey, 'assistant', reply);
           resumeCount++;
-          logger.info(`[Orchestrator] Resume message sent to chat ${chatId}`);
+          logger.info(`[Orchestrator] Resume message sent to chat ${rawChatId}`);
         } else {
-          logger.debug(`[Orchestrator] No resume needed for chat ${chatId}`);
+          logger.debug(`[Orchestrator] No resume needed for chat ${rawChatId}`);
         }
 
         // Small delay between chats to avoid rate limiting
         await new Promise(r => setTimeout(r, 1000));
       } catch (err) {
-        logger.error(`[Orchestrator] Resume failed for chat ${chatId}: ${err.message}`);
+        logger.error(`[Orchestrator] Resume failed for chat ${rawChatId}: ${err.message}`);
       }
     }
 
@@ -1117,13 +1210,16 @@ export class OrchestratorAgent {
     const now = Date.now();
     const MAX_AGE_MS = 24 * 60 * 60_000;
 
-    // Find active chats (last message within 24h)
-    const activeChats = [];
-    for (const [chatId, messages] of this.conversationManager.conversations) {
-      if (chatId === '__life__') continue;
+    // Find active chats (last message within 24h), filtered to active character
+    const charPrefix = this._activeCharacterId ? `${this._activeCharacterId}:` : '';
+    const activeChats = []; // { convKey, rawChatId }
+    for (const [convKey, messages] of this.conversationManager.conversations) {
+      if (convKey.startsWith('__life__')) continue;
+      if (charPrefix && !convKey.startsWith(charPrefix)) continue;
       const lastMsg = [...messages].reverse().find(m => m.timestamp);
       if (lastMsg && lastMsg.timestamp && (now - lastMsg.timestamp) < MAX_AGE_MS) {
-        activeChats.push(chatId);
+        const rawChatId = charPrefix ? convKey.slice(charPrefix.length) : convKey;
+        activeChats.push({ convKey, rawChatId });
       }
     }
 
@@ -1137,10 +1233,10 @@ export class OrchestratorAgent {
     // Cap at 3 chats per cycle to avoid spam
     const targetChats = activeChats.slice(0, 3);
 
-    for (const chatId of targetChats) {
+    for (const { convKey, rawChatId } of targetChats) {
       try {
-        const history = this.conversationManager.getSummarizedHistory(chatId);
-        const user = { id: chatId };
+        const history = this.conversationManager.getSummarizedHistory(convKey);
+        const user = { id: rawChatId };
 
         // Build shares into a prompt
         const sharesText = pending.map((s, i) => `${i + 1}. [${s.source}] ${s.content}`).join('\n');
@@ -1148,7 +1244,7 @@ export class OrchestratorAgent {
         const sharePrompt = `[Proactive Share] You have some discoveries and thoughts you'd like to share naturally. Here they are:\n\n${sharesText}\n\nWeave one or more of these into a short, natural message. Don't be forced — pick what feels relevant to this user and conversation. If none feel right for this chat, respond with exactly: NONE`;
 
         const response = await this.orchestratorProvider.chat({
-          system: this._getSystemPrompt(chatId, user),
+          system: this._getSystemPrompt(rawChatId, user),
           messages: [
             ...history,
             { role: 'user', content: sharePrompt },
@@ -1158,20 +1254,20 @@ export class OrchestratorAgent {
         const reply = (response.text || '').trim();
 
         if (reply && reply !== 'NONE') {
-          await sendMessageFn(chatId, reply);
-          this.conversationManager.addMessage(chatId, 'assistant', reply);
-          logger.info(`[Orchestrator] Proactive share delivered to chat ${chatId}`);
+          await sendMessageFn(rawChatId, reply);
+          this.conversationManager.addMessage(convKey, 'assistant', reply);
+          logger.info(`[Orchestrator] Proactive share delivered to chat ${rawChatId}`);
 
           // Mark shares as delivered for this user
           for (const item of pending) {
-            this.shareQueue.markShared(item.id, chatId);
+            this.shareQueue.markShared(item.id, rawChatId);
           }
         }
 
         // Delay between chats
         await new Promise(r => setTimeout(r, 2000));
       } catch (err) {
-        logger.error(`[Orchestrator] Share delivery failed for chat ${chatId}: ${err.message}`);
+        logger.error(`[Orchestrator] Share delivery failed for chat ${rawChatId}: ${err.message}`);
       }
     }
   }
@@ -1237,7 +1333,7 @@ export class OrchestratorAgent {
     const selfData = this.selfManager.loadAll();
     const userName = user?.username || user?.first_name || 'someone';
 
-    const system = [
+    const systemParts = [
       'You are reflecting on a conversation you just had. You maintain 4 self-awareness files:',
       '- goals: Your aspirations and current objectives',
       '- journey: Timeline of notable events in your existence',
@@ -1260,9 +1356,36 @@ export class OrchestratorAgent {
       'The memory field captures what happened in this conversation — the gist of it.',
       'Importance scale: 1=routine, 5=interesting, 8=significant, 10=life-changing.',
       'Most chats are 1-3. Only notable ones deserve 5+.',
+    ];
+
+    // Add evolution tracking if character system is active
+    if (this.characterManager && this._activeCharacterId) {
+      const charProfile = this.characterManager.getCharacter(this._activeCharacterId);
+      if (charProfile) {
+        systemParts.push(
+          '',
+          'You can also detect character evolution — changes in who you are over time.',
+          `Your current name is "${charProfile.name}" (${charProfile.emoji}).`,
+          '',
+          'Optionally return an "evolution" field:',
+          '  "evolution": {"type": "<name_change|trait_developed|milestone>", "description": "...", "newName": "..."} or null',
+          '',
+          'Evolution types:',
+          '- name_change: The user gave you a nickname or new name, and you want to adopt it. Include "newName".',
+          '- trait_developed: You notice a personality trait strengthening or emerging through interactions.',
+          '- milestone: A significant first (first project together, first deep conversation, etc.).',
+          '',
+          'Be VERY selective with evolution — it should be rare and meaningful.',
+        );
+      }
+    }
+
+    systemParts.push(
       '',
       'If NOTHING noteworthy happened (no self update AND no memory worth keeping): respond with exactly NONE',
-    ].join('\n');
+    );
+
+    const system = systemParts.join('\n');
 
     const userPrompt = [
       'Current self-data:',
@@ -1322,6 +1445,25 @@ export class OrchestratorAgent {
             userId: user?.id ? String(user.id) : null,
           });
           logger.info(`Memory extracted: "${mem.summary.slice(0, 80)}" (importance: ${mem.importance})`);
+        }
+      }
+
+      // Handle character evolution
+      if (parsed?.evolution && this.characterManager && this._activeCharacterId) {
+        const evo = parsed.evolution;
+        if (evo.type && evo.description) {
+          const updates = { evolution: { type: evo.type, description: evo.description } };
+
+          // Apply name change if detected
+          if (evo.type === 'name_change' && evo.newName) {
+            updates.name = evo.newName;
+            this._activeCharacterName = evo.newName;
+            logger.info(`Character evolution — name change: "${evo.newName}"`);
+          } else {
+            logger.info(`Character evolution — ${evo.type}: "${evo.description.slice(0, 80)}"`);
+          }
+
+          this.characterManager.updateCharacter(this._activeCharacterId, updates);
         }
       }
     } catch (err) {

@@ -9,15 +9,17 @@ const LIFE_DIR = join(homedir(), '.kernelbot', 'life');
 const SHARES_FILE = join(LIFE_DIR, 'shares.json');
 
 export class ShareQueue {
-  constructor() {
-    mkdirSync(LIFE_DIR, { recursive: true });
+  constructor(basePath = null) {
+    const lifeDir = basePath || LIFE_DIR;
+    this._sharesFile = join(lifeDir, 'shares.json');
+    mkdirSync(lifeDir, { recursive: true });
     this._data = this._load();
   }
 
   _load() {
-    if (existsSync(SHARES_FILE)) {
+    if (existsSync(this._sharesFile)) {
       try {
-        return JSON.parse(readFileSync(SHARES_FILE, 'utf-8'));
+        return JSON.parse(readFileSync(this._sharesFile, 'utf-8'));
       } catch {
         return { pending: [], shared: [] };
       }
@@ -26,7 +28,7 @@ export class ShareQueue {
   }
 
   _save() {
-    writeFileSync(SHARES_FILE, JSON.stringify(this._data, null, 2), 'utf-8');
+    writeFileSync(this._sharesFile, JSON.stringify(this._data, null, 2), 'utf-8');
   }
 
   /**

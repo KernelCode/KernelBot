@@ -10,17 +10,20 @@ const EPISODIC_DIR = join(LIFE_DIR, 'memories', 'episodic');
 const SEMANTIC_FILE = join(LIFE_DIR, 'memories', 'semantic', 'topics.json');
 
 export class MemoryManager {
-  constructor() {
+  constructor(basePath = null) {
+    const lifeDir = basePath || LIFE_DIR;
+    this._episodicDir = join(lifeDir, 'memories', 'episodic');
+    this._semanticFile = join(lifeDir, 'memories', 'semantic', 'topics.json');
     this._episodicCache = new Map(); // date -> array
     this._semanticCache = null;
-    mkdirSync(EPISODIC_DIR, { recursive: true });
-    mkdirSync(join(LIFE_DIR, 'memories', 'semantic'), { recursive: true });
+    mkdirSync(this._episodicDir, { recursive: true });
+    mkdirSync(join(lifeDir, 'memories', 'semantic'), { recursive: true });
   }
 
   // ── Episodic Memories ──────────────────────────────────────────
 
   _episodicPath(date) {
-    return join(EPISODIC_DIR, `${date}.json`);
+    return join(this._episodicDir, `${date}.json`);
   }
 
   _loadEpisodicDay(date) {
@@ -136,11 +139,11 @@ export class MemoryManager {
     let pruned = 0;
 
     try {
-      const files = readdirSync(EPISODIC_DIR).filter(f => f.endsWith('.json'));
+      const files = readdirSync(this._episodicDir).filter(f => f.endsWith('.json'));
       for (const file of files) {
         const date = file.replace('.json', '');
         if (date < cutoffDate) {
-          unlinkSync(join(EPISODIC_DIR, file));
+          unlinkSync(join(this._episodicDir, file));
           this._episodicCache.delete(date);
           pruned++;
         }
@@ -168,9 +171,9 @@ export class MemoryManager {
 
   _loadSemantic() {
     if (this._semanticCache) return this._semanticCache;
-    if (existsSync(SEMANTIC_FILE)) {
+    if (existsSync(this._semanticFile)) {
       try {
-        this._semanticCache = JSON.parse(readFileSync(SEMANTIC_FILE, 'utf-8'));
+        this._semanticCache = JSON.parse(readFileSync(this._semanticFile, 'utf-8'));
       } catch {
         this._semanticCache = {};
       }
@@ -181,7 +184,7 @@ export class MemoryManager {
   }
 
   _saveSemantic() {
-    writeFileSync(SEMANTIC_FILE, JSON.stringify(this._semanticCache || {}, null, 2), 'utf-8');
+    writeFileSync(this._semanticFile, JSON.stringify(this._semanticCache || {}, null, 2), 'utf-8');
   }
 
   /**

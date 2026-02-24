@@ -16,6 +16,8 @@ import { TTSService } from './services/tts.js';
 import { STTService } from './services/stt.js';
 import { getClaudeAuthStatus, claudeLogout } from './claude-auth.js';
 import { isQuietHours } from './utils/timeUtils.js';
+import { CharacterBuilder } from './characters/builder.js';
+import { LifeEngine } from './life/engine.js';
 
 /**
  * Simulate a human-like typing delay based on response length.
@@ -196,7 +198,7 @@ class ChatQueue {
 }
 
 export function startBot(config, agent, conversationManager, jobManager, automationManager, lifeDeps = {}) {
-  const { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge } = lifeDeps;
+  let { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge, characterManager } = lifeDeps;
   const logger = getLogger();
   const bot = new TelegramBot(config.telegram.bot_token, {
     polling: {
@@ -214,6 +216,49 @@ export function startBot(config, agent, conversationManager, jobManager, automat
   if (ttsService.isAvailable()) logger.info('[Bot] TTS service enabled (ElevenLabs)');
   if (sttService.isAvailable()) logger.info('[Bot] STT service enabled');
 
+  /**
+   * Rebuild the life engine for a different character.
+   * Stops the current engine, creates a new one with scoped managers, and starts it.
+   */
+  function rebuildLifeEngine(charCtx) {
+    if (lifeEngine) {
+      lifeEngine.stop();
+    }
+
+    // Update module-level manager refs so other bot.js code uses the right ones
+    memoryManager = charCtx.memoryManager;
+    journalManager = charCtx.journalManager;
+    shareQueue = charCtx.shareQueue;
+    evolutionTracker = charCtx.evolutionTracker;
+
+    const lifeEnabled = config.life?.enabled !== false;
+    if (!lifeEnabled) {
+      lifeEngine = null;
+      return;
+    }
+
+    lifeEngine = new LifeEngine({
+      config,
+      agent,
+      memoryManager: charCtx.memoryManager,
+      journalManager: charCtx.journalManager,
+      shareQueue: charCtx.shareQueue,
+      evolutionTracker: charCtx.evolutionTracker,
+      codebaseKnowledge,
+      selfManager: charCtx.selfManager,
+      basePath: charCtx.lifeBasePath,
+      characterId: charCtx.characterId,
+    });
+
+    lifeEngine.wakeUp().then(() => {
+      lifeEngine.start();
+      logger.info(`[Bot] Life engine rebuilt for character: ${charCtx.characterId}`);
+    }).catch(err => {
+      logger.error(`[Bot] Life engine wake-up failed: ${err.message}`);
+      lifeEngine.start();
+    });
+  }
+
   // Per-chat message batching: chatId -> { messages[], timer, resolve }
   const chatBatches = new Map();
 
@@ -228,6 +273,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
   // Register commands in Telegram's menu button
   bot.setMyCommands([
+    { command: 'character', description: 'Switch or manage characters' },
     { command: 'brain', description: 'Switch worker AI model/provider' },
     { command: 'orchestrator', description: 'Switch orchestrator AI model/provider' },
     { command: 'claudemodel', description: 'Switch Claude Code model' },
@@ -282,6 +328,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
   // Track pending custom skill creation: chatId -> { step: 'name' | 'prompt', name?: string }
   const pendingCustomSkill = new Map();
+
+  // Track pending custom character build: chatId -> { answers: {}, step: number }
+  const pendingCharacterBuild = new Map();
 
   // Handle inline keyboard callbacks for /brain
   bot.on('callback_query', async (query) => {
@@ -730,6 +779,230 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           chat_id: chatId, message_id: query.message.message_id,
         });
         await bot.answerCallbackQuery(query.id);
+
+      // ── Character callbacks ────────────────────────────────────────
+      } else if (data.startsWith('char_select:')) {
+        const charId = data.slice('char_select:'.length);
+        if (!characterManager) {
+          await bot.answerCallbackQuery(query.id, { text: 'Character system not available' });
+          return;
+        }
+        const character = characterManager.getCharacter(charId);
+        if (!character) {
+          await bot.answerCallbackQuery(query.id, { text: 'Character not found' });
+          return;
+        }
+        const activeId = agent.getActiveCharacterInfo()?.id;
+        const isActive = activeId === charId;
+        const buttons = [];
+        if (!isActive) {
+          buttons.push([{ text: `Switch to ${character.emoji} ${character.name}`, callback_data: `char_confirm:${charId}` }]);
+        }
+        buttons.push([
+          { text: '« Back', callback_data: 'char_back' },
+          { text: 'Cancel', callback_data: 'char_cancel' },
+        ]);
+
+        const artBlock = character.asciiArt ? `\n\`\`\`\n${character.asciiArt}\n\`\`\`\n` : '\n';
+        await bot.editMessageText(
+          `${character.emoji} *${character.name}*\n_${character.origin || 'Original'}_${artBlock}\n"${character.tagline}"\n\n*Age:* ${character.age}\n${isActive ? '_(Currently active)_' : ''}`,
+          {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: buttons },
+          },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data.startsWith('char_confirm:')) {
+        const charId = data.slice('char_confirm:'.length);
+        if (!characterManager) {
+          await bot.answerCallbackQuery(query.id, { text: 'Character system not available' });
+          return;
+        }
+
+        await bot.editMessageText(
+          `Switching character...`,
+          { chat_id: chatId, message_id: query.message.message_id },
+        );
+
+        try {
+          const charCtx = agent.switchCharacter(charId);
+
+          // Rebuild life engine with new character's scoped managers
+          rebuildLifeEngine(charCtx);
+
+          const character = characterManager.getCharacter(charId);
+          logger.info(`[Bot] Character switched to ${character.name} (${charId})`);
+
+          await bot.editMessageText(
+            `${character.emoji} *${character.name}* is now active!\n\n"${character.tagline}"`,
+            { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+          );
+        } catch (err) {
+          logger.error(`[Bot] Character switch failed: ${err.message}`);
+          await bot.editMessageText(
+            `Failed to switch character: ${err.message}`,
+            { chat_id: chatId, message_id: query.message.message_id },
+          );
+        }
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'char_custom') {
+        pendingCharacterBuild.set(chatId, { answers: {}, step: 0 });
+        const builder = new CharacterBuilder(agent.orchestratorProvider);
+        const nextQ = builder.getNextQuestion({});
+        if (nextQ) {
+          await bot.editMessageText(
+            `*Custom Character Builder* (1/${builder.getTotalQuestions()})\n\n${nextQ.question}\n\n_Examples: ${nextQ.examples}_\n\nSend *cancel* to abort.`,
+            { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+          );
+        }
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data.startsWith('char_delete:')) {
+        const charId = data.slice('char_delete:'.length);
+        if (!characterManager) {
+          await bot.answerCallbackQuery(query.id, { text: 'Character system not available' });
+          return;
+        }
+        const buttons = [
+          [{ text: `Yes, delete`, callback_data: `char_delete_confirm:${charId}` }],
+          [{ text: 'Cancel', callback_data: 'char_back' }],
+        ];
+        const character = characterManager.getCharacter(charId);
+        await bot.editMessageText(
+          `Are you sure you want to delete *${character?.name || charId}*?\n\nThis will remove all their memories, journals, and conversation history.`,
+          {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: buttons },
+          },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data.startsWith('char_delete_confirm:')) {
+        const charId = data.slice('char_delete_confirm:'.length);
+        try {
+          characterManager.removeCharacter(charId);
+          await bot.editMessageText(`Character deleted.`, {
+            chat_id: chatId, message_id: query.message.message_id,
+          });
+        } catch (err) {
+          await bot.editMessageText(`Cannot delete: ${err.message}`, {
+            chat_id: chatId, message_id: query.message.message_id,
+          });
+        }
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'char_back') {
+        // Re-show character gallery
+        if (!characterManager) {
+          await bot.answerCallbackQuery(query.id, { text: 'Character system not available' });
+          return;
+        }
+        const characters = characterManager.listCharacters();
+        const activeInfo = agent.getActiveCharacterInfo();
+        const buttons = [];
+        const row1 = [], row2 = [];
+        for (const c of characters) {
+          const label = `${c.emoji} ${c.name}${activeInfo?.id === c.id ? ' \u2713' : ''}`;
+          const btn = { text: label, callback_data: `char_select:${c.id}` };
+          if (row1.length < 3) row1.push(btn);
+          else row2.push(btn);
+        }
+        if (row1.length > 0) buttons.push(row1);
+        if (row2.length > 0) buttons.push(row2);
+
+        // Custom character + delete buttons
+        const mgmtRow = [{ text: 'Build Custom', callback_data: 'char_custom' }];
+        const customChars = characters.filter(c => c.type === 'custom');
+        if (customChars.length > 0) {
+          mgmtRow.push({ text: 'Delete Custom', callback_data: 'char_delete_pick' });
+        }
+        buttons.push(mgmtRow);
+        buttons.push([{ text: 'Cancel', callback_data: 'char_cancel' }]);
+
+        await bot.editMessageText(
+          `*Active:* ${activeInfo?.emoji || ''} ${activeInfo?.name || 'None'}\n_"${activeInfo?.tagline || ''}"_\n\nSelect a character:`,
+          {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: buttons },
+          },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'char_delete_pick') {
+        const customChars = characterManager.listCharacters().filter(c => c.type === 'custom');
+        if (customChars.length === 0) {
+          await bot.answerCallbackQuery(query.id, { text: 'No custom characters' });
+          return;
+        }
+        const buttons = customChars.map(c => ([{
+          text: `${c.emoji} ${c.name}`,
+          callback_data: `char_delete:${c.id}`,
+        }]));
+        buttons.push([{ text: '« Back', callback_data: 'char_back' }]);
+        await bot.editMessageText('Select a custom character to delete:', {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+          reply_markup: { inline_keyboard: buttons },
+        });
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'char_cancel') {
+        pendingCharacterBuild.delete(chatId);
+        await bot.editMessageText('Character selection dismissed.', {
+          chat_id: chatId, message_id: query.message.message_id,
+        });
+        await bot.answerCallbackQuery(query.id);
+
+      // ── Onboarding callbacks ───────────────────────────────────────
+      } else if (data.startsWith('onboard_select:')) {
+        const charId = data.slice('onboard_select:'.length);
+        if (!characterManager) {
+          await bot.answerCallbackQuery(query.id, { text: 'Not available' });
+          return;
+        }
+
+        characterManager.completeOnboarding(charId);
+        const charCtx = agent.loadCharacter(charId);
+        const character = characterManager.getCharacter(charId);
+
+        // Start life engine for the selected character
+        rebuildLifeEngine(charCtx);
+
+        logger.info(`[Bot] Onboarding complete — character: ${character.name} (${charId})`);
+
+        await bot.editMessageText(
+          `${character.emoji} *${character.name}* activated!\n\n"${character.tagline}"\n\nSend me a message to start chatting.`,
+          { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+        );
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'onboard_custom') {
+        // Start custom builder during onboarding — install builtins first
+        if (characterManager?.needsOnboarding) {
+          // Complete onboarding with kernel as default, then build custom
+          characterManager.completeOnboarding('kernel');
+          const kernelCtx = agent.loadCharacter('kernel');
+          rebuildLifeEngine(kernelCtx);
+        }
+
+        pendingCharacterBuild.set(chatId, { answers: {}, step: 0 });
+        const builder = new CharacterBuilder(agent.orchestratorProvider);
+        const nextQ = builder.getNextQuestion({});
+        if (nextQ) {
+          await bot.editMessageText(
+            `*Custom Character Builder* (1/${builder.getTotalQuestions()})\n\n${nextQ.question}\n\n_Examples: ${nextQ.examples}_\n\nSend *cancel* to abort.`,
+            { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' },
+          );
+        }
+        await bot.answerCallbackQuery(query.id);
       }
     } catch (err) {
       logger.error(`[Bot] Callback query error for "${data}" in chat ${chatId}: ${err.message}`);
@@ -794,6 +1067,38 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           type: 'رسالة',
         });
       }
+      return;
+    }
+
+    // ── Character onboarding ─────────────────────────────────────
+    // On first-ever message, show character selection gallery
+    if (characterManager?.needsOnboarding) {
+      logger.info(`[Bot] First message from ${username} — showing character onboarding`);
+
+      const characters = characterManager.listCharacters();
+      const buttons = [];
+      const row1 = [], row2 = [];
+      for (const c of characters) {
+        const btn = { text: `${c.emoji} ${c.name}`, callback_data: `onboard_select:${c.id}` };
+        if (row1.length < 3) row1.push(btn);
+        else row2.push(btn);
+      }
+      if (row1.length > 0) buttons.push(row1);
+      if (row2.length > 0) buttons.push(row2);
+      buttons.push([{ text: 'Build Custom', callback_data: 'onboard_custom' }]);
+
+      await bot.sendMessage(chatId, [
+        '*Choose Your Character*',
+        '',
+        'Pick who you want me to be. Each character has their own personality, memories, and story that evolves with you.',
+        '',
+        ...characters.map(c => `${c.emoji} *${c.name}* — _${c.tagline}_`),
+        '',
+        'Select below:',
+      ].join('\n'), {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons },
+      });
       return;
     }
 
@@ -1015,7 +1320,111 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       }
     }
 
+    // Handle pending custom character build
+    if (pendingCharacterBuild.has(chatId)) {
+      const pending = pendingCharacterBuild.get(chatId);
+
+      if (text.toLowerCase() === 'cancel') {
+        pendingCharacterBuild.delete(chatId);
+        await bot.sendMessage(chatId, 'Character creation cancelled.');
+        return;
+      }
+
+      const builder = new CharacterBuilder(agent.orchestratorProvider);
+      const nextQ = builder.getNextQuestion(pending.answers);
+      if (nextQ) {
+        pending.answers[nextQ.id] = text;
+        pending.step++;
+        pendingCharacterBuild.set(chatId, pending);
+
+        const followUp = builder.getNextQuestion(pending.answers);
+        if (followUp) {
+          const { answered, total } = builder.getProgress(pending.answers);
+          await bot.sendMessage(
+            chatId,
+            `*Custom Character Builder* (${answered + 1}/${total})\n\n${followUp.question}\n\n_Examples: ${followUp.examples}_`,
+            { parse_mode: 'Markdown' },
+          );
+        } else {
+          // All questions answered — generate character
+          pendingCharacterBuild.delete(chatId);
+          await bot.sendMessage(chatId, 'Creating your character...');
+
+          try {
+            const result = await builder.generateCharacter(pending.answers);
+            const profile = characterManager.addCharacter(
+              {
+                id: result.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+                type: 'custom',
+                name: result.name,
+                origin: 'Custom',
+                age: result.age,
+                emoji: result.emoji,
+                tagline: result.tagline,
+              },
+              result.personaMd,
+              result.selfDefaults,
+            );
+
+            // Auto-switch to the new character and rebuild life engine
+            const charCtx = agent.switchCharacter(profile.id);
+            rebuildLifeEngine(charCtx);
+
+            await bot.sendMessage(
+              chatId,
+              `${profile.emoji} *${profile.name}* has been created and activated!\n\n"${profile.tagline}"\n\n_Use /character to switch between characters._`,
+              { parse_mode: 'Markdown' },
+            );
+            logger.info(`[Bot] Custom character created: ${profile.name} (${profile.id}) by ${username}`);
+          } catch (err) {
+            logger.error(`[Bot] Character generation failed: ${err.message}`);
+            await bot.sendMessage(chatId, `Failed to create character: ${err.message}\n\nUse /character to try again.`);
+          }
+        }
+      }
+      return;
+    }
+
     // Handle commands — these bypass batching entirely
+    if (text === '/character') {
+      logger.info(`[Bot] /character command from ${username} (${userId}) in chat ${chatId}`);
+      if (!characterManager) {
+        await bot.sendMessage(chatId, 'Character system not available.');
+        return;
+      }
+      const characters = characterManager.listCharacters();
+      const activeInfo = agent.getActiveCharacterInfo();
+      const buttons = [];
+      const row1 = [], row2 = [];
+      for (const c of characters) {
+        const label = `${c.emoji} ${c.name}${activeInfo?.id === c.id ? ' \u2713' : ''}`;
+        const btn = { text: label, callback_data: `char_select:${c.id}` };
+        if (row1.length < 3) row1.push(btn);
+        else row2.push(btn);
+      }
+      if (row1.length > 0) buttons.push(row1);
+      if (row2.length > 0) buttons.push(row2);
+
+      // Custom character + delete buttons
+      const mgmtRow = [{ text: 'Build Custom', callback_data: 'char_custom' }];
+      const customChars = characters.filter(c => c.type === 'custom');
+      if (customChars.length > 0) {
+        mgmtRow.push({ text: 'Delete Custom', callback_data: 'char_delete_pick' });
+      }
+      buttons.push(mgmtRow);
+      buttons.push([{ text: 'Cancel', callback_data: 'char_cancel' }]);
+
+      await bot.sendMessage(
+        chatId,
+        `*Active:* ${activeInfo?.emoji || ''} ${activeInfo?.name || 'None'}\n_"${activeInfo?.tagline || ''}"_\n\nSelect a character:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons },
+        },
+      );
+      return;
+    }
+
     if (text === '/brain') {
       logger.info(`[Bot] /brain command from ${username} (${userId}) in chat ${chatId}`);
       const info = agent.getBrainInfo();
@@ -1148,14 +1557,14 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     }
 
     if (text === '/clean' || text === '/clear' || text === '/reset') {
-      conversationManager.clear(chatId);
+      agent.clearConversation(chatId);
       logger.info(`Conversation cleared for chat ${chatId} by ${username}`);
       await bot.sendMessage(chatId, '🧹 Conversation cleared. Starting fresh.');
       return;
     }
 
     if (text === '/history') {
-      const count = conversationManager.getMessageCount(chatId);
+      const count = agent.getMessageCount(chatId);
       await bot.sendMessage(chatId, `📝 This chat has *${count}* messages in memory.`, { parse_mode: 'Markdown' });
       return;
     }
@@ -1166,8 +1575,8 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       const ccInfo = agent.getClaudeCodeInfo();
       const authConfig = agent.getClaudeAuthConfig();
       const activeSkill = agent.getActiveSkill(chatId);
-      const msgCount = conversationManager.getMessageCount(chatId);
-      const history = conversationManager.getHistory(chatId);
+      const msgCount = agent.getMessageCount(chatId);
+      const history = agent.getConversationHistory(chatId);
       const maxHistory = conversationManager.maxHistory;
       const recentWindow = conversationManager.recentWindow;
 
@@ -1180,9 +1589,14 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           return txt.length > 80 ? txt.slice(0, 80) + '…' : txt;
         });
 
+      const activeChar = agent.getActiveCharacterInfo();
+
       const lines = [
         '📋 *Conversation Context*',
         '',
+        activeChar
+          ? `${activeChar.emoji} *Character:* ${activeChar.name}`
+          : '',
         `🎛️ *Orchestrator:* ${orchInfo.providerName} / ${orchInfo.modelLabel}`,
         `🧠 *Brain (Workers):* ${info.providerName} / ${info.modelLabel}`,
         `💻 *Claude Code:* ${ccInfo.modelLabel} (auth: ${authConfig.mode})`,
@@ -1191,7 +1605,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           : '🎭 *Skill:* Default persona',
         `💬 *Messages in memory:* ${msgCount} / ${maxHistory}`,
         `📌 *Recent window:* ${recentWindow} messages`,
-      ];
+      ].filter(Boolean);
 
       if (recentUserMsgs.length > 0) {
         lines.push('', '🕐 *Recent topics:*');
@@ -1550,6 +1964,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       await bot.sendMessage(chatId, [
         '*KernelBot Commands*',
         skillLine,
+        '/character — Switch or manage characters',
         '/brain — Switch worker AI model/provider',
         '/orchestrator — Switch orchestrator AI model/provider',
         '/claudemodel — Switch Claude Code model',

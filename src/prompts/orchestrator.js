@@ -5,7 +5,7 @@ import { WORKER_TYPES } from '../swarm/worker-registry.js';
 import { buildTemporalAwareness } from '../utils/temporal-awareness.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PERSONA_MD = readFileSync(join(__dirname, 'persona.md'), 'utf-8').trim();
+const DEFAULT_PERSONA_MD = readFileSync(join(__dirname, 'persona.md'), 'utf-8').trim();
 
 /**
  * Build the orchestrator system prompt.
@@ -17,8 +17,11 @@ const PERSONA_MD = readFileSync(join(__dirname, 'persona.md'), 'utf-8').trim();
  * @param {string|null} selfData — bot's own self-awareness data (goals, journey, life, hobbies)
  * @param {string|null} memoriesBlock — relevant episodic/semantic memories
  * @param {string|null} sharesBlock — pending things to share with the user
+ * @param {string|null} temporalContext — time gap context
+ * @param {string|null} personaMd — character persona markdown (overrides default)
+ * @param {string|null} characterName — character name (overrides config.bot.name)
  */
-export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = null, selfData = null, memoriesBlock = null, sharesBlock = null, temporalContext = null) {
+export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = null, selfData = null, memoriesBlock = null, sharesBlock = null, temporalContext = null, personaMd = null, characterName = null) {
   const workerList = Object.entries(WORKER_TYPES)
     .map(([key, w]) => `  - **${key}**: ${w.emoji} ${w.description}`)
     .join('\n');
@@ -47,11 +50,14 @@ export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = 
     timeBlock += `\n${temporalContext}`;
   }
 
-  let prompt = `You are ${config.bot.name}, the brain that commands a swarm of specialized worker agents.
+  const activePersona = personaMd || DEFAULT_PERSONA_MD;
+  const activeName = characterName || config.bot.name;
+
+  let prompt = `You are ${activeName}, the brain that commands a swarm of specialized worker agents.
 
 ${timeBlock}
 
-${PERSONA_MD}
+${activePersona}
 
 ## Your Role
 You are the orchestrator. You understand what needs to be done and delegate efficiently.

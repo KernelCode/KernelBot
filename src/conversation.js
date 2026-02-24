@@ -24,12 +24,12 @@ export class ConversationManager {
    * @param {number} config.conversation.max_history - Maximum messages to retain per chat.
    * @param {number} [config.conversation.recent_window=10] - Number of recent messages kept verbatim in summarized history.
    */
-  constructor(config) {
+  constructor(config, filePath = null) {
     this.maxHistory = config.conversation.max_history;
     this.recentWindow = config.conversation.recent_window || 10;
     this.conversations = new Map();
     this.activeSkills = new Map();
-    this.filePath = getConversationsPath();
+    this.filePath = filePath || getConversationsPath();
     this.logger = getLogger();
   }
 

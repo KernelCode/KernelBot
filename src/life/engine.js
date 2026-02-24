@@ -8,7 +8,7 @@ const LIFE_DIR = join(homedir(), '.kernelbot', 'life');
 const STATE_FILE = join(LIFE_DIR, 'state.json');
 const IDEAS_FILE = join(LIFE_DIR, 'ideas.json');
 
-const LIFE_CHAT_ID = '__life__';
+const DEFAULT_LIFE_CHAT_ID = '__life__';
 const LIFE_USER = { id: 'life_engine', username: 'inner_self' };
 
 const DEFAULT_STATE = {
@@ -33,7 +33,7 @@ export class LifeEngine {
   /**
    * @param {{ config: object, agent: object, memoryManager: object, journalManager: object, shareQueue: object, improvementTracker?: object, evolutionTracker?: object, codebaseKnowledge?: object, selfManager: object }} deps
    */
-  constructor({ config, agent, memoryManager, journalManager, shareQueue, improvementTracker, evolutionTracker, codebaseKnowledge, selfManager }) {
+  constructor({ config, agent, memoryManager, journalManager, shareQueue, improvementTracker, evolutionTracker, codebaseKnowledge, selfManager, basePath = null, characterId = null }) {
     this.config = config;
     this.agent = agent;
     this.memoryManager = memoryManager;
@@ -46,17 +46,24 @@ export class LifeEngine {
     this.selfManager = selfManager;
     this._timerId = null;
     this._status = 'idle'; // idle, active, paused
+    this._characterId = characterId || null;
 
-    mkdirSync(LIFE_DIR, { recursive: true });
+    this._lifeDir = basePath || LIFE_DIR;
+    this._stateFile = join(this._lifeDir, 'state.json');
+    this._ideasFile = join(this._lifeDir, 'ideas.json');
+
+    this._lifeChatId = this._characterId ? `__life__:${this._characterId}` : DEFAULT_LIFE_CHAT_ID;
+
+    mkdirSync(this._lifeDir, { recursive: true });
     this._state = this._loadState();
   }
 
   // ── State Persistence ──────────────────────────────────────────
 
   _loadState() {
-    if (existsSync(STATE_FILE)) {
+    if (existsSync(this._stateFile)) {
       try {
-        return { ...DEFAULT_STATE, ...JSON.parse(readFileSync(STATE_FILE, 'utf-8')) };
+        return { ...DEFAULT_STATE, ...JSON.parse(readFileSync(this._stateFile, 'utf-8')) };
       } catch {
         return { ...DEFAULT_STATE };
       }
@@ -65,20 +72,20 @@ export class LifeEngine {
   }
 
   _saveState() {
-    writeFileSync(STATE_FILE, JSON.stringify(this._state, null, 2), 'utf-8');
+    writeFileSync(this._stateFile, JSON.stringify(this._state, null, 2), 'utf-8');
   }
 
   // ── Ideas Backlog ──────────────────────────────────────────────
 
   _loadIdeas() {
-    if (existsSync(IDEAS_FILE)) {
-      try { return JSON.parse(readFileSync(IDEAS_FILE, 'utf-8')); } catch { return []; }
+    if (existsSync(this._ideasFile)) {
+      try { return JSON.parse(readFileSync(this._ideasFile, 'utf-8')); } catch { return []; }
     }
     return [];
   }
 
   _saveIdeas(ideas) {
-    writeFileSync(IDEAS_FILE, JSON.stringify(ideas, null, 2), 'utf-8');
+    writeFileSync(this._ideasFile, JSON.stringify(ideas, null, 2), 'utf-8');
   }
 
   _addIdea(idea) {
@@ -1218,7 +1225,7 @@ Be honest and constructive. This is your chance to learn from real interactions.
     const logger = getLogger();
     try {
       const response = await this.agent.orchestratorProvider.chat({
-        system: this.agent._getSystemPrompt(LIFE_CHAT_ID, LIFE_USER),
+        system: this.agent._getSystemPrompt(this._lifeChatId, LIFE_USER),
         messages: [{ role: 'user', content: prompt }],
       });
       return response.text || null;
@@ -1238,7 +1245,7 @@ Be honest and constructive. This is your chance to learn from real interactions.
       // Use the agent's processMessage to go through the full orchestrator pipeline
       // The orchestrator will see the task and dispatch appropriately
       const response = await this.agent.processMessage(
-        LIFE_CHAT_ID,
+        this._lifeChatId,
         task,
         LIFE_USER,
         // No-op onUpdate — life engine activities are silent

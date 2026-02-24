@@ -56,9 +56,10 @@ Just getting started.
 };
 
 export class SelfManager {
-  constructor() {
+  constructor(basePath = null) {
+    this._dir = basePath || SELF_DIR;
     this._cache = new Map();
-    mkdirSync(SELF_DIR, { recursive: true });
+    mkdirSync(this._dir, { recursive: true });
     this._ensureDefaults();
   }
 
@@ -67,11 +68,22 @@ export class SelfManager {
     const logger = getLogger();
 
     for (const [name, def] of Object.entries(SELF_FILES)) {
-      const filePath = join(SELF_DIR, def.filename);
+      const filePath = join(this._dir, def.filename);
       if (!existsSync(filePath)) {
         writeFileSync(filePath, def.default, 'utf-8');
         logger.info(`Created default self-file: ${def.filename}`);
       }
+    }
+  }
+
+  /** Create self-files with custom defaults (for character initialization). */
+  initWithDefaults(defaults) {
+    for (const [name, content] of Object.entries(defaults)) {
+      const def = SELF_FILES[name];
+      if (!def) continue;
+      const filePath = join(this._dir, def.filename);
+      writeFileSync(filePath, content, 'utf-8');
+      this._cache.set(name, content);
     }
   }
 
@@ -83,7 +95,7 @@ export class SelfManager {
 
     if (this._cache.has(name)) return this._cache.get(name);
 
-    const filePath = join(SELF_DIR, def.filename);
+    const filePath = join(this._dir, def.filename);
     let content;
 
     if (existsSync(filePath)) {
@@ -105,7 +117,7 @@ export class SelfManager {
     const def = SELF_FILES[name];
     if (!def) throw new Error(`Unknown self-file: ${name}`);
 
-    const filePath = join(SELF_DIR, def.filename);
+    const filePath = join(this._dir, def.filename);
     writeFileSync(filePath, content, 'utf-8');
     this._cache.set(name, content);
     logger.info(`Updated self-file: ${name}`);

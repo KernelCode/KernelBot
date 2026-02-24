@@ -20,12 +20,13 @@ function timeNow() {
 }
 
 export class JournalManager {
-  constructor() {
-    mkdirSync(JOURNAL_DIR, { recursive: true });
+  constructor(basePath = null) {
+    this._dir = basePath || JOURNAL_DIR;
+    mkdirSync(this._dir, { recursive: true });
   }
 
   _journalPath(date) {
-    return join(JOURNAL_DIR, `${date}.md`);
+    return join(this._dir, `${date}.md`);
   }
 
   /**
@@ -93,7 +94,7 @@ export class JournalManager {
    */
   list(limit = 30) {
     try {
-      const files = readdirSync(JOURNAL_DIR)
+      const files = readdirSync(this._dir)
         .filter(f => f.endsWith('.md'))
         .map(f => f.replace('.md', ''))
         .sort()

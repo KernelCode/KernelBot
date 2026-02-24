@@ -16,22 +16,21 @@ import {
   showStartupCheck,
   showStartupComplete,
   showError,
+  showCharacterGallery,
+  showCharacterCard,
 } from '../src/utils/display.js';
 import { createAuditLogger } from '../src/security/audit.js';
+import { CharacterBuilder } from '../src/characters/builder.js';
 import { ConversationManager } from '../src/conversation.js';
 import { UserPersonaManager } from '../src/persona.js';
-import { SelfManager } from '../src/self.js';
 import { Agent } from '../src/agent.js';
 import { JobManager } from '../src/swarm/job-manager.js';
 import { startBot } from '../src/bot.js';
 import { AutomationManager } from '../src/automation/index.js';
 import { createProvider, PROVIDERS } from '../src/providers/index.js';
-import { MemoryManager } from '../src/life/memory.js';
-import { JournalManager } from '../src/life/journal.js';
-import { ShareQueue } from '../src/life/share-queue.js';
-import { EvolutionTracker } from '../src/life/evolution.js';
 import { CodebaseKnowledge } from '../src/life/codebase.js';
 import { LifeEngine } from '../src/life/engine.js';
+import { CharacterManager } from '../src/character.js';
 import {
   loadCustomSkills,
   getCustomSkills,
@@ -61,7 +60,8 @@ function showMenu(config) {
   console.log(`  ${chalk.cyan('6.')} Change orchestrator model`);
   console.log(`  ${chalk.cyan('7.')} Manage custom skills`);
   console.log(`  ${chalk.cyan('8.')} Manage automations`);
-  console.log(`  ${chalk.cyan('9.')} Exit`);
+  console.log(`  ${chalk.cyan('9.')} Switch character`);
+  console.log(`  ${chalk.cyan('10.')} Exit`);
   console.log('');
 }
 
@@ -281,9 +281,20 @@ async function startBotFlow(config) {
     return false;
   }
 
-  const conversationManager = new ConversationManager(config);
+  // Character system — manages multiple personas with isolated data
+  const characterManager = new CharacterManager();
+
+  // Install built-in characters if needed (fresh install or missing builtins).
+  // Onboarding flag stays true until user picks a character via Telegram.
+  if (characterManager.needsOnboarding) {
+    characterManager.installAllBuiltins();
+  }
+
+  const activeCharacterId = characterManager.getActiveCharacterId();
+  const charCtx = characterManager.buildContext(activeCharacterId);
+
+  const conversationManager = new ConversationManager(config, charCtx.conversationFilePath);
   const personaManager = new UserPersonaManager();
-  const selfManager = new SelfManager();
   const jobManager = new JobManager({
     jobTimeoutSeconds: config.swarm.job_timeout_seconds,
     cleanupIntervalMinutes: config.swarm.cleanup_interval_minutes,
@@ -291,25 +302,46 @@ async function startBotFlow(config) {
 
   const automationManager = new AutomationManager();
 
-  // Life system managers
-  const memoryManager = new MemoryManager();
-  const journalManager = new JournalManager();
-  const shareQueue = new ShareQueue();
-  const evolutionTracker = new EvolutionTracker();
+  // Life system managers — scoped to active character
   const codebaseKnowledge = new CodebaseKnowledge({ config });
 
-  const agent = new Agent({ config, conversationManager, personaManager, selfManager, jobManager, automationManager, memoryManager, shareQueue });
+  const agent = new Agent({
+    config, conversationManager, personaManager,
+    selfManager: charCtx.selfManager,
+    jobManager, automationManager,
+    memoryManager: charCtx.memoryManager,
+    shareQueue: charCtx.shareQueue,
+    characterManager,
+  });
+
+  // Load character context into agent (sets persona, name, etc.)
+  agent.loadCharacter(activeCharacterId);
 
   // Wire codebase knowledge to agent for LLM-powered scanning
   codebaseKnowledge.setAgent(agent);
 
-  // Life Engine — autonomous inner life
+  // Life Engine — autonomous inner life (scoped to active character)
   const lifeEngine = new LifeEngine({
-    config, agent, memoryManager, journalManager, shareQueue,
-    evolutionTracker, codebaseKnowledge, selfManager,
+    config, agent,
+    memoryManager: charCtx.memoryManager,
+    journalManager: charCtx.journalManager,
+    shareQueue: charCtx.shareQueue,
+    evolutionTracker: charCtx.evolutionTracker,
+    codebaseKnowledge,
+    selfManager: charCtx.selfManager,
+    basePath: charCtx.lifeBasePath,
+    characterId: activeCharacterId,
   });
 
-  const bot = startBot(config, agent, conversationManager, jobManager, automationManager, { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge });
+  const bot = startBot(config, agent, conversationManager, jobManager, automationManager, {
+    lifeEngine,
+    memoryManager: charCtx.memoryManager,
+    journalManager: charCtx.journalManager,
+    shareQueue: charCtx.shareQueue,
+    evolutionTracker: charCtx.evolutionTracker,
+    codebaseKnowledge,
+    characterManager,
+  });
 
   // Periodic job cleanup and timeout enforcement
   const cleanupMs = (config.swarm.cleanup_interval_minutes || 30) * 60 * 1000;
@@ -321,8 +353,8 @@ async function startBotFlow(config) {
   // Periodic memory pruning (daily)
   const retentionDays = config.life?.memory_retention_days || 90;
   const pruneInterval = setInterval(() => {
-    memoryManager.pruneOld(retentionDays);
-    shareQueue.prune(7);
+    charCtx.memoryManager.pruneOld(retentionDays);
+    charCtx.shareQueue.prune(7);
   }, 24 * 3600_000);
 
   showStartupComplete();
@@ -505,6 +537,183 @@ async function manageAutomations(rl) {
   }
 }
 
+async function manageCharacters(rl, config) {
+  const charManager = new CharacterManager();
+
+  // Ensure builtins installed
+  charManager.installAllBuiltins();
+
+  let managing = true;
+  while (managing) {
+    const characters = charManager.listCharacters();
+    const activeId = charManager.getActiveCharacterId();
+    const active = charManager.getCharacter(activeId);
+
+    console.log('');
+    console.log(chalk.bold('  Character Management'));
+    console.log(chalk.dim(`  Active: ${active?.emoji || ''} ${active?.name || 'None'}`));
+    console.log('');
+    console.log(`  ${chalk.cyan('1.')} Switch character`);
+    console.log(`  ${chalk.cyan('2.')} Create custom character`);
+    console.log(`  ${chalk.cyan('3.')} View character info`);
+    console.log(`  ${chalk.cyan('4.')} Delete a custom character`);
+    console.log(`  ${chalk.cyan('5.')} Back`);
+    console.log('');
+
+    const choice = await ask(rl, chalk.cyan('  > '));
+    switch (choice.trim()) {
+      case '1': {
+        showCharacterGallery(characters, activeId);
+        console.log('');
+        characters.forEach((c, i) => {
+          const marker = c.id === activeId ? chalk.green(' ✓') : '';
+          console.log(`  ${chalk.cyan(`${i + 1}.`)} ${c.emoji} ${c.name}${marker}`);
+        });
+        console.log('');
+        const pick = await ask(rl, chalk.cyan('  Select #: '));
+        const idx = parseInt(pick, 10) - 1;
+        if (idx >= 0 && idx < characters.length) {
+          charManager.setActiveCharacter(characters[idx].id);
+          console.log(chalk.green(`\n  ${characters[idx].emoji} Switched to ${characters[idx].name}\n`));
+        } else {
+          console.log(chalk.dim('  Cancelled.\n'));
+        }
+        break;
+      }
+      case '2': {
+        // Create custom character via Q&A
+        console.log('');
+        console.log(chalk.bold('  Custom Character Builder'));
+        console.log(chalk.dim('  Answer a few questions to create your character.\n'));
+
+        // Need an LLM provider for generation
+        const orchProviderKey = config.orchestrator.provider || 'anthropic';
+        const orchProviderDef = PROVIDERS[orchProviderKey];
+        const orchApiKey = config.orchestrator.api_key || (orchProviderDef && process.env[orchProviderDef.envKey]);
+        if (!orchApiKey) {
+          console.log(chalk.red('  No API key configured for character generation.\n'));
+          break;
+        }
+
+        const provider = createProvider({
+          brain: {
+            provider: orchProviderKey,
+            model: config.orchestrator.model,
+            max_tokens: config.orchestrator.max_tokens,
+            temperature: config.orchestrator.temperature,
+            api_key: orchApiKey,
+          },
+        });
+
+        const builder = new CharacterBuilder(provider);
+        const answers = {};
+        let cancelled = false;
+
+        // Walk through all questions
+        let q = builder.getNextQuestion(answers);
+        while (q) {
+          const progress = builder.getProgress(answers);
+          console.log(chalk.bold(`  Question ${progress.answered + 1}/${progress.total}`));
+          console.log(`  ${q.question}`);
+          console.log(chalk.dim(`  Examples: ${q.examples}`));
+          const answer = await ask(rl, chalk.cyan('  > '));
+          if (answer.trim().toLowerCase() === 'cancel') {
+            cancelled = true;
+            break;
+          }
+          answers[q.id] = answer.trim();
+          q = builder.getNextQuestion(answers);
+          console.log('');
+        }
+
+        if (cancelled) {
+          console.log(chalk.dim('  Character creation cancelled.\n'));
+          break;
+        }
+
+        console.log(chalk.dim('  Generating character...'));
+        try {
+          const result = await builder.generateCharacter(answers);
+          const id = result.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+          // Show preview
+          console.log('');
+          showCharacterCard({
+            ...result,
+            id,
+            origin: 'Custom',
+          });
+          console.log('');
+
+          const confirm = await ask(rl, chalk.cyan('  Install this character? (y/n): '));
+          if (confirm.trim().toLowerCase() === 'y') {
+            charManager.addCharacter(
+              { id, type: 'custom', name: result.name, origin: 'Custom', age: result.age, emoji: result.emoji, tagline: result.tagline },
+              result.personaMd,
+              result.selfDefaults,
+            );
+            console.log(chalk.green(`\n  ${result.emoji} ${result.name} created!\n`));
+          } else {
+            console.log(chalk.dim('  Discarded.\n'));
+          }
+        } catch (err) {
+          console.log(chalk.red(`\n  Character generation failed: ${err.message}\n`));
+        }
+        break;
+      }
+      case '3': {
+        console.log('');
+        characters.forEach((c, i) => {
+          console.log(`  ${chalk.cyan(`${i + 1}.`)} ${c.emoji} ${c.name}`);
+        });
+        console.log('');
+        const pick = await ask(rl, chalk.cyan('  View #: '));
+        const idx = parseInt(pick, 10) - 1;
+        if (idx >= 0 && idx < characters.length) {
+          showCharacterCard(characters[idx], characters[idx].id === activeId);
+          if (characters[idx].evolutionHistory?.length > 0) {
+            console.log(chalk.dim(`  Evolution events: ${characters[idx].evolutionHistory.length}`));
+          }
+          console.log('');
+        } else {
+          console.log(chalk.dim('  Cancelled.\n'));
+        }
+        break;
+      }
+      case '4': {
+        const customChars = characters.filter(c => c.type === 'custom');
+        if (customChars.length === 0) {
+          console.log(chalk.dim('\n  No custom characters to delete.\n'));
+          break;
+        }
+        console.log('');
+        customChars.forEach((c, i) => {
+          console.log(`  ${chalk.cyan(`${i + 1}.`)} ${c.emoji} ${c.name}`);
+        });
+        console.log('');
+        const pick = await ask(rl, chalk.cyan('  Delete #: '));
+        const idx = parseInt(pick, 10) - 1;
+        if (idx >= 0 && idx < customChars.length) {
+          try {
+            charManager.removeCharacter(customChars[idx].id);
+            console.log(chalk.green(`\n  Deleted: ${customChars[idx].name}\n`));
+          } catch (err) {
+            console.log(chalk.red(`\n  ${err.message}\n`));
+          }
+        } else {
+          console.log(chalk.dim('  Cancelled.\n'));
+        }
+        break;
+      }
+      case '5':
+        managing = false;
+        break;
+      default:
+        console.log(chalk.dim('  Invalid choice.\n'));
+    }
+  }
+}
+
 async function main() {
   showLogo();
 
@@ -547,6 +756,9 @@ async function main() {
         await manageAutomations(rl);
         break;
       case '9':
+        await manageCharacters(rl, config);
+        break;
+      case '10':
         running = false;
         break;
       default:

@@ -18,15 +18,17 @@ const DEFAULT_DATA = {
 };
 
 export class EvolutionTracker {
-  constructor() {
-    mkdirSync(LIFE_DIR, { recursive: true });
+  constructor(basePath = null) {
+    const lifeDir = basePath || LIFE_DIR;
+    this._evolutionFile = join(lifeDir, 'evolution.json');
+    mkdirSync(lifeDir, { recursive: true });
     this._data = this._load();
   }
 
   _load() {
-    if (existsSync(EVOLUTION_FILE)) {
+    if (existsSync(this._evolutionFile)) {
       try {
-        const raw = JSON.parse(readFileSync(EVOLUTION_FILE, 'utf-8'));
+        const raw = JSON.parse(readFileSync(this._evolutionFile, 'utf-8'));
         return {
           proposals: raw.proposals || [],
           lessons: raw.lessons || [],
@@ -40,7 +42,7 @@ export class EvolutionTracker {
   }
 
   _save() {
-    writeFileSync(EVOLUTION_FILE, JSON.stringify(this._data, null, 2), 'utf-8');
+    writeFileSync(this._evolutionFile, JSON.stringify(this._data, null, 2), 'utf-8');
   }
 
   _recalcStats() {
