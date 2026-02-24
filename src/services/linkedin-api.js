@@ -33,11 +33,20 @@ export class LinkedInAPI {
   }
 
   /**
-   * Get the authenticated user's profile.
+   * Get the authenticated user's profile via OpenID Connect.
+   * Requires "Sign in with LinkedIn" product (openid + profile scopes).
+   * Returns null if scopes are insufficient (403).
    */
   async getProfile() {
-    const { data } = await this.client.get('/v2/userinfo');
-    return data;
+    try {
+      const { data } = await this.client.get('/v2/userinfo');
+      return data;
+    } catch (err) {
+      if (err.response?.status === 403) {
+        return null; // No profile scopes — only w_member_social
+      }
+      throw err;
+    }
   }
 
   /**
@@ -95,6 +104,7 @@ export class LinkedInAPI {
 
   /**
    * Get the user's recent posts.
+   * Requires r_member_social permission (restricted — approved apps only).
    * @param {string} authorUrn
    * @param {number} count
    */
@@ -102,9 +112,12 @@ export class LinkedInAPI {
     const { data } = await this.client.get('/rest/posts', {
       params: {
         q: 'author',
-        author: authorUrn,
+        author: encodeURIComponent(authorUrn),
         count,
         sortBy: 'LAST_MODIFIED',
+      },
+      headers: {
+        'X-RestLi-Method': 'FINDER',
       },
     });
     return data.elements || [];
@@ -147,6 +160,7 @@ export class LinkedInAPI {
 
   /**
    * Get comments on a post.
+   * Requires r_member_social permission (restricted — approved apps only).
    * @param {string} postUrn
    * @param {number} count
    */
@@ -154,6 +168,9 @@ export class LinkedInAPI {
     const encoded = encodeURIComponent(postUrn);
     const { data } = await this.client.get(`/rest/socialActions/${encoded}/comments`, {
       params: { count },
+      headers: {
+        'X-RestLi-Method': 'FINDER',
+      },
     });
     return data.elements || [];
   }
