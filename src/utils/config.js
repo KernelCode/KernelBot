@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
 import yaml from 'js-yaml';
@@ -167,9 +167,12 @@ export async function promptProviderSelection(rl) {
 }
 
 /**
- * Save provider and model to config.yaml.
+ * Read config.yaml, merge changes into a top-level section, and write it back.
+ * @param {string} section - The top-level YAML key to update (e.g. 'brain', 'orchestrator').
+ * @param {object} changes - Key-value pairs to merge into that section.
+ * @returns {string} The path to the written config file.
  */
-export function saveProviderToYaml(providerKey, modelId) {
+function _patchConfigYaml(section, changes) {
   const configDir = getConfigDir();
   mkdirSync(configDir, { recursive: true });
   const configPath = join(configDir, 'config.yaml');
@@ -179,16 +182,24 @@ export function saveProviderToYaml(providerKey, modelId) {
     existing = yaml.load(readFileSync(configPath, 'utf-8')) || {};
   }
 
-  existing.brain = {
-    ...(existing.brain || {}),
-    provider: providerKey,
-    model: modelId,
-  };
+  existing[section] = { ...(existing[section] || {}), ...changes };
+  writeFileSync(configPath, yaml.dump(existing, { lineWidth: -1 }));
+  return configPath;
+}
+
+/**
+ * Save provider and model to config.yaml.
+ */
+export function saveProviderToYaml(providerKey, modelId) {
+  const configPath = _patchConfigYaml('brain', { provider: providerKey, model: modelId });
 
   // Remove legacy anthropic section if migrating
-  delete existing.anthropic;
+  let existing = yaml.load(readFileSync(configPath, 'utf-8')) || {};
+  if (existing.anthropic) {
+    delete existing.anthropic;
+    writeFileSync(configPath, yaml.dump(existing, { lineWidth: -1 }));
+  }
 
-  writeFileSync(configPath, yaml.dump(existing, { lineWidth: -1 }));
   return configPath;
 }
 
@@ -196,66 +207,21 @@ export function saveProviderToYaml(providerKey, modelId) {
  * Save orchestrator provider and model to config.yaml.
  */
 export function saveOrchestratorToYaml(providerKey, modelId) {
-  const configDir = getConfigDir();
-  mkdirSync(configDir, { recursive: true });
-  const configPath = join(configDir, 'config.yaml');
-
-  let existing = {};
-  if (existsSync(configPath)) {
-    existing = yaml.load(readFileSync(configPath, 'utf-8')) || {};
-  }
-
-  existing.orchestrator = {
-    ...(existing.orchestrator || {}),
-    provider: providerKey,
-    model: modelId,
-  };
-
-  writeFileSync(configPath, yaml.dump(existing, { lineWidth: -1 }));
-  return configPath;
+  return _patchConfigYaml('orchestrator', { provider: providerKey, model: modelId });
 }
 
 /**
  * Save Claude Code model to config.yaml.
  */
 export function saveClaudeCodeModelToYaml(modelId) {
-  const configDir = getConfigDir();
-  mkdirSync(configDir, { recursive: true });
-  const configPath = join(configDir, 'config.yaml');
-
-  let existing = {};
-  if (existsSync(configPath)) {
-    existing = yaml.load(readFileSync(configPath, 'utf-8')) || {};
-  }
-
-  existing.claude_code = {
-    ...(existing.claude_code || {}),
-    model: modelId,
-  };
-
-  writeFileSync(configPath, yaml.dump(existing, { lineWidth: -1 }));
-  return configPath;
+  return _patchConfigYaml('claude_code', { model: modelId });
 }
 
 /**
  * Save Claude Code auth mode + credential to config.yaml and .env.
  */
 export function saveClaudeCodeAuth(config, mode, value) {
-  const configDir = getConfigDir();
-  mkdirSync(configDir, { recursive: true });
-  const configPath = join(configDir, 'config.yaml');
-
-  let existing = {};
-  if (existsSync(configPath)) {
-    existing = yaml.load(readFileSync(configPath, 'utf-8')) || {};
-  }
-
-  existing.claude_code = {
-    ...(existing.claude_code || {}),
-    auth_mode: mode,
-  };
-
-  writeFileSync(configPath, yaml.dump(existing, { lineWidth: -1 }));
+  _patchConfigYaml('claude_code', { auth_mode: mode });
 
   // Update live config
   config.claude_code.auth_mode = mode;
