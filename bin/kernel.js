@@ -746,40 +746,49 @@ async function linkLinkedInCli(config, rl) {
   console.log(chalk.dim('\n  Validating token...'));
 
   try {
-    const headers = {
-      'Authorization': `Bearer ${token}`,
-      'LinkedIn-Version': '202601',
-      'X-Restli-Protocol-Version': '2.0.0',
-    };
+    // Try /v2/userinfo (requires "Sign in with LinkedIn" product → openid+profile scopes)
+    const res = await fetch('https://api.linkedin.com/v2/userinfo', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
 
-    let profile = null;
-    let personUrn = null;
-
-    // Try /v2/userinfo first (requires openid+profile scopes)
-    const res = await fetch('https://api.linkedin.com/v2/userinfo', { headers });
     if (res.ok) {
-      profile = await res.json();
-      personUrn = `urn:li:person:${profile.sub}`;
+      const profile = await res.json();
+      const personUrn = `urn:li:person:${profile.sub}`;
+
+      saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
+      saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
+
+      console.log(chalk.green(`\n  ✔ LinkedIn linked`));
+      console.log(chalk.dim(`    Name: ${profile.name}`));
+      if (profile.email) console.log(chalk.dim(`    Email: ${profile.email}`));
+      console.log(chalk.dim(`    URN: ${personUrn}`));
+      console.log('');
+    } else if (res.status === 401) {
+      throw new Error('Invalid or expired token.');
     } else {
-      // Fallback: /rest/me works with w_member_social scope
-      const meRes = await fetch('https://api.linkedin.com/rest/me', { headers });
-      if (!meRes.ok) {
-        const errText = await meRes.text().catch(() => '');
-        throw new Error(`LinkedIn API returned ${meRes.status}: ${errText.slice(0, 200)}`);
+      // 403 = token works but no profile scopes → save token, ask for URN
+      console.log(chalk.yellow('\n  Token accepted but profile scopes missing (openid+profile).'));
+      console.log(chalk.dim('  To auto-detect your URN, add "Sign in with LinkedIn using OpenID Connect"'));
+      console.log(chalk.dim('  to your app at https://www.linkedin.com/developers/apps\n'));
+      console.log(chalk.dim('  For now, enter your person URN manually.'));
+      console.log(chalk.dim('  Find it: LinkedIn profile → URL contains /in/yourname'));
+      console.log(chalk.dim('  Or: Developer Portal → Your App → Auth → Your member sub value\n'));
+
+      const urn = (await ask(rl, chalk.cyan('  Person URN (urn:li:person:XXXXX): '))).trim();
+      if (!urn) {
+        console.log(chalk.yellow('  No URN provided. Token saved but LinkedIn posts will not work without a URN.\n'));
+        saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
+        return;
       }
-      const me = await meRes.json();
-      personUrn = me.id?.startsWith('urn:') ? me.id : `urn:li:person:${me.id}`;
-      profile = { name: `${me.localizedFirstName || ''} ${me.localizedLastName || ''}`.trim() || me.id };
+
+      const personUrn = urn.startsWith('urn:li:person:') ? urn : `urn:li:person:${urn}`;
+      saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
+      saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
+
+      console.log(chalk.green(`\n  ✔ LinkedIn linked`));
+      console.log(chalk.dim(`    URN: ${personUrn}`));
+      console.log('');
     }
-
-    saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
-    saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
-
-    console.log(chalk.green(`\n  ✔ LinkedIn linked`));
-    console.log(chalk.dim(`    Name: ${profile.name}`));
-    if (profile.email) console.log(chalk.dim(`    Email: ${profile.email}`));
-    console.log(chalk.dim(`    URN: ${personUrn}`));
-    console.log('');
   } catch (err) {
     console.log(chalk.red(`\n  ✖ Token validation failed: ${err.message}\n`));
   }

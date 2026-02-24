@@ -1983,49 +1983,65 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         await bot.sendMessage(chatId, '⏳ Validating token...');
 
         try {
-          // Validate token — try /v2/userinfo first (openid+profile), fallback to /rest/me
-          const headers = {
-            'Authorization': `Bearer ${token}`,
-            'LinkedIn-Version': '202601',
-            'X-Restli-Protocol-Version': '2.0.0',
-          };
+          // Try /v2/userinfo (requires "Sign in with LinkedIn" product → openid+profile scopes)
+          const res = await fetch('https://api.linkedin.com/v2/userinfo', {
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
 
-          let profile = null;
-          let personUrn = null;
-
-          const res = await fetch('https://api.linkedin.com/v2/userinfo', { headers });
-          if (res.ok) {
-            profile = await res.json();
-            personUrn = `urn:li:person:${profile.sub}`;
-          } else {
-            // Fallback: /rest/me works with w_member_social scope
-            const meRes = await fetch('https://api.linkedin.com/rest/me', { headers });
-            if (!meRes.ok) {
-              const errText = await meRes.text().catch(() => '');
-              throw new Error(`LinkedIn API returned ${meRes.status}: ${errText.slice(0, 200)}`);
-            }
-            const me = await meRes.json();
-            personUrn = me.id?.startsWith('urn:') ? me.id : `urn:li:person:${me.id}`;
-            profile = { name: `${me.localizedFirstName || ''} ${me.localizedLastName || ''}`.trim() || me.id };
-          }
-
-          // Save credentials
           const { saveCredential } = await import('./utils/config.js');
-          saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
-          saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
 
-          await bot.sendMessage(chatId, [
-            '✅ *LinkedIn connected!*',
-            '',
-            `👤 *${profile.name}*`,
-            profile.email ? `📧 ${profile.email}` : '',
-            '',
-            'You can now ask me to post on LinkedIn, view your posts, comment, and more.',
-          ].filter(Boolean).join('\n'), { parse_mode: 'Markdown' });
+          if (res.ok) {
+            const profile = await res.json();
+            const personUrn = `urn:li:person:${profile.sub}`;
+
+            saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
+            saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
+
+            await bot.sendMessage(chatId, [
+              '✅ *LinkedIn connected!*',
+              '',
+              `👤 *${profile.name}*`,
+              profile.email ? `📧 ${profile.email}` : '',
+              '',
+              'You can now ask me to post on LinkedIn, view your posts, comment, and more.',
+            ].filter(Boolean).join('\n'), { parse_mode: 'Markdown' });
+          } else if (res.status === 401) {
+            throw new Error('Invalid or expired token.');
+          } else {
+            // 403 = token works but missing profile scopes → save token, ask for URN
+            saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
+
+            await bot.sendMessage(chatId, [
+              '⚠️ *Token saved* but profile auto-detect unavailable.',
+              '',
+              'Your token lacks `openid`+`profile` scopes (only `w_member_social`).',
+              'To fix: add *"Sign in with LinkedIn using OpenID Connect"* to your app at the Developer Portal, then regenerate the token.',
+              '',
+              'For now, send your person URN to complete setup:',
+              '`/linkedin urn urn:li:person:XXXXX`',
+              '',
+              'Find your sub value in your LinkedIn Developer app → Auth tab.',
+            ].join('\n'), { parse_mode: 'Markdown' });
+          }
         } catch (err) {
           logger.error(`[Bot] LinkedIn token validation failed: ${err.message}`);
           await bot.sendMessage(chatId, `❌ Token validation failed: ${err.message}`);
         }
+        return;
+      }
+
+      // /linkedin urn <value> — manually set person URN
+      if (args.startsWith('urn')) {
+        const urn = args.slice('urn'.length).trim();
+        if (!urn) {
+          await bot.sendMessage(chatId, 'Usage: `/linkedin urn urn:li:person:XXXXX`', { parse_mode: 'Markdown' });
+          return;
+        }
+        const personUrn = urn.startsWith('urn:li:person:') ? urn : `urn:li:person:${urn}`;
+        const { saveCredential } = await import('./utils/config.js');
+        saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
+
+        await bot.sendMessage(chatId, `✅ Person URN saved: \`${personUrn}\``, { parse_mode: 'Markdown' });
         return;
       }
 
