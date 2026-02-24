@@ -48,7 +48,7 @@ export const definitions = [
   },
   {
     name: 'linkedin_get_my_posts',
-    description: 'Get the user\'s recent LinkedIn posts.',
+    description: 'Get the user\'s recent LinkedIn posts. NOTE: Requires r_member_social permission (restricted). May return 403 if the LinkedIn app is not approved for this scope.',
     input_schema: {
       type: 'object',
       properties: {
@@ -61,7 +61,7 @@ export const definitions = [
   },
   {
     name: 'linkedin_get_post',
-    description: 'Get a specific LinkedIn post by its URN.',
+    description: 'Get a specific LinkedIn post by its URN. NOTE: Requires r_member_social permission (restricted). May return 403 if the LinkedIn app is not approved for this scope.',
     input_schema: {
       type: 'object',
       properties: {
@@ -93,7 +93,7 @@ export const definitions = [
   },
   {
     name: 'linkedin_get_comments',
-    description: 'Get comments on a LinkedIn post.',
+    description: 'Get comments on a LinkedIn post. NOTE: Requires r_member_social permission (restricted). May return 403 if the LinkedIn app is not approved for this scope.',
     input_schema: {
       type: 'object',
       properties: {
@@ -125,7 +125,7 @@ export const definitions = [
   },
   {
     name: 'linkedin_get_profile',
-    description: 'Get the linked LinkedIn profile information.',
+    description: 'Get the linked LinkedIn profile information. NOTE: Requires "Sign in with LinkedIn" product (openid + profile scopes). Returns limited info if only w_member_social is available.',
     input_schema: {
       type: 'object',
       properties: {},
@@ -176,6 +176,9 @@ export const handlers = {
       return { posts, count: posts.length };
     } catch (err) {
       getLogger().error(`linkedin_get_my_posts failed: ${err.message}`);
+      if (err.response?.status === 403) {
+        return { error: 'Access denied — reading posts requires r_member_social permission which is restricted to approved LinkedIn apps. Your token only has w_member_social (write-only: post, comment, like).' };
+      }
       return { error: err.response?.data?.message || err.message };
     }
   },
@@ -187,6 +190,9 @@ export const handlers = {
       return { post };
     } catch (err) {
       getLogger().error(`linkedin_get_post failed: ${err.message}`);
+      if (err.response?.status === 403) {
+        return { error: 'Access denied — reading posts requires r_member_social permission which is restricted to approved LinkedIn apps.' };
+      }
       return { error: err.response?.data?.message || err.message };
     }
   },
@@ -210,6 +216,9 @@ export const handlers = {
       return { comments, count: comments.length };
     } catch (err) {
       getLogger().error(`linkedin_get_comments failed: ${err.message}`);
+      if (err.response?.status === 403) {
+        return { error: 'Access denied — reading comments requires r_member_social permission which is restricted to approved LinkedIn apps.' };
+      }
       return { error: err.response?.data?.message || err.message };
     }
   },
@@ -230,6 +239,11 @@ export const handlers = {
     try {
       const client = getClient(context);
       const profile = await client.getProfile();
+      if (!profile) {
+        // No openid+profile scopes — return what we know from config
+        const urn = context.config.linkedin?.person_urn;
+        return { profile: { person_urn: urn }, note: 'Full profile unavailable — LinkedIn app only has w_member_social scope. Add "Sign in with LinkedIn" product for full profile access.' };
+      }
       return { profile };
     } catch (err) {
       getLogger().error(`linkedin_get_profile failed: ${err.message}`);
