@@ -61,7 +61,8 @@ function showMenu(config) {
   console.log(`  ${chalk.cyan('7.')} Manage custom skills`);
   console.log(`  ${chalk.cyan('8.')} Manage automations`);
   console.log(`  ${chalk.cyan('9.')} Switch character`);
-  console.log(`  ${chalk.cyan('10.')} Exit`);
+  console.log(`  ${chalk.cyan('10.')} Link LinkedIn account`);
+  console.log(`  ${chalk.cyan('11.')} Exit`);
   console.log('');
 }
 
@@ -714,6 +715,60 @@ async function manageCharacters(rl, config) {
   }
 }
 
+async function linkLinkedInCli(config, rl) {
+  const { saveCredential } = await import('../src/utils/config.js');
+
+  // Show current status
+  if (config.linkedin?.access_token) {
+    const truncated = `${config.linkedin.access_token.slice(0, 8)}...${config.linkedin.access_token.slice(-4)}`;
+    console.log(chalk.dim(`\n  Currently connected — token: ${truncated}`));
+    if (config.linkedin.person_urn) console.log(chalk.dim(`  URN: ${config.linkedin.person_urn}`));
+    const relink = (await ask(rl, chalk.cyan('\n  Re-link? [y/N]: '))).trim().toLowerCase();
+    if (relink !== 'y') {
+      console.log(chalk.dim('  Cancelled.\n'));
+      return;
+    }
+  }
+
+  console.log('');
+  console.log(chalk.bold('  Link LinkedIn Account\n'));
+  console.log(chalk.dim('  1. Go to https://www.linkedin.com/developers/tools/oauth/token-generator'));
+  console.log(chalk.dim('  2. Select your app, pick scopes: openid, profile, email, w_member_social'));
+  console.log(chalk.dim('  3. Authorize and copy the token'));
+  console.log('');
+
+  const token = (await ask(rl, chalk.cyan('  Paste token (or "cancel"): '))).trim();
+  if (!token || token.toLowerCase() === 'cancel') {
+    console.log(chalk.dim('  Cancelled.\n'));
+    return;
+  }
+
+  console.log(chalk.dim('\n  Validating token...'));
+
+  try {
+    const res = await fetch('https://api.linkedin.com/v2/userinfo', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`LinkedIn API returned ${res.status}: ${errText.slice(0, 200)}`);
+    }
+    const profile = await res.json();
+    const personUrn = `urn:li:person:${profile.sub}`;
+
+    saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
+    saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
+
+    console.log(chalk.green(`\n  ✔ LinkedIn linked`));
+    console.log(chalk.dim(`    Name: ${profile.name}`));
+    if (profile.email) console.log(chalk.dim(`    Email: ${profile.email}`));
+    console.log(chalk.dim(`    URN: ${personUrn}`));
+    console.log('');
+  } catch (err) {
+    console.log(chalk.red(`\n  ✖ Token validation failed: ${err.message}\n`));
+  }
+}
+
 async function main() {
   showLogo();
 
@@ -759,6 +814,9 @@ async function main() {
         await manageCharacters(rl, config);
         break;
       case '10':
+        await linkLinkedInCli(config, rl);
+        break;
+      case '11':
         running = false;
         break;
       default:
