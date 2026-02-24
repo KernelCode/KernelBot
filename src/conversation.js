@@ -262,4 +262,19 @@ export class ConversationManager {
     this.activeSkills.delete(String(chatId));
     this.save();
   }
+
+  /**
+   * Switch the backing file for this manager.
+   * Saves current data, clears in-memory state, then loads from the new file.
+   * Used when switching characters to point at the new character's conversations.json.
+   * @param {string} newPath - Absolute path to the new conversations JSON file.
+   */
+  switchFile(newPath) {
+    this.save();
+    this.conversations.clear();
+    this.activeSkills.clear();
+    this.filePath = newPath;
+    this.load();
+    this.logger.debug(`ConversationManager switched to: ${newPath}`);
+  }
 }

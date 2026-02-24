@@ -1034,36 +1034,40 @@ export class OrchestratorAgent {
           logger.info(`[Orchestrator] Thinking: "${response.text.slice(0, 200)}"`);
         }
 
-        const toolResults = [];
-
+        // Log all tool calls and send status updates first
         for (const block of response.toolCalls) {
           const summary = this._formatToolSummary(block.name, block.input);
           logger.info(`[Orchestrator] Calling tool: ${block.name} — ${summary}`);
           logger.debug(`[Orchestrator] Tool input: ${JSON.stringify(block.input).slice(0, 300)}`);
-          await this._sendUpdate(chatId, `⚡ ${summary}`);
-
-          const chatCallbacks = this._chatCallbacks.get(chatId) || {};
-          const result = await executeOrchestratorTool(block.name, block.input, {
-            chatId,
-            jobManager: this.jobManager,
-            config: this.config,
-            spawnWorker: (job) => this._spawnWorker(job),
-            automationManager: this.automationManager,
-            memoryManager: this.memoryManager,
-            conversationManager: this.conversationManager,
-            user,
-            sendReaction: chatCallbacks.sendReaction || null,
-            lastUserMessageId: chatCallbacks.lastUserMessageId || null,
-          });
-
-          logger.info(`[Orchestrator] Tool result for ${block.name}: ${JSON.stringify(result).slice(0, 200)}`);
-
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: this._truncateResult(block.name, result),
-          });
+          this._sendUpdate(chatId, `⚡ ${summary}`).catch(() => {});
         }
+
+        // Execute all tools in parallel — they're independent
+        const chatCallbacks = this._chatCallbacks.get(chatId) || {};
+        const toolContext = {
+          chatId,
+          jobManager: this.jobManager,
+          config: this.config,
+          spawnWorker: (job) => this._spawnWorker(job),
+          automationManager: this.automationManager,
+          memoryManager: this.memoryManager,
+          conversationManager: this.conversationManager,
+          user,
+          sendReaction: chatCallbacks.sendReaction || null,
+          lastUserMessageId: chatCallbacks.lastUserMessageId || null,
+        };
+
+        const toolResults = await Promise.all(
+          response.toolCalls.map(async (block) => {
+            const result = await executeOrchestratorTool(block.name, block.input, toolContext);
+            logger.info(`[Orchestrator] Tool result for ${block.name}: ${JSON.stringify(result).slice(0, 200)}`);
+            return {
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: this._truncateResult(block.name, result),
+            };
+          }),
+        );
 
         messages.push({ role: 'user', content: toolResults });
         continue;
