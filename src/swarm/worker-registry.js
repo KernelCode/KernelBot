@@ -40,6 +40,13 @@ export const WORKER_TYPES = {
     description: 'Deep web research and analysis',
     timeout: 600,    // 10 minutes
   },
+  social: {
+    label: 'Social Worker',
+    emoji: '📱',
+    categories: ['linkedin'],
+    description: 'LinkedIn posting, comments, feed reading',
+    timeout: 120,    // 2 minutes
+  },
 };
 
 /**

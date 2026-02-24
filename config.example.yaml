@@ -32,6 +32,15 @@ jira:
   # email: you@company.com                       # JIRA account email (Cloud) or username (Server)
   # api_token: your-api-token                    # API token from https://id.atlassian.net/manage-profile/security/api-tokens
 
+# LinkedIn — token-based integration for posting, reading, and engaging
+# 1. Go to https://www.linkedin.com/developers/tools/oauth/token-generator
+# 2. Select your app, pick scopes: openid, profile, email, w_member_social
+# 3. Authorize and copy the token
+# 4. Run /linkedin link <token> in Telegram, or set in .env:
+#    LINKEDIN_ACCESS_TOKEN=your-token
+#    LINKEDIN_PERSON_URN is auto-detected when you use /linkedin link
+linkedin:
+
 telegram:
   # List Telegram user IDs allowed to interact. Empty = deny all.
   # Set OWNER_TELEGRAM_ID in .env or add IDs here.

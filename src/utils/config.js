@@ -61,6 +61,7 @@ const DEFAULTS = {
     max_history: 50,
     recent_window: 10,
   },
+  linkedin: {},
 };
 
 function deepMerge(target, source) {
@@ -522,6 +523,16 @@ export function loadConfig() {
     config.claude_code.oauth_token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
   }
 
+  // LinkedIn token-based auth from env
+  if (process.env.LINKEDIN_ACCESS_TOKEN) {
+    if (!config.linkedin) config.linkedin = {};
+    config.linkedin.access_token = process.env.LINKEDIN_ACCESS_TOKEN;
+  }
+  if (process.env.LINKEDIN_PERSON_URN) {
+    if (!config.linkedin) config.linkedin = {};
+    config.linkedin.person_urn = process.env.LINKEDIN_PERSON_URN;
+  }
+
   return config;
 }
 
@@ -585,6 +596,14 @@ export function saveCredential(config, envKey, value) {
       if (!config.jira) config.jira = {};
       config.jira.api_token = value;
       break;
+    case 'LINKEDIN_ACCESS_TOKEN':
+      if (!config.linkedin) config.linkedin = {};
+      config.linkedin.access_token = value;
+      break;
+    case 'LINKEDIN_PERSON_URN':
+      if (!config.linkedin) config.linkedin = {};
+      config.linkedin.person_urn = value;
+      break;
   }
 
   // Also set in process.env so tools pick it up
@@ -615,6 +634,14 @@ export function getMissingCredential(toolName, config) {
     }
     if (!config.jira?.api_token && !process.env.JIRA_API_TOKEN) {
       return { envKey: 'JIRA_API_TOKEN', label: 'JIRA API Token' };
+    }
+  }
+
+  const linkedinTools = ['linkedin_create_post', 'linkedin_get_my_posts', 'linkedin_get_post', 'linkedin_comment_on_post', 'linkedin_get_comments', 'linkedin_like_post', 'linkedin_get_profile', 'linkedin_delete_post'];
+
+  if (linkedinTools.includes(toolName)) {
+    if (!config.linkedin?.access_token && !process.env.LINKEDIN_ACCESS_TOKEN) {
+      return { envKey: 'LINKEDIN_ACCESS_TOKEN', label: 'LinkedIn Access Token (from /linkedin link or https://www.linkedin.com/developers/tools/oauth/token-generator)' };
     }
   }
 
