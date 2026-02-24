@@ -176,6 +176,60 @@ export const orchestratorToolDefinitions = [
       required: ['emoji'],
     },
   },
+  {
+    name: 'recall_memories',
+    description: 'Search your episodic and semantic memory for information about a topic, event, or past experience. Use this when the user references something from the past or you need context about a specific subject.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Keywords or topic to search memories for (e.g. "kubernetes", "birthday", "project deadline").',
+        },
+        time_range_hours: {
+          type: 'number',
+          description: 'Optional: limit episodic search to the last N hours. Defaults to searching all available memories.',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'recall_user_history',
+    description: 'Retrieve memories specifically about a user — past interactions, preferences, things they told you. Use when you need to remember what a specific person has shared or discussed.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        user_id: {
+          type: 'string',
+          description: 'The user ID to retrieve memories for.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of memories to return. Default: 10.',
+        },
+      },
+      required: ['user_id'],
+    },
+  },
+  {
+    name: 'search_conversations',
+    description: 'Search past messages in the current (or specified) chat for a keyword or phrase. Use when you need to find something specific that was said in conversation.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Keyword or phrase to search for in conversation history.',
+        },
+        chat_id: {
+          type: 'string',
+          description: 'Optional: chat ID to search. Defaults to the current chat.',
+        },
+      },
+      required: ['query'],
+    },
+  },
 ];
 
 /**
@@ -477,6 +531,133 @@ export async function executeOrchestratorTool(name, input, context) {
         logger.error(`[send_reaction] Failed: ${err.message}`);
         return { error: `Failed to send reaction: ${err.message}` };
       }
+    }
+
+    case 'recall_memories': {
+      const { memoryManager } = context;
+      if (!memoryManager) return { error: 'Memory system not available.' };
+
+      const { query, time_range_hours } = input;
+      logger.info(`[recall_memories] Searching for: "${query}" (time_range=${time_range_hours || 'all'})`);
+
+      const episodic = memoryManager.searchEpisodic(query, 10);
+      const semantic = memoryManager.searchSemantic(query, 5);
+
+      // Filter by time range if specified
+      const now = Date.now();
+      const filteredEpisodic = time_range_hours
+        ? episodic.filter(m => (now - m.timestamp) <= time_range_hours * 3600_000)
+        : episodic;
+
+      const formatAge = (ts) => {
+        const ageH = Math.round((now - ts) / 3600_000);
+        if (ageH < 1) return 'just now';
+        if (ageH < 24) return `${ageH}h ago`;
+        const ageD = Math.round(ageH / 24);
+        return `${ageD}d ago`;
+      };
+
+      const episodicResults = filteredEpisodic.map(m => ({
+        summary: m.summary,
+        age: formatAge(m.timestamp),
+        importance: m.importance,
+        tags: m.tags,
+        type: m.type,
+      }));
+
+      const semanticResults = semantic.map(s => ({
+        topic: s.topic,
+        summary: s.summary,
+        learned: formatAge(s.learnedAt),
+        related: s.relatedTopics,
+      }));
+
+      logger.info(`[recall_memories] Found ${episodicResults.length} episodic, ${semanticResults.length} semantic results`);
+
+      if (episodicResults.length === 0 && semanticResults.length === 0) {
+        return { message: `No memories found matching "${query}".` };
+      }
+
+      return {
+        query,
+        episodic: episodicResults,
+        semantic: semanticResults,
+      };
+    }
+
+    case 'recall_user_history': {
+      const { memoryManager } = context;
+      if (!memoryManager) return { error: 'Memory system not available.' };
+
+      const { user_id, limit } = input;
+      logger.info(`[recall_user_history] Retrieving memories for user: ${user_id} (limit=${limit || 10})`);
+
+      const memories = memoryManager.getMemoriesAboutUser(user_id, limit || 10);
+
+      const now = Date.now();
+      const results = memories.map(m => ({
+        summary: m.summary,
+        age: (() => {
+          const ageH = Math.round((now - m.timestamp) / 3600_000);
+          if (ageH < 1) return 'just now';
+          if (ageH < 24) return `${ageH}h ago`;
+          return `${Math.round(ageH / 24)}d ago`;
+        })(),
+        importance: m.importance,
+        type: m.type,
+        tags: m.tags,
+      }));
+
+      logger.info(`[recall_user_history] Found ${results.length} memories for user ${user_id}`);
+
+      if (results.length === 0) {
+        return { message: `No memories found for user ${user_id}.` };
+      }
+
+      return { user_id, memories: results };
+    }
+
+    case 'search_conversations': {
+      const { conversationManager } = context;
+      if (!conversationManager) return { error: 'Conversation system not available.' };
+
+      const { query, chat_id } = input;
+      const targetChatId = chat_id || chatId;
+      logger.info(`[search_conversations] Searching chat ${targetChatId} for: "${query}"`);
+
+      const history = conversationManager.getHistory(targetChatId);
+      const queryLower = query.toLowerCase();
+
+      const matches = [];
+      for (let i = 0; i < history.length; i++) {
+        const msg = history[i];
+        const content = typeof msg.content === 'string' ? msg.content : '';
+        if (content.toLowerCase().includes(queryLower)) {
+          matches.push({
+            role: msg.role,
+            snippet: content.length > 300 ? content.slice(0, 300) + '...' : content,
+            age: msg.timestamp
+              ? (() => {
+                  const ageH = Math.round((Date.now() - msg.timestamp) / 3600_000);
+                  if (ageH < 1) return 'just now';
+                  if (ageH < 24) return `${ageH}h ago`;
+                  return `${Math.round(ageH / 24)}d ago`;
+                })()
+              : 'unknown',
+          });
+        }
+      }
+
+      // Return last 10 matches (most recent)
+      const results = matches.slice(-10);
+
+      logger.info(`[search_conversations] Found ${matches.length} matches, returning ${results.length}`);
+
+      if (results.length === 0) {
+        return { message: `No messages found matching "${query}" in this chat.` };
+      }
+
+      return { query, chat_id: targetChatId, matches: results, total_matches: matches.length };
     }
 
     default:

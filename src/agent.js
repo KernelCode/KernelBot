@@ -965,6 +965,8 @@ export class OrchestratorAgent {
             config: this.config,
             spawnWorker: (job) => this._spawnWorker(job),
             automationManager: this.automationManager,
+            memoryManager: this.memoryManager,
+            conversationManager: this.conversationManager,
             user,
             sendReaction: chatCallbacks.sendReaction || null,
             lastUserMessageId: chatCallbacks.lastUserMessageId || null,
@@ -1018,6 +1020,12 @@ export class OrchestratorAgent {
         return `Deleting automation ${input.automation_id}`;
       case 'send_reaction':
         return `Reacting with ${input.emoji}`;
+      case 'recall_memories':
+        return `Recalling memories about "${(input.query || '').slice(0, 40)}"`;
+      case 'recall_user_history':
+        return `Recalling history with user ${input.user_id}`;
+      case 'search_conversations':
+        return `Searching conversations for "${(input.query || '').slice(0, 40)}"`;
       default:
         return name;
     }
