@@ -231,6 +231,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     shareQueue = charCtx.shareQueue;
     evolutionTracker = charCtx.evolutionTracker;
 
+    // Switch conversation file to the new character's conversations.json
+    conversationManager.switchFile(charCtx.conversationFilePath);
+
     const lifeEnabled = config.life?.enabled !== false;
     if (!lifeEnabled) {
       lifeEngine = null;
