@@ -86,11 +86,41 @@ export class CharacterManager {
     }
 
     // Copy conversations.json → characters/kernel/conversations.json
+    // Re-key all conversation and skill entries with "kernel:" prefix
+    // so they match the new _chatKey() scoping in agent.js
     const legacyConvFile = join(KERNELBOT_DIR, 'conversations.json');
     const targetConvFile = join(kernelDir, 'conversations.json');
     if (existsSync(legacyConvFile) && !existsSync(targetConvFile)) {
-      cpSync(legacyConvFile, targetConvFile);
-      logger.info('[CharacterManager] Migrated conversations.json');
+      try {
+        const raw = JSON.parse(readFileSync(legacyConvFile, 'utf-8'));
+        const migrated = {};
+
+        for (const [key, value] of Object.entries(raw)) {
+          if (key === '_skills') {
+            // Re-key skills: "12345" → "kernel:12345"
+            const migratedSkills = {};
+            for (const [skillKey, skillId] of Object.entries(value)) {
+              const newKey = skillKey.startsWith('kernel:') || skillKey.startsWith('__life__') ? skillKey : `kernel:${skillKey}`;
+              migratedSkills[newKey] = skillId;
+            }
+            migrated._skills = migratedSkills;
+          } else if (key.startsWith('__life__')) {
+            // Re-key life engine chat: "__life__" → "__life__:kernel"
+            migrated[key === '__life__' ? '__life__:kernel' : key] = value;
+          } else {
+            // Re-key user chats: "12345" → "kernel:12345"
+            const newKey = key.startsWith('kernel:') ? key : `kernel:${key}`;
+            migrated[newKey] = value;
+          }
+        }
+
+        writeFileSync(targetConvFile, JSON.stringify(migrated, null, 2), 'utf-8');
+        logger.info('[CharacterManager] Migrated conversations.json (re-keyed with kernel: prefix)');
+      } catch (err) {
+        // Fallback: just copy as-is if parsing fails
+        cpSync(legacyConvFile, targetConvFile);
+        logger.warn(`[CharacterManager] Migrated conversations.json (raw copy, re-key failed: ${err.message})`);
+      }
     }
 
     // Copy persona.md from source
