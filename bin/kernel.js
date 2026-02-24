@@ -748,7 +748,7 @@ async function linkLinkedInCli(config, rl) {
   try {
     const headers = {
       'Authorization': `Bearer ${token}`,
-      'LinkedIn-Version': '202502',
+      'LinkedIn-Version': '202601',
       'X-Restli-Protocol-Version': '2.0.0',
     };
 

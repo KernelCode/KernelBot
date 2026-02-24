@@ -1986,7 +1986,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           // Validate token — try /v2/userinfo first (openid+profile), fallback to /rest/me
           const headers = {
             'Authorization': `Bearer ${token}`,
-            'LinkedIn-Version': '202502',
+            'LinkedIn-Version': '202601',
             'X-Restli-Protocol-Version': '2.0.0',
           };
 
