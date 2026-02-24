@@ -746,15 +746,31 @@ async function linkLinkedInCli(config, rl) {
   console.log(chalk.dim('\n  Validating token...'));
 
   try {
-    const res = await fetch('https://api.linkedin.com/v2/userinfo', {
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(`LinkedIn API returned ${res.status}: ${errText.slice(0, 200)}`);
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'LinkedIn-Version': '202502',
+      'X-Restli-Protocol-Version': '2.0.0',
+    };
+
+    let profile = null;
+    let personUrn = null;
+
+    // Try /v2/userinfo first (requires openid+profile scopes)
+    const res = await fetch('https://api.linkedin.com/v2/userinfo', { headers });
+    if (res.ok) {
+      profile = await res.json();
+      personUrn = `urn:li:person:${profile.sub}`;
+    } else {
+      // Fallback: /rest/me works with w_member_social scope
+      const meRes = await fetch('https://api.linkedin.com/rest/me', { headers });
+      if (!meRes.ok) {
+        const errText = await meRes.text().catch(() => '');
+        throw new Error(`LinkedIn API returned ${meRes.status}: ${errText.slice(0, 200)}`);
+      }
+      const me = await meRes.json();
+      personUrn = me.id?.startsWith('urn:') ? me.id : `urn:li:person:${me.id}`;
+      profile = { name: `${me.localizedFirstName || ''} ${me.localizedLastName || ''}`.trim() || me.id };
     }
-    const profile = await res.json();
-    const personUrn = `urn:li:person:${profile.sub}`;
 
     saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
     saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
