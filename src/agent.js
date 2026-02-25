@@ -956,7 +956,30 @@ export class OrchestratorAgent {
       const dur = job.startedAt ? Math.round((now - job.startedAt) / 1000) : 0;
       const stats = `${job.llmCalls} LLM calls, ${job.toolCalls} tools`;
       const recentActivity = job.progress.slice(-5).join(' → ');
+
+      // Warning flags — long-running workers (coding, devops) get higher thresholds
+      const flags = [];
+      const isLongRunning = ['coding', 'devops'].includes(job.workerType);
+      const idleThreshold = isLongRunning ? 600 : 120;
+      const loopLlmThreshold = isLongRunning ? 50 : 15;
+
+      const idleSec = job.lastActivity ? Math.round((now - job.lastActivity) / 1000) : dur;
+      if (idleSec > idleThreshold) {
+        flags.push(`⚠️ IDLE ${idleSec}s`);
+      }
+      if (job.llmCalls > loopLlmThreshold && job.toolCalls < 3) {
+        flags.push('⚠️ POSSIBLY LOOPING');
+      }
+      const timeoutSec = job.timeoutMs ? Math.round(job.timeoutMs / 1000) : null;
+      if (timeoutSec && dur > timeoutSec * 0.75) {
+        const pct = Math.round((dur / timeoutSec) * 100);
+        flags.push(`⚠️ ${pct}% of timeout used`);
+      }
+
       let line = `- ${workerDef.label || job.workerType} (${job.id}) — running ${dur}s [${stats}]`;
+      if (flags.length > 0) {
+        line += ` ${flags.join(' | ')}`;
+      }
       if (job.lastThinking) {
         line += `\n  Thinking: "${job.lastThinking.slice(0, 150)}"`;
       }
@@ -1110,6 +1133,8 @@ export class OrchestratorAgent {
         return 'Checking job status';
       case 'cancel_job':
         return `Cancelling job ${input.job_id}`;
+      case 'check_job':
+        return `Checking job ${input.job_id}`;
       case 'create_automation':
         return `Creating automation: ${(input.name || '').slice(0, 40)}`;
       case 'list_automations':
