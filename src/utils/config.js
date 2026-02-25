@@ -217,6 +217,13 @@ export function saveOrchestratorToYaml(providerKey, modelId) {
 }
 
 /**
+ * Save dashboard config to config.yaml.
+ */
+export function saveDashboardToYaml(changes) {
+  return _patchConfigYaml('dashboard', changes);
+}
+
+/**
  * Save Claude Code model to config.yaml.
  */
 export function saveClaudeCodeModelToYaml(modelId) {
