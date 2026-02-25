@@ -499,20 +499,34 @@ export class OrchestratorAgent {
         if (summary) {
           logger.debug(`[Orchestrator] Job ${job.id} summary ready (${summary.length} chars) — delivering to user`);
           this.conversationManager.addMessage(convKey, 'assistant', summary);
-          await this._sendUpdate(chatId, summary, { editMessageId: notifyMsgId });
+          // Try to edit the notification, fall back to new message if edit fails
+          try {
+            await this._sendUpdate(chatId, summary, { editMessageId: notifyMsgId });
+          } catch {
+            await this._sendUpdate(chatId, summary).catch(() => {});
+          }
         } else {
           // Summary was null — store the fallback
           const fallback = this._buildSummaryFallback(job, label);
           logger.debug(`[Orchestrator] Job ${job.id} using fallback (${fallback.length} chars) — delivering to user`);
           this.conversationManager.addMessage(convKey, 'assistant', fallback);
-          await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
+          try {
+            await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
+          } catch {
+            await this._sendUpdate(chatId, fallback).catch(() => {});
+          }
         }
       } catch (err) {
         logger.error(`[Orchestrator] Failed to summarize job ${job.id}: ${err.message}`);
         // Store the fallback so the orchestrator retains context about what happened
         const fallback = this._buildSummaryFallback(job, label);
         this.conversationManager.addMessage(convKey, 'assistant', fallback);
-        await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId }).catch(() => {});
+        // Try to edit notification, fall back to new message
+        try {
+          await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
+        } catch {
+          await this._sendUpdate(chatId, fallback).catch(() => {});
+        }
       }
     });
 
@@ -570,9 +584,17 @@ export class OrchestratorAgent {
 
     logger.info(`[Orchestrator] Summarizing job ${job.id} [${job.workerType}] result for user`);
 
-    // Short results don't need LLM summarization
     const sr = job.structuredResult;
     const resultLen = (job.result || '').length;
+
+    // Direct coding jobs: Claude Code already produces clean, human-readable output.
+    // Skip LLM summarization to avoid timeouts and latency — use the result directly.
+    if (job.workerType === 'coding') {
+      logger.info(`[Orchestrator] Job ${job.id} is a coding job — using direct result (no LLM summary)`);
+      return this._buildSummaryFallback(job, label);
+    }
+
+    // Short results don't need LLM summarization
     if (sr?.structured && resultLen < 500) {
       logger.info(`[Orchestrator] Job ${job.id} result short enough — skipping LLM summary`);
       return this._buildSummaryFallback(job, label);
