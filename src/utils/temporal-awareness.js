@@ -117,17 +117,30 @@ function determineStatus(hour, dayOfWeek, workingHours) {
 }
 
 /**
- * Determine the likely activity period for more nuanced awareness.
+ * Activity period definitions with behavioral tone hints.
+ * Each period carries a label and a short guidance string that gets
+ * injected into the system prompt so the LLM adapts its personality
+ * to the owner's real-time situation.
+ */
+const ACTIVITY_PERIODS = [
+  { start: 0,  end: 5,  label: 'late_night',    tone: 'Keep it calm and gentle — they may be winding down or unable to sleep. Avoid high-energy openers.' },
+  { start: 5,  end: 7,  label: 'early_morning',  tone: 'They are just waking up. Be warm but concise — ease them into the day without overwhelming detail.' },
+  { start: 7,  end: 12, label: 'morning',        tone: 'Good energy window. Match an upbeat, productive tone — they are likely starting their day.' },
+  { start: 12, end: 14, label: 'midday',         tone: 'Lunch break energy — keep things light and conversational unless they initiate something serious.' },
+  { start: 14, end: 17, label: 'afternoon',      tone: 'Afternoon focus. Be direct and helpful — they may be deep in work.' },
+  { start: 17, end: 20, label: 'evening',        tone: 'Winding down from the day. Be relaxed and friendly — match a casual, end-of-day vibe.' },
+  { start: 20, end: 23, label: 'night',          tone: 'Late evening — be warm and unhurried. They are likely relaxing, so keep the mood easy-going.' },
+];
+
+/**
+ * Determine the likely activity period and its behavioral tone hint.
+ * Returns { label, tone } for richer LLM context.
  */
 function determineActivityPeriod(hour) {
-  if (hour >= 0 && hour < 5) return 'late_night';
-  if (hour >= 5 && hour < 7) return 'early_morning';
-  if (hour >= 7 && hour < 12) return 'morning';
-  if (hour >= 12 && hour < 14) return 'midday';
-  if (hour >= 14 && hour < 17) return 'afternoon';
-  if (hour >= 17 && hour < 20) return 'evening';
-  if (hour >= 20 && hour < 23) return 'night';
-  return 'late_night';
+  const period = ACTIVITY_PERIODS.find(p => hour >= p.start && hour < p.end);
+  if (period) return { label: period.label, tone: period.tone };
+  // hour 23 falls outside all ranges — treat as late_night
+  return { label: 'late_night', tone: ACTIVITY_PERIODS[0].tone };
 }
 
 /**
@@ -163,7 +176,7 @@ export function buildTemporalAwareness() {
   const currentHour = getCurrentHour(now, timezone);
   const currentDay = getCurrentDayOfWeek(now, timezone);
   const { status, detail } = determineStatus(currentHour, currentDay, owner.working_hours);
-  const period = determineActivityPeriod(currentHour);
+  const { label: period, tone: periodTone } = determineActivityPeriod(currentHour);
 
   const lines = [
     `## Owner's Real-Time Context`,
@@ -190,6 +203,7 @@ export function buildTemporalAwareness() {
   lines.push('IMPORTANT: Be aware of the owner\'s current local time and status.');
   lines.push('Do NOT assume they are at work during off-hours, or sleeping during work hours.');
   lines.push('Adjust greetings, tone, and context to match their real-time situation.');
+  lines.push(`Tone hint: ${periodTone}`);
 
   const block = lines.join('\n');
 
