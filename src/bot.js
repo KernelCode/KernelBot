@@ -122,8 +122,12 @@ function createOnUpdate(bot, chatId) {
         lastMsgId = sent.message_id;
       } catch (mdErr) {
         logger.debug(`[Bot] Markdown send failed for chat ${chatId}, falling back to plain: ${mdErr.message}`);
-        const sent = await bot.sendMessage(chatId, part);
-        lastMsgId = sent.message_id;
+        try {
+          const sent = await bot.sendMessage(chatId, part);
+          lastMsgId = sent.message_id;
+        } catch (plainErr) {
+          logger.error(`[Bot] Plain-text send also failed for chat ${chatId}: ${plainErr.message}`);
+        }
       }
     }
     return lastMsgId;
@@ -158,11 +162,16 @@ function createSendPhoto(bot, chatId, logger) {
  * Create a sendReaction callback for reacting to messages with emoji.
  */
 function createSendReaction(bot) {
+  const logger = getLogger();
   return async (targetChatId, targetMsgId, emoji, isBig = false) => {
-    await bot.setMessageReaction(targetChatId, targetMsgId, {
-      reaction: [{ type: 'emoji', emoji }],
-      is_big: isBig,
-    });
+    try {
+      await bot.setMessageReaction(targetChatId, targetMsgId, {
+        reaction: [{ type: 'emoji', emoji }],
+        is_big: isBig,
+      });
+    } catch (err) {
+      logger.debug(`[Bot] Failed to set reaction for msg ${targetMsgId} in chat ${targetChatId}: ${err.message}`);
+    }
   };
 }
 
