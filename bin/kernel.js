@@ -75,7 +75,7 @@ function ask(rl, question) {
  * Stops polling, cancels running jobs, persists conversations,
  * disarms automations, stops the life engine, and clears intervals.
  */
-function setupGracefulShutdown({ bot, lifeEngine, automationManager, jobManager, conversationManager, intervals }) {
+function setupGracefulShutdown({ bot, lifeEngine, automationManager, jobManager, conversationManager, intervals, dashboardHandle }) {
   let shuttingDown = false;
 
   const shutdown = async (signal) => {
@@ -130,7 +130,14 @@ function setupGracefulShutdown({ bot, lifeEngine, automationManager, jobManager,
       logger.error(`[Shutdown] Failed to save conversations: ${err.message}`);
     }
 
-    // 6. Clear periodic intervals
+    // 6. Stop dashboard
+    try {
+      dashboardHandle?.stop();
+    } catch (err) {
+      logger.error(`[Shutdown] Failed to stop dashboard: ${err.message}`);
+    }
+
+    // 7. Clear periodic intervals
     for (const id of intervals) {
       clearInterval(id);
     }
@@ -360,6 +367,22 @@ async function startBotFlow(config) {
 
   showStartupComplete();
 
+  // Optional cyberpunk terminal dashboard
+  let dashboardHandle = null;
+  if (config.dashboard?.port) {
+    const { startDashboard } = await import('../src/dashboard/server.js');
+    dashboardHandle = startDashboard({
+      port: config.dashboard.port,
+      config, jobManager, automationManager, lifeEngine, conversationManager, characterManager,
+      memoryManager: charCtx.memoryManager,
+      journalManager: charCtx.journalManager,
+      shareQueue: charCtx.shareQueue,
+      evolutionTracker: charCtx.evolutionTracker,
+      selfManager: charCtx.selfManager,
+    });
+    logger.info(`[Dashboard] Running on http://localhost:${config.dashboard.port}`);
+  }
+
   // Start life engine if enabled
   const lifeEnabled = config.life?.enabled !== false;
   if (lifeEnabled) {
@@ -388,6 +411,7 @@ async function startBotFlow(config) {
   setupGracefulShutdown({
     bot, lifeEngine, automationManager, jobManager,
     conversationManager, intervals: [cleanupInterval, pruneInterval],
+    dashboardHandle,
   });
 
   return true;
