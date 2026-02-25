@@ -9,7 +9,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import chalk from 'chalk';
-import { loadConfig, loadConfigInteractive, changeBrainModel, changeOrchestratorModel } from '../src/utils/config.js';
+import { loadConfig, loadConfigInteractive, changeBrainModel, changeOrchestratorModel, saveDashboardToYaml } from '../src/utils/config.js';
 import { createLogger, getLogger } from '../src/utils/logger.js';
 import {
   showLogo,
@@ -882,14 +882,42 @@ async function main() {
         const dashPort = config.dashboard?.port || 3000;
         console.log('');
         console.log(chalk.bold('  Dashboard'));
-        console.log(chalk.dim(`  Enabled on boot: ${dashEnabled ? 'yes' : 'no'}`));
-        console.log(chalk.dim(`  Port: ${dashPort}`));
-        if (dashEnabled) {
-          console.log(chalk.dim(`  URL: http://localhost:${dashPort}`));
-        }
-        console.log(chalk.dim('  Set dashboard.enabled: true in config.yaml to auto-start'));
-        console.log(chalk.dim('  Use /dashboard in Telegram to start/stop at runtime'));
+        console.log(`  Auto-start on boot: ${dashEnabled ? chalk.green('yes') : chalk.yellow('no')}`);
+        console.log(`  Port: ${chalk.cyan(dashPort)}`);
+        console.log(`  URL: ${chalk.cyan(`http://localhost:${dashPort}`)}`);
         console.log('');
+        console.log(`  ${chalk.cyan('1.')} ${dashEnabled ? 'Disable' : 'Enable'} auto-start on boot`);
+        console.log(`  ${chalk.cyan('2.')} Change port`);
+        console.log(`  ${chalk.cyan('3.')} Back`);
+        console.log('');
+        const dashChoice = await ask(rl, chalk.cyan('  > '));
+        switch (dashChoice.trim()) {
+          case '1': {
+            const newEnabled = !dashEnabled;
+            saveDashboardToYaml({ enabled: newEnabled });
+            config.dashboard.enabled = newEnabled;
+            console.log(chalk.green(`\n  ✔ Dashboard auto-start ${newEnabled ? 'enabled' : 'disabled'}\n`));
+            if (newEnabled) {
+              console.log(chalk.dim(`  Dashboard will start at http://localhost:${dashPort} on next bot launch.`));
+              console.log(chalk.dim('  Or use /dashboard start in Telegram to start now.\n'));
+            }
+            break;
+          }
+          case '2': {
+            const portInput = await ask(rl, chalk.cyan('  New port: '));
+            const newPort = parseInt(portInput.trim(), 10);
+            if (!newPort || newPort < 1 || newPort > 65535) {
+              console.log(chalk.dim('  Invalid port.\n'));
+              break;
+            }
+            saveDashboardToYaml({ port: newPort });
+            config.dashboard.port = newPort;
+            console.log(chalk.green(`\n  ✔ Dashboard port set to ${newPort}\n`));
+            break;
+          }
+          default:
+            break;
+        }
         break;
       }
       case '12':
