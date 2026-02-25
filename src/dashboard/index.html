@@ -11,12 +11,12 @@
     --bg: #05080c;
     --bg2: #0a0f18;
     --panel-bg: rgba(8,16,28,0.85);
-    --panel-border: rgba(0,255,255,0.12);
-    --panel-border-hover: rgba(0,255,255,0.35);
-    --cyan: #00ffff;
-    --cyan-dim: rgba(0,255,255,0.5);
-    --green: #00ff41;
-    --green-dim: rgba(0,255,65,0.4);
+    --panel-border: rgba(57,255,20,0.12);
+    --panel-border-hover: rgba(57,255,20,0.35);
+    --cyan: #39ff14;
+    --cyan-dim: rgba(57,255,20,0.5);
+    --green: #39ff14;
+    --green-dim: rgba(57,255,20,0.4);
     --amber: #ffb000;
     --red: #ff3333;
     --magenta: #ff00ff;
@@ -24,8 +24,8 @@
     --dim: #3a5068;
     --text: #a0b8cc;
     --text-bright: #d0e0f0;
-    --glow-cyan: 0 0 15px rgba(0,255,255,0.25), 0 0 40px rgba(0,255,255,0.08);
-    --glow-green: 0 0 12px rgba(0,255,65,0.3);
+    --glow-cyan: 0 0 15px rgba(57,255,20,0.25), 0 0 40px rgba(57,255,20,0.08);
+    --glow-green: 0 0 12px rgba(57,255,20,0.3);
     --glow-amber: 0 0 12px rgba(255,176,0,0.3);
     --font-hud: 'Orbitron', 'Share Tech Mono', monospace;
     --font-mono: 'Share Tech Mono', 'Fira Code', 'JetBrains Mono', monospace;
@@ -50,8 +50,8 @@
     top: 0; left: 0; right: 0; bottom: 0;
     z-index: 0;
     background:
-      linear-gradient(rgba(0,255,255,0.015) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0,255,255,0.015) 1px, transparent 1px);
+      linear-gradient(rgba(57,255,20,0.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(57,255,20,0.015) 1px, transparent 1px);
     background-size: 60px 60px;
   }
   .grid-bg::after {
@@ -59,8 +59,8 @@
     position: absolute;
     inset: 0;
     background:
-      radial-gradient(ellipse at 50% 0%, rgba(0,255,255,0.05) 0%, transparent 60%),
-      radial-gradient(ellipse at 50% 100%, rgba(0,255,65,0.03) 0%, transparent 50%);
+      radial-gradient(ellipse at 50% 0%, rgba(57,255,20,0.05) 0%, transparent 60%),
+      radial-gradient(ellipse at 50% 100%, rgba(57,255,20,0.03) 0%, transparent 50%);
   }
 
   /* ── Scanline overlay ── */
@@ -111,7 +111,7 @@
     position: absolute;
     inset: 0;
     background:
-      radial-gradient(ellipse at 50% 30%, rgba(0,255,255,0.06) 0%, transparent 65%);
+      radial-gradient(ellipse at 50% 30%, rgba(57,255,20,0.06) 0%, transparent 65%);
     pointer-events: none;
   }
 
@@ -162,66 +162,23 @@
   .hero-line.bottom {
     bottom: 0;
     width: 80%;
-    background: linear-gradient(90deg, transparent, rgba(0,255,255,0.2), var(--cyan-dim), rgba(0,255,255,0.2), transparent);
+    background: linear-gradient(90deg, transparent, rgba(57,255,20,0.2), var(--cyan-dim), rgba(57,255,20,0.2), transparent);
   }
 
-  .hero-logo {
+  .hero-ascii {
     position: relative;
-    margin-bottom: 16px;
-  }
-
-  .hero-logo svg {
-    width: 80px;
-    height: 80px;
-    filter: drop-shadow(0 0 20px rgba(0,255,255,0.3));
-  }
-
-  .hero-title {
-    font-family: var(--font-hud);
-    font-size: 36px;
-    font-weight: 800;
-    letter-spacing: 6px;
-    color: var(--text-bright);
-    text-transform: uppercase;
-    margin-bottom: 4px;
-    text-shadow: 0 0 30px rgba(0,255,255,0.15);
-  }
-  .hero-title .k { color: var(--cyan); }
-
-  .hero-subtitle {
-    font-family: var(--font-ui);
-    font-size: 18px;
-    font-weight: 300;
-    letter-spacing: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.15;
     color: var(--cyan);
-    text-transform: uppercase;
-    margin-bottom: 18px;
-    opacity: 0.8;
-  }
-
-  .hero-desc {
-    font-family: var(--font-ui);
-    font-size: 15px;
-    font-weight: 400;
-    color: var(--text);
-    max-width: 640px;
-    margin: 0 auto 20px;
-    line-height: 1.7;
+    text-shadow: 0 0 12px rgba(57,255,20,0.3);
+    white-space: pre;
+    margin-bottom: 12px;
     letter-spacing: 0.5px;
   }
 
-  .hero-install {
-    display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    color: var(--green);
-    background: rgba(0,255,65,0.06);
-    border: 1px solid rgba(0,255,65,0.2);
-    padding: 8px 24px;
-    letter-spacing: 1px;
-    margin-bottom: 20px;
-  }
-  .hero-install .prompt { color: var(--cyan-dim); }
+  .hero-ascii .logo-art { color: var(--cyan); }
+  .hero-ascii .logo-text { color: var(--text-bright); text-shadow: 0 0 8px rgba(57,255,20,0.15); }
 
   /* ── Status bar ── */
   .status-bar {
@@ -237,7 +194,7 @@
 
   .status-bar .label { color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
   .status-bar .value { color: var(--cyan); }
-  .status-bar .sep { color: rgba(0,255,255,0.15); margin: 0 2px; }
+  .status-bar .sep { color: rgba(57,255,20,0.15); margin: 0 2px; }
 
   .conn-dot {
     display: inline-block;
@@ -250,7 +207,7 @@
   }
   .conn-dot.connected {
     background: var(--green);
-    box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0,255,65,0.2);
+    box-shadow: 0 0 8px var(--green), 0 0 16px rgba(57,255,20,0.2);
   }
 
   /* ══════════════════════════════════════════
@@ -300,7 +257,7 @@
 
   .panel:hover {
     border-color: var(--panel-border-hover);
-    box-shadow: 0 0 20px rgba(0,255,255,0.05), inset 0 0 30px rgba(0,255,255,0.02);
+    box-shadow: 0 0 20px rgba(57,255,20,0.05), inset 0 0 30px rgba(57,255,20,0.02);
   }
 
   /* ── Corner decorations ── */
@@ -321,7 +278,7 @@
     position: absolute;
     left: 0; right: 0;
     height: 2px;
-    background: linear-gradient(90deg, transparent, rgba(0,255,255,0.08), transparent);
+    background: linear-gradient(90deg, transparent, rgba(57,255,20,0.08), transparent);
     animation: sweep 8s linear infinite;
     pointer-events: none;
     z-index: 3;
@@ -335,7 +292,7 @@
     gap: 8px;
     padding: 7px 14px;
     background:
-      linear-gradient(90deg, rgba(0,255,255,0.04), transparent 60%);
+      linear-gradient(90deg, rgba(57,255,20,0.04), transparent 60%);
     border-bottom: 1px solid var(--panel-border);
     font-family: var(--font-hud);
     font-size: 10px;
@@ -401,7 +358,7 @@
     display: flex;
     justify-content: space-between;
     padding: 3px 0;
-    border-bottom: 1px solid rgba(0,255,255,0.04);
+    border-bottom: 1px solid rgba(57,255,20,0.04);
   }
   .row:last-child { border-bottom: none; }
   .row .k { color: var(--dim); font-size: 11px; }
@@ -411,7 +368,7 @@
   .bar-track {
     position: relative;
     height: 6px;
-    background: rgba(0,255,255,0.04);
+    background: rgba(57,255,20,0.04);
     margin: 4px 0;
     overflow: hidden;
     clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 3px, 100% 100%, 3px 100%, 0 calc(100% - 3px));
@@ -429,8 +386,8 @@
     background: inherit;
     box-shadow: 0 0 6px currentColor;
   }
-  .bar-fill.green { background: linear-gradient(90deg, rgba(0,255,65,0.3), var(--green)); color: var(--green); }
-  .bar-fill.cyan { background: linear-gradient(90deg, rgba(0,255,255,0.3), var(--cyan)); color: var(--cyan); }
+  .bar-fill.green { background: linear-gradient(90deg, rgba(57,255,20,0.3), var(--green)); color: var(--green); }
+  .bar-fill.cyan { background: linear-gradient(90deg, rgba(57,255,20,0.3), var(--cyan)); color: var(--cyan); }
   .bar-fill.amber { background: linear-gradient(90deg, rgba(255,176,0,0.3), var(--amber)); color: var(--amber); }
   .bar-fill.red { background: linear-gradient(90deg, rgba(255,51,51,0.3), var(--red)); color: var(--red); }
 
@@ -445,21 +402,21 @@
     text-transform: uppercase;
     clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
   }
-  .badge.running { background: rgba(0,255,255,0.12); color: var(--cyan); animation: pulse-badge 2s infinite; }
-  .badge.completed { background: rgba(0,255,65,0.12); color: var(--green); }
+  .badge.running { background: rgba(57,255,20,0.12); color: var(--cyan); animation: pulse-badge 2s infinite; }
+  .badge.completed { background: rgba(57,255,20,0.12); color: var(--green); }
   .badge.failed { background: rgba(255,51,51,0.12); color: var(--red); }
   .badge.cancelled { background: rgba(255,176,0,0.12); color: var(--amber); }
   .badge.queued { background: rgba(58,74,90,0.2); color: var(--dim); }
 
   @keyframes pulse-badge {
-    0%, 100% { box-shadow: 0 0 4px rgba(0,255,255,0.2); }
-    50% { box-shadow: 0 0 12px rgba(0,255,255,0.4); }
+    0%, 100% { box-shadow: 0 0 4px rgba(57,255,20,0.2); }
+    50% { box-shadow: 0 0 12px rgba(57,255,20,0.4); }
   }
 
   /* ── Job rows ── */
   .job-row {
     padding: 6px 0;
-    border-bottom: 1px solid rgba(0,255,255,0.04);
+    border-bottom: 1px solid rgba(57,255,20,0.04);
     border-left: 2px solid transparent;
     padding-left: 8px;
     transition: border-color 0.2s;
@@ -482,7 +439,7 @@
   .log-line .msg { color: var(--text); }
 
   /* ── Memory items ── */
-  .mem-item { padding: 4px 0; border-bottom: 1px solid rgba(0,255,255,0.04); }
+  .mem-item { padding: 4px 0; border-bottom: 1px solid rgba(57,255,20,0.04); }
   .mem-item:last-child { border-bottom: none; }
   .mem-time { color: var(--dim); font-size: 10px; }
   .mem-type { font-family: var(--font-hud); font-size: 9px; font-weight: 600; letter-spacing: 1px; }
@@ -493,7 +450,7 @@
   .mem-summary { color: var(--text); font-size: 11px; margin-top: 1px; }
 
   /* ── Share items ── */
-  .share-item { padding: 4px 0; border-bottom: 1px solid rgba(0,255,255,0.04); }
+  .share-item { padding: 4px 0; border-bottom: 1px solid rgba(57,255,20,0.04); }
   .share-pri.high { color: var(--cyan); }
   .share-pri.medium { color: var(--green); }
   .share-pri.low { color: var(--dim); }
@@ -504,12 +461,12 @@
   .char-item.active { color: var(--cyan); }
 
   /* ── Conversation ── */
-  .conv-item { padding: 3px 0; display: flex; justify-content: space-between; border-bottom: 1px solid rgba(0,255,255,0.04); }
+  .conv-item { padding: 3px 0; display: flex; justify-content: space-between; border-bottom: 1px solid rgba(57,255,20,0.04); }
   .conv-item .chat-id { color: var(--green); font-family: var(--font-mono); }
   .conv-item .chat-id.life { color: var(--magenta); }
 
   /* ── Automation ── */
-  .auto-item { padding: 5px 0; border-bottom: 1px solid rgba(0,255,255,0.04); }
+  .auto-item { padding: 5px 0; border-bottom: 1px solid rgba(57,255,20,0.04); }
   .auto-name { color: var(--cyan); font-weight: 600; font-family: var(--font-hud); font-size: 10px; letter-spacing: 1px; }
   .auto-detail { color: var(--dim); font-size: 10px; margin-top: 1px; }
 
@@ -534,13 +491,13 @@
     min-width: 60px;
     text-align: center;
     padding: 6px 4px;
-    background: rgba(0,255,255,0.02);
-    border: 1px solid rgba(0,255,255,0.06);
+    background: rgba(57,255,20,0.02);
+    border: 1px solid rgba(57,255,20,0.06);
     clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
   }
   .evo-stat .num { font-family: var(--font-hud); font-size: 16px; font-weight: 700; display: block; }
   .evo-stat .lbl { font-family: var(--font-hud); font-size: 8px; letter-spacing: 1px; color: var(--dim); display: block; margin-top: 2px; }
-  .evo-proposal { padding: 5px 0; border-bottom: 1px solid rgba(0,255,255,0.04); }
+  .evo-proposal { padding: 5px 0; border-bottom: 1px solid rgba(57,255,20,0.04); }
 
   /* ── Life engine ── */
   .activity-bar { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
@@ -555,13 +512,13 @@
   .activity-bar .bar {
     flex: 1;
     height: 6px;
-    background: rgba(0,255,255,0.04);
+    background: rgba(57,255,20,0.04);
     overflow: hidden;
     clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 3px, 100% 100%, 3px 100%, 0 calc(100% - 3px));
   }
   .activity-bar .fill {
     height: 100%;
-    background: linear-gradient(90deg, rgba(0,255,65,0.3), var(--green));
+    background: linear-gradient(90deg, rgba(57,255,20,0.3), var(--green));
     transition: width 0.6s ease;
   }
   .activity-bar .count { width: 30px; color: var(--green); font-size: 10px; font-family: var(--font-hud); }
@@ -600,14 +557,12 @@
 
   /* ── Responsive hero ── */
   @media (max-width: 768px) {
-    .hero-title { font-size: 22px; letter-spacing: 3px; }
-    .hero-subtitle { font-size: 13px; letter-spacing: 2px; }
-    .hero-desc { font-size: 13px; }
+    .hero-ascii { font-size: 8px; }
     .hud-radar { display: none; }
   }
 
   @media (max-width: 480px) {
-    .hero-title { font-size: 18px; letter-spacing: 2px; }
+    .hero-ascii { font-size: 6px; }
     .hero { padding: 32px 12px 28px; }
   }
 </style>
@@ -633,65 +588,56 @@
     <!-- Radar decorations -->
     <div class="hud-radar left">
       <svg viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="55" fill="none" stroke="rgba(0,255,255,0.3)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="40" fill="none" stroke="rgba(0,255,255,0.2)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="25" fill="none" stroke="rgba(0,255,255,0.15)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="10" fill="none" stroke="rgba(0,255,255,0.1)" stroke-width="0.5"/>
-        <line x1="5" y1="60" x2="115" y2="60" stroke="rgba(0,255,255,0.08)" stroke-width="0.5"/>
-        <line x1="60" y1="5" x2="60" y2="115" stroke="rgba(0,255,255,0.08)" stroke-width="0.5"/>
+        <circle cx="60" cy="60" r="55" fill="none" stroke="rgba(57,255,20,0.3)" stroke-width="0.5"/>
+        <circle cx="60" cy="60" r="40" fill="none" stroke="rgba(57,255,20,0.2)" stroke-width="0.5"/>
+        <circle cx="60" cy="60" r="25" fill="none" stroke="rgba(57,255,20,0.15)" stroke-width="0.5"/>
+        <circle cx="60" cy="60" r="10" fill="none" stroke="rgba(57,255,20,0.1)" stroke-width="0.5"/>
+        <line x1="5" y1="60" x2="115" y2="60" stroke="rgba(57,255,20,0.08)" stroke-width="0.5"/>
+        <line x1="60" y1="5" x2="60" y2="115" stroke="rgba(57,255,20,0.08)" stroke-width="0.5"/>
         <g style="transform-origin:60px 60px; animation: radar-sweep 4s linear infinite;">
-          <line x1="60" y1="60" x2="60" y2="5" stroke="rgba(0,255,255,0.6)" stroke-width="1"/>
-          <path d="M60,60 L52,12 A55,55 0 0,1 60,5 Z" fill="rgba(0,255,255,0.08)"/>
+          <line x1="60" y1="60" x2="60" y2="5" stroke="rgba(57,255,20,0.6)" stroke-width="1"/>
+          <path d="M60,60 L52,12 A55,55 0 0,1 60,5 Z" fill="rgba(57,255,20,0.08)"/>
         </g>
-        <circle cx="75" cy="35" r="2" fill="rgba(0,255,255,0.5)"/>
-        <circle cx="42" cy="48" r="1.5" fill="rgba(0,255,65,0.5)"/>
-        <circle cx="80" cy="70" r="1.5" fill="rgba(0,255,255,0.3)"/>
+        <circle cx="75" cy="35" r="2" fill="rgba(57,255,20,0.5)"/>
+        <circle cx="42" cy="48" r="1.5" fill="rgba(57,255,20,0.5)"/>
+        <circle cx="80" cy="70" r="1.5" fill="rgba(57,255,20,0.3)"/>
       </svg>
     </div>
     <div class="hud-radar right">
       <svg viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="55" fill="none" stroke="rgba(0,255,255,0.3)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="40" fill="none" stroke="rgba(0,255,255,0.2)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="25" fill="none" stroke="rgba(0,255,255,0.15)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="10" fill="none" stroke="rgba(0,255,255,0.1)" stroke-width="0.5"/>
-        <line x1="5" y1="60" x2="115" y2="60" stroke="rgba(0,255,255,0.08)" stroke-width="0.5"/>
-        <line x1="60" y1="5" x2="60" y2="115" stroke="rgba(0,255,255,0.08)" stroke-width="0.5"/>
+        <circle cx="60" cy="60" r="55" fill="none" stroke="rgba(57,255,20,0.3)" stroke-width="0.5"/>
+        <circle cx="60" cy="60" r="40" fill="none" stroke="rgba(57,255,20,0.2)" stroke-width="0.5"/>
+        <circle cx="60" cy="60" r="25" fill="none" stroke="rgba(57,255,20,0.15)" stroke-width="0.5"/>
+        <circle cx="60" cy="60" r="10" fill="none" stroke="rgba(57,255,20,0.1)" stroke-width="0.5"/>
+        <line x1="5" y1="60" x2="115" y2="60" stroke="rgba(57,255,20,0.08)" stroke-width="0.5"/>
+        <line x1="60" y1="5" x2="60" y2="115" stroke="rgba(57,255,20,0.08)" stroke-width="0.5"/>
         <g style="transform-origin:60px 60px; animation: radar-sweep 6s linear infinite reverse;">
-          <line x1="60" y1="60" x2="60" y2="5" stroke="rgba(0,255,255,0.6)" stroke-width="1"/>
-          <path d="M60,60 L52,12 A55,55 0 0,1 60,5 Z" fill="rgba(0,255,255,0.08)"/>
+          <line x1="60" y1="60" x2="60" y2="5" stroke="rgba(57,255,20,0.6)" stroke-width="1"/>
+          <path d="M60,60 L52,12 A55,55 0 0,1 60,5 Z" fill="rgba(57,255,20,0.08)"/>
         </g>
-        <circle cx="45" cy="30" r="2" fill="rgba(0,255,65,0.5)"/>
-        <circle cx="78" cy="55" r="1.5" fill="rgba(0,255,255,0.4)"/>
+        <circle cx="45" cy="30" r="2" fill="rgba(57,255,20,0.5)"/>
+        <circle cx="78" cy="55" r="1.5" fill="rgba(57,255,20,0.4)"/>
       </svg>
     </div>
 
-    <!-- Logo -->
-    <div class="hero-logo">
-      <svg viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <!-- Outer hex -->
-        <polygon points="40,2 74,21 74,59 40,78 6,59 6,21" fill="none" stroke="rgba(0,255,255,0.4)" stroke-width="1.5"/>
-        <!-- Inner hex -->
-        <polygon points="40,14 62,26 62,54 40,66 18,54 18,26" fill="rgba(0,255,255,0.04)" stroke="rgba(0,255,255,0.6)" stroke-width="1"/>
-        <!-- K letterform -->
-        <path d="M30,28 L30,52 M30,40 L50,28 M30,40 L50,52" stroke="var(--cyan)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <!-- Dots at vertices -->
-        <circle cx="40" cy="2" r="2" fill="var(--cyan)" opacity="0.6"/>
-        <circle cx="74" cy="21" r="2" fill="var(--cyan)" opacity="0.4"/>
-        <circle cx="74" cy="59" r="2" fill="var(--cyan)" opacity="0.4"/>
-        <circle cx="40" cy="78" r="2" fill="var(--cyan)" opacity="0.6"/>
-        <circle cx="6" cy="59" r="2" fill="var(--cyan)" opacity="0.4"/>
-        <circle cx="6" cy="21" r="2" fill="var(--cyan)" opacity="0.4"/>
-      </svg>
-    </div>
+    <!-- ASCII Logo -->
+    <pre class="hero-ascii"><span class="logo-art">          ▄▄████████▄▄
+       ▄██▀▀        ▀▀██▄
+     ▄█▀    ▄██████▄    ▀█▄
+    █▀   ▄██▀      ▀██▄   ▀█
+   █▀  ▄█▀   ▄████▄  ▀█▄  ▀█
+  ▐█  ██   ▄█▀    ▀█▄  ██  █▌
+  ▐█  █▌  █▀   ██   ▀█ ▐█  █▌
+  ▐█  █▌  ▀█▄  ▀▀██▀  ▐█  █▌
+   █▄  ██   ▀▀████▀  ██  ▄█
+    █▄  ▀██▄      ▄██▀  ▄█
+     ▀█▄   ▀██████▀   ▄█▀
+       ▀██▄▄      ▄▄██▀
+          ▀▀████████▀▀</span>
 
-    <div class="hero-title"><span class="k">KERNEL</span>BOT</div>
-    <div class="hero-subtitle">A Living AI That Evolves Itself</div>
-    <div class="hero-desc">
-      A living, self-evolving AI that runs a multi-agent swarm on your machine.
-      Dispatch specialized workers for coding, commands, pull requests, server management,
-      and web browsing &mdash; simultaneously.
-    </div>
-    <div class="hero-install"><span class="prompt">$</span> npm install -g kernelbot</div>
+<span class="logo-text"> █▄▀ █▀▀ █▀█ █▄ █ █▀▀ █   █▀▄ █▀█ ▀█▀
+ █▀▄ █▀▀ █▄▀ █ ██ █▀▀ █   ██▀ █ █  █
+ █ █ █▄▄ █ █ █ ▀█ █▄▄ █▄▄ █▄▀ █▄█  █</span></pre>
 
     <!-- Status bar -->
     <div class="status-bar">
