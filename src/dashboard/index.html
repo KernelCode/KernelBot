@@ -3,32 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KERNEL // HUD Dashboard</title>
+<title>KERNEL // Command Center</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&display=swap');
 
   :root {
     --bg: #05080c;
-    --bg2: #0a0f18;
-    --panel-bg: rgba(8,16,28,0.85);
-    --panel-border: rgba(57,255,20,0.12);
-    --panel-border-hover: rgba(57,255,20,0.35);
-    --cyan: #39ff14;
-    --cyan-dim: rgba(57,255,20,0.5);
-    --green: #39ff14;
-    --green-dim: rgba(57,255,20,0.4);
+    --bg2: #080e18;
+    --panel-bg: rgba(8,14,24,0.92);
+    --panel-border: rgba(57,255,20,0.10);
+    --panel-border-hover: rgba(57,255,20,0.30);
+    --accent: #39ff14;
+    --accent-dim: rgba(57,255,20,0.45);
+    --accent-bg: rgba(57,255,20,0.04);
+    --accent-bg2: rgba(57,255,20,0.08);
     --amber: #ffb000;
     --red: #ff3333;
     --magenta: #ff00ff;
     --blue: #4488ff;
     --dim: #3a5068;
-    --text: #a0b8cc;
+    --text: #8fa8bc;
     --text-bright: #d0e0f0;
-    --glow-cyan: 0 0 15px rgba(57,255,20,0.25), 0 0 40px rgba(57,255,20,0.08);
-    --glow-green: 0 0 12px rgba(57,255,20,0.3);
-    --glow-amber: 0 0 12px rgba(255,176,0,0.3);
+    --sidebar-w: 56px;
     --font-hud: 'Orbitron', 'Share Tech Mono', monospace;
-    --font-mono: 'Share Tech Mono', 'Fira Code', 'JetBrains Mono', monospace;
+    --font-mono: 'Share Tech Mono', 'Fira Code', monospace;
     --font-ui: 'Rajdhani', 'Share Tech Mono', sans-serif;
   }
 
@@ -44,584 +42,585 @@
     min-height: 100vh;
   }
 
-  /* ── Grid background ── */
-  .grid-bg {
+  /* ═══════ MATRIX RAIN CANVAS ═══════ */
+  #matrix-canvas {
     position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
     z-index: 0;
-    background:
-      linear-gradient(rgba(57,255,20,0.015) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(57,255,20,0.015) 1px, transparent 1px);
-    background-size: 60px 60px;
-  }
-  .grid-bg::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background:
-      radial-gradient(ellipse at 50% 0%, rgba(57,255,20,0.05) 0%, transparent 60%),
-      radial-gradient(ellipse at 50% 100%, rgba(57,255,20,0.03) 0%, transparent 50%);
+    opacity: 0.07;
+    pointer-events: none;
   }
 
-  /* ── Scanline overlay ── */
+  /* ═══════ SCANLINES ═══════ */
   .scanlines {
-    position: fixed;
-    inset: 0;
-    background: repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(0,0,0,0.06) 2px,
-      rgba(0,0,0,0.06) 4px
-    );
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px);
     pointer-events: none;
     z-index: 9999;
   }
 
-  /* ── Horizontal sweep ── */
-  @keyframes sweep {
-    0% { top: -2px; opacity: 0; }
-    5% { opacity: 1; }
-    95% { opacity: 1; }
-    100% { top: 100%; opacity: 0; }
-  }
-
-  /* ── Main container ── */
-  .container {
-    position: relative;
-    z-index: 1;
-    max-width: 1800px;
-    margin: 0 auto;
-    padding: 0 16px 24px;
-  }
-
-  /* ══════════════════════════════════════════
-     HERO SECTION
-  ══════════════════════════════════════════ */
-  .hero {
-    position: relative;
-    text-align: center;
-    padding: 48px 24px 40px;
-    margin-bottom: 20px;
-    overflow: hidden;
-  }
-
-  .hero::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background:
-      radial-gradient(ellipse at 50% 30%, rgba(57,255,20,0.06) 0%, transparent 65%);
-    pointer-events: none;
-  }
-
-  /* ── Hero decorative frame ── */
-  .hero-frame {
-    position: absolute;
-    inset: 12px;
-    pointer-events: none;
-  }
-  .hero-frame .corner {
-    position: absolute;
-    width: 40px;
-    height: 40px;
-  }
-  .hero-frame .corner::before,
-  .hero-frame .corner::after {
-    content: '';
-    position: absolute;
-    background: var(--cyan);
-    box-shadow: 0 0 6px var(--cyan);
-  }
-  .hero-frame .tl { top: 0; left: 0; }
-  .hero-frame .tl::before { top: 0; left: 0; width: 40px; height: 1px; }
-  .hero-frame .tl::after { top: 0; left: 0; width: 1px; height: 40px; }
-  .hero-frame .tr { top: 0; right: 0; }
-  .hero-frame .tr::before { top: 0; right: 0; width: 40px; height: 1px; }
-  .hero-frame .tr::after { top: 0; right: 0; width: 1px; height: 40px; }
-  .hero-frame .bl { bottom: 0; left: 0; }
-  .hero-frame .bl::before { bottom: 0; left: 0; width: 40px; height: 1px; }
-  .hero-frame .bl::after { bottom: 0; left: 0; width: 1px; height: 40px; }
-  .hero-frame .br { bottom: 0; right: 0; }
-  .hero-frame .br::before { bottom: 0; right: 0; width: 40px; height: 1px; }
-  .hero-frame .br::after { bottom: 0; right: 0; width: 1px; height: 40px; }
-
-  /* ── Horizontal accent lines ── */
-  .hero-line {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    height: 1px;
-    pointer-events: none;
-  }
-  .hero-line.top {
-    top: 0;
-    width: 60%;
-    background: linear-gradient(90deg, transparent, var(--cyan-dim), transparent);
-  }
-  .hero-line.bottom {
-    bottom: 0;
-    width: 80%;
-    background: linear-gradient(90deg, transparent, rgba(57,255,20,0.2), var(--cyan-dim), rgba(57,255,20,0.2), transparent);
-  }
-
-  .hero-ascii {
-    position: relative;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    line-height: 1.15;
-    color: var(--cyan);
-    text-shadow: 0 0 12px rgba(57,255,20,0.3);
-    white-space: pre;
-    margin-bottom: 12px;
-    letter-spacing: 0.5px;
-  }
-
-  .hero-ascii .logo-art { color: var(--cyan); }
-  .hero-ascii .logo-text { color: var(--text-bright); text-shadow: 0 0 8px rgba(57,255,20,0.15); }
-
-  /* ── Status bar ── */
-  .status-bar {
+  /* ═══════ SIDEBAR ═══════ */
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: var(--sidebar-w);
+    background: var(--bg2);
+    border-right: 1px solid var(--panel-border);
+    z-index: 100;
     display: flex;
-    justify-content: center;
-    gap: 20px;
-    flex-wrap: wrap;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--dim);
-    padding: 10px 0 0;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 0;
+    gap: 2px;
   }
 
-  .status-bar .label { color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
-  .status-bar .value { color: var(--cyan); }
-  .status-bar .sep { color: rgba(57,255,20,0.15); margin: 0 2px; }
+  .sidebar-logo {
+    width: 32px; height: 32px;
+    margin-bottom: 12px;
+    position: relative;
+  }
+  .sidebar-logo svg { width: 100%; height: 100%; }
 
-  .conn-dot {
-    display: inline-block;
-    width: 7px; height: 7px;
+  .sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    flex: 1;
+  }
+
+  .nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 0;
+    cursor: pointer;
+    position: relative;
+    color: var(--dim);
+    transition: color 0.2s;
+    text-decoration: none;
+  }
+  .nav-item:hover, .nav-item.active { color: var(--accent); }
+  .nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 4px; bottom: 4px;
+    width: 2px;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+  .nav-item svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .nav-label { font-family: var(--font-hud); font-size: 7px; letter-spacing: 1px; margin-top: 3px; }
+
+  /* Sidebar gauges */
+  .sidebar-gauges {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 8px;
+  }
+  .mini-gauge { position: relative; width: 38px; height: 38px; }
+  .mini-gauge svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .mini-gauge .track { fill: none; stroke: rgba(57,255,20,0.08); stroke-width: 3; }
+  .mini-gauge .fill { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 0.8s ease; }
+  .mini-gauge .fill.amber { stroke: var(--amber); }
+  .mini-gauge .fill.red { stroke: var(--red); }
+  .mini-gauge-label {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-family: var(--font-hud);
+  }
+  .mini-gauge-label .val { font-size: 9px; font-weight: 700; color: var(--accent); }
+  .mini-gauge-label .lbl { font-size: 6px; color: var(--dim); letter-spacing: 0.5px; }
+
+  .sidebar-clock {
+    font-family: var(--font-hud);
+    font-size: 8px;
+    color: var(--dim);
+    letter-spacing: 1px;
+    writing-mode: vertical-lr;
+    text-orientation: mixed;
+    margin-top: 8px;
+    padding-bottom: 4px;
+  }
+
+  .sidebar-conn {
+    width: 8px; height: 8px;
     border-radius: 50%;
     background: var(--red);
-    margin-right: 5px;
-    vertical-align: middle;
+    margin-top: 8px;
     transition: all 0.3s;
   }
-  .conn-dot.connected {
-    background: var(--green);
-    box-shadow: 0 0 8px var(--green), 0 0 16px rgba(57,255,20,0.2);
+  .sidebar-conn.connected { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+
+  /* ═══════ MAIN CONTENT ═══════ */
+  .main {
+    margin-left: var(--sidebar-w);
+    position: relative;
+    z-index: 1;
+    min-height: 100vh;
   }
 
-  /* ══════════════════════════════════════════
-     HUD PANEL SYSTEM
-  ══════════════════════════════════════════ */
-  .grid {
+  /* ═══════ HERO HEADER ═══════ */
+  .hero-bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--panel-border);
+    overflow: hidden;
+  }
+  .hero-bar::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent-dim), transparent);
+  }
+
+  .hero-center { text-align: center; position: relative; }
+
+  .hero-ascii {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 1.1;
+    color: var(--accent);
+    text-shadow: 0 0 10px rgba(57,255,20,0.25);
+    white-space: pre;
+    margin-bottom: 6px;
+  }
+  .hero-ascii .logo-text { color: var(--text-bright); text-shadow: 0 0 6px rgba(57,255,20,0.12); }
+
+  /* Waveform canvas */
+  #waveform-canvas {
+    position: absolute;
+    bottom: 0; left: 0;
+    width: 100%; height: 40px;
+    opacity: 0.15;
+    pointer-events: none;
+  }
+
+  .hero-status {
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    font-size: 10px;
+    color: var(--dim);
+    flex-wrap: wrap;
+  }
+  .hero-status .val { color: var(--accent); }
+  .hero-status .sep { color: rgba(57,255,20,0.15); }
+
+  /* ═══════ GAUGE ROW ═══════ */
+  .gauge-row {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--panel-border);
+    flex-wrap: wrap;
+  }
+
+  .gauge-widget {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .gauge-ring { position: relative; width: 90px; height: 90px; }
+  .gauge-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .gauge-ring .track { fill: none; stroke: var(--accent-bg2); stroke-width: 4; }
+  .gauge-ring .fill { fill: none; stroke: var(--accent); stroke-width: 4; stroke-linecap: round; transition: stroke-dashoffset 0.8s cubic-bezier(0.22, 1, 0.36, 1); filter: drop-shadow(0 0 4px var(--accent)); }
+  .gauge-ring .fill.amber { stroke: var(--amber); filter: drop-shadow(0 0 4px var(--amber)); }
+  .gauge-ring .fill.red { stroke: var(--red); filter: drop-shadow(0 0 4px var(--red)); }
+  .gauge-center {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+  .gauge-center .pct { font-family: var(--font-hud); font-size: 18px; font-weight: 700; color: var(--accent); }
+  .gauge-center .pct.amber { color: var(--amber); }
+  .gauge-center .pct.red { color: var(--red); }
+  .gauge-center .sub { font-family: var(--font-mono); font-size: 8px; color: var(--dim); }
+  .gauge-label { font-family: var(--font-hud); font-size: 8px; letter-spacing: 2px; color: var(--dim); }
+
+  /* ═══════ CONTENT AREA ═══════ */
+  .content {
+    padding: 12px;
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 10px;
   }
 
-  @media (max-width: 1200px) { .grid { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+  .span-8 { grid-column: span 8; }
+  .span-6 { grid-column: span 6; }
+  .span-4 { grid-column: span 4; }
+  .span-3 { grid-column: span 3; }
+  .span-12 { grid-column: span 12; }
 
-  .grid .full-width { grid-column: 1 / -1; }
-
-  /* ── Panel ── */
+  /* ═══════ PANEL ═══════ */
   .panel {
     position: relative;
     background: var(--panel-bg);
     border: 1px solid var(--panel-border);
     overflow: hidden;
-    clip-path: polygon(
-      0 0,
-      calc(100% - 16px) 0,
-      100% 16px,
-      100% 100%,
-      16px 100%,
-      0 calc(100% - 16px)
-    );
     transition: border-color 0.3s, box-shadow 0.3s;
   }
+  .panel:hover {
+    border-color: var(--panel-border-hover);
+    box-shadow: 0 0 20px rgba(57,255,20,0.04), inset 0 0 20px rgba(57,255,20,0.01);
+  }
 
+  /* Corner clips */
   .panel::before {
     content: '';
     position: absolute;
-    top: -1px;
-    right: -1px;
-    width: 24px;
-    height: 24px;
-    border-bottom: 1px solid var(--panel-border);
-    transform: rotate(45deg);
-    transform-origin: top right;
-    pointer-events: none;
-    z-index: 2;
+    top: 0; right: 0;
+    border-style: solid;
+    border-width: 0 14px 14px 0;
+    border-color: transparent var(--bg) transparent transparent;
+    z-index: 5;
   }
-
-  .panel:hover {
-    border-color: var(--panel-border-hover);
-    box-shadow: 0 0 20px rgba(57,255,20,0.05), inset 0 0 30px rgba(57,255,20,0.02);
-  }
-
-  /* ── Corner decorations ── */
   .panel::after {
     content: '';
     position: absolute;
-    bottom: 0; left: 0;
-    width: 16px; height: 16px;
-    border-left: 1px solid var(--cyan-dim);
-    border-bottom: 1px solid var(--cyan-dim);
-    opacity: 0.3;
+    top: 0; right: 14px;
+    width: 0; height: 14px;
+    border-right: 1px solid var(--panel-border);
+    transform: rotate(45deg);
+    transform-origin: top right;
+    z-index: 4;
     pointer-events: none;
-    z-index: 2;
   }
 
-  /* ── Scan line effect ── */
-  .panel .scan-line {
-    position: absolute;
-    left: 0; right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, rgba(57,255,20,0.08), transparent);
-    animation: sweep 8s linear infinite;
-    pointer-events: none;
-    z-index: 3;
-  }
-
-  /* ── Panel header ── */
   .panel-header {
-    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 7px 14px;
-    background:
-      linear-gradient(90deg, rgba(57,255,20,0.04), transparent 60%);
+    padding: 6px 12px;
+    background: linear-gradient(90deg, var(--accent-bg), transparent 70%);
     border-bottom: 1px solid var(--panel-border);
     font-family: var(--font-hud);
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     letter-spacing: 2px;
-    color: var(--cyan);
+    color: var(--accent);
     text-transform: uppercase;
-    cursor: default;
     user-select: none;
+    position: relative;
   }
-
   .panel-header::after {
     content: '';
     position: absolute;
-    bottom: -1px;
-    left: 0;
-    width: 60px;
-    height: 1px;
-    background: var(--cyan);
-    box-shadow: 0 0 6px var(--cyan);
+    bottom: -1px; left: 0;
+    width: 50px; height: 1px;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
   }
 
-  .panel-header .indicator {
-    width: 5px; height: 5px;
+  .panel-header .dot {
+    width: 4px; height: 4px;
     border-radius: 50%;
-    background: var(--cyan);
-    box-shadow: 0 0 6px var(--cyan);
-    animation: pulse-dot 3s ease-in-out infinite;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+    animation: blink 3s ease-in-out infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
   }
 
-  @keyframes pulse-dot {
-    0%, 100% { opacity: 0.5; box-shadow: 0 0 3px var(--cyan); }
-    50% { opacity: 1; box-shadow: 0 0 8px var(--cyan); }
-  }
-
-  .panel-header .hud-tag {
+  .panel-header .tag {
     margin-left: auto;
     font-family: var(--font-mono);
-    font-size: 9px;
+    font-size: 8px;
     color: var(--dim);
     letter-spacing: 1px;
     font-weight: 400;
   }
 
-  /* ── Panel body ── */
   .panel-body {
-    padding: 10px 14px;
-    max-height: 320px;
+    padding: 10px 12px;
+    max-height: 300px;
     overflow-y: auto;
   }
-  .panel-body.tall { max-height: 450px; }
+  .panel-body.tall { max-height: 400px; }
+  .panel-body.short { max-height: 200px; }
 
   .panel-body::-webkit-scrollbar { width: 3px; }
   .panel-body::-webkit-scrollbar-track { background: transparent; }
-  .panel-body::-webkit-scrollbar-thumb { background: var(--cyan-dim); border-radius: 2px; }
+  .panel-body::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 2px; }
 
-  /* ══════════════════════════════════════════
-     DATA ELEMENTS
-  ══════════════════════════════════════════ */
-
-  /* ── Data rows ── */
-  .row {
-    display: flex;
-    justify-content: space-between;
-    padding: 3px 0;
-    border-bottom: 1px solid rgba(57,255,20,0.04);
+  /* Scan sweep inside panels */
+  .panel .sweep {
+    position: absolute;
+    left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(57,255,20,0.06), transparent);
+    animation: sweepDown 10s linear infinite;
+    pointer-events: none;
+    z-index: 3;
   }
+  @keyframes sweepDown {
+    0% { top: 0; opacity: 0; }
+    5% { opacity: 1; }
+    95% { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
+  }
+
+  /* ═══════ DATA ELEMENTS ═══════ */
+  .row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid rgba(57,255,20,0.03); }
   .row:last-child { border-bottom: none; }
   .row .k { color: var(--dim); font-size: 11px; }
-  .row .v { color: var(--cyan); text-align: right; font-size: 11px; }
+  .row .v { color: var(--accent); text-align: right; font-size: 11px; }
 
-  /* ── HUD Progress bars ── */
   .bar-track {
-    position: relative;
-    height: 6px;
-    background: rgba(57,255,20,0.04);
-    margin: 4px 0;
+    height: 5px;
+    background: var(--accent-bg);
+    margin: 3px 0;
     overflow: hidden;
-    clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 3px, 100% 100%, 3px 100%, 0 calc(100% - 3px));
   }
   .bar-fill {
     height: 100%;
     transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
-    position: relative;
   }
-  .bar-fill::after {
-    content: '';
-    position: absolute;
-    right: 0; top: 0; bottom: 0;
-    width: 2px;
-    background: inherit;
-    box-shadow: 0 0 6px currentColor;
-  }
-  .bar-fill.green { background: linear-gradient(90deg, rgba(57,255,20,0.3), var(--green)); color: var(--green); }
-  .bar-fill.cyan { background: linear-gradient(90deg, rgba(57,255,20,0.3), var(--cyan)); color: var(--cyan); }
-  .bar-fill.amber { background: linear-gradient(90deg, rgba(255,176,0,0.3), var(--amber)); color: var(--amber); }
-  .bar-fill.red { background: linear-gradient(90deg, rgba(255,51,51,0.3), var(--red)); color: var(--red); }
+  .bar-fill.green { background: linear-gradient(90deg, rgba(57,255,20,0.2), var(--accent)); }
+  .bar-fill.amber { background: linear-gradient(90deg, rgba(255,176,0,0.2), var(--amber)); }
+  .bar-fill.red { background: linear-gradient(90deg, rgba(255,51,51,0.2), var(--red)); }
 
-  /* ── Status badges ── */
   .badge {
     display: inline-block;
-    padding: 1px 7px;
+    padding: 1px 6px;
     font-family: var(--font-hud);
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 600;
     letter-spacing: 1px;
     text-transform: uppercase;
-    clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+    border: 1px solid;
   }
-  .badge.running { background: rgba(57,255,20,0.12); color: var(--cyan); animation: pulse-badge 2s infinite; }
-  .badge.completed { background: rgba(57,255,20,0.12); color: var(--green); }
-  .badge.failed { background: rgba(255,51,51,0.12); color: var(--red); }
-  .badge.cancelled { background: rgba(255,176,0,0.12); color: var(--amber); }
-  .badge.queued { background: rgba(58,74,90,0.2); color: var(--dim); }
+  .badge.running { border-color: rgba(57,255,20,0.3); color: var(--accent); animation: pulseB 2s infinite; }
+  .badge.completed { border-color: rgba(57,255,20,0.2); color: var(--accent); }
+  .badge.failed { border-color: rgba(255,51,51,0.2); color: var(--red); }
+  .badge.cancelled { border-color: rgba(255,176,0,0.2); color: var(--amber); }
+  .badge.queued { border-color: rgba(58,74,90,0.3); color: var(--dim); }
+  @keyframes pulseB { 0%,100% { box-shadow: 0 0 2px rgba(57,255,20,0.1); } 50% { box-shadow: 0 0 10px rgba(57,255,20,0.3); } }
 
-  @keyframes pulse-badge {
-    0%, 100% { box-shadow: 0 0 4px rgba(57,255,20,0.2); }
-    50% { box-shadow: 0 0 12px rgba(57,255,20,0.4); }
-  }
-
-  /* ── Job rows ── */
-  .job-row {
-    padding: 6px 0;
-    border-bottom: 1px solid rgba(57,255,20,0.04);
-    border-left: 2px solid transparent;
-    padding-left: 8px;
-    transition: border-color 0.2s;
-  }
-  .job-row:hover { border-left-color: var(--cyan-dim); }
+  .job-row { padding: 5px 0; border-bottom: 1px solid rgba(57,255,20,0.03); border-left: 2px solid transparent; padding-left: 6px; transition: border-color 0.2s; }
+  .job-row:hover { border-left-color: var(--accent-dim); }
   .job-row:last-child { border-bottom: none; }
-  .job-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .job-id { color: var(--amber); font-weight: 600; font-family: var(--font-hud); font-size: 10px; letter-spacing: 1px; }
-  .job-type { color: var(--magenta); font-family: var(--font-mono); }
-  .job-task { color: var(--text); font-size: 11px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .job-sub { color: var(--dim); font-size: 10px; margin-top: 2px; }
+  .job-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .job-id { color: var(--amber); font-weight: 600; font-family: var(--font-hud); font-size: 9px; letter-spacing: 1px; }
+  .job-type { color: var(--magenta); }
+  .job-task { color: var(--text); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job-sub { color: var(--dim); font-size: 10px; margin-top: 1px; }
 
-  /* ── Log lines ── */
   .log-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 1px 0; font-size: 11px; }
   .log-line .ts { color: var(--dim); }
   .log-line .lvl-error { color: var(--red); font-weight: 700; }
   .log-line .lvl-warn { color: var(--amber); }
-  .log-line .lvl-info { color: var(--green); }
+  .log-line .lvl-info { color: var(--accent); }
   .log-line .lvl-debug { color: var(--dim); }
   .log-line .msg { color: var(--text); }
 
-  /* ── Memory items ── */
-  .mem-item { padding: 4px 0; border-bottom: 1px solid rgba(57,255,20,0.04); }
+  .mem-item { padding: 3px 0; border-bottom: 1px solid rgba(57,255,20,0.03); }
   .mem-item:last-child { border-bottom: none; }
-  .mem-time { color: var(--dim); font-size: 10px; }
-  .mem-type { font-family: var(--font-hud); font-size: 9px; font-weight: 600; letter-spacing: 1px; }
-  .mem-type.interaction { color: var(--cyan); }
+  .mem-time { color: var(--dim); font-size: 9px; }
+  .mem-type { font-family: var(--font-hud); font-size: 8px; font-weight: 600; letter-spacing: 1px; }
+  .mem-type.interaction { color: var(--accent); }
   .mem-type.thought { color: var(--magenta); }
   .mem-type.discovery { color: var(--amber); }
-  .mem-type.creation { color: var(--green); }
-  .mem-summary { color: var(--text); font-size: 11px; margin-top: 1px; }
+  .mem-type.creation { color: var(--accent); }
+  .mem-summary { color: var(--text); font-size: 11px; }
 
-  /* ── Share items ── */
-  .share-item { padding: 4px 0; border-bottom: 1px solid rgba(57,255,20,0.04); }
-  .share-pri.high { color: var(--cyan); }
-  .share-pri.medium { color: var(--green); }
+  .share-item { padding: 3px 0; border-bottom: 1px solid rgba(57,255,20,0.03); }
+  .share-pri.high { color: var(--accent); }
+  .share-pri.medium { color: var(--accent); }
   .share-pri.low { color: var(--dim); }
 
-  /* ── Character ── */
-  .char-active { color: var(--cyan); font-size: 14px; font-family: var(--font-ui); font-weight: 600; margin-bottom: 6px; }
-  .char-item { color: var(--dim); font-size: 11px; padding: 2px 0; transition: color 0.2s; }
-  .char-item.active { color: var(--cyan); }
+  .char-active { color: var(--accent); font-size: 13px; font-family: var(--font-ui); font-weight: 600; margin-bottom: 4px; }
+  .char-item { color: var(--dim); font-size: 11px; padding: 1px 0; }
+  .char-item.active { color: var(--accent); }
 
-  /* ── Conversation ── */
-  .conv-item { padding: 3px 0; display: flex; justify-content: space-between; border-bottom: 1px solid rgba(57,255,20,0.04); }
-  .conv-item .chat-id { color: var(--green); font-family: var(--font-mono); }
+  .conv-item { padding: 2px 0; display: flex; justify-content: space-between; border-bottom: 1px solid rgba(57,255,20,0.03); }
+  .conv-item .chat-id { color: var(--accent); font-family: var(--font-mono); }
   .conv-item .chat-id.life { color: var(--magenta); }
 
-  /* ── Automation ── */
-  .auto-item { padding: 5px 0; border-bottom: 1px solid rgba(57,255,20,0.04); }
-  .auto-name { color: var(--cyan); font-weight: 600; font-family: var(--font-hud); font-size: 10px; letter-spacing: 1px; }
-  .auto-detail { color: var(--dim); font-size: 10px; margin-top: 1px; }
+  .auto-item { padding: 4px 0; border-bottom: 1px solid rgba(57,255,20,0.03); }
+  .auto-name { color: var(--accent); font-weight: 600; font-family: var(--font-hud); font-size: 9px; letter-spacing: 1px; }
+  .auto-detail { color: var(--dim); font-size: 10px; }
 
-  /* ── Self / Journal markdown ── */
-  .md-content {
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    color: var(--text);
-    font-size: 11px;
-  }
-  .md-content .ts-line { color: var(--cyan); }
+  .md-content { white-space: pre-wrap; word-wrap: break-word; color: var(--text); font-size: 11px; }
+  .md-content .ts-line { color: var(--accent); }
 
-  /* ── Evolution ── */
-  .evo-stats-grid {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 10px;
-    flex-wrap: wrap;
+  /* Evolution ring chart */
+  .evo-ring-row { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+  .evo-ring { position: relative; width: 80px; height: 80px; flex-shrink: 0; }
+  .evo-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .evo-ring .track { fill: none; stroke: var(--accent-bg2); stroke-width: 6; }
+  .evo-ring-center {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
   }
-  .evo-stat {
-    flex: 1;
-    min-width: 60px;
-    text-align: center;
-    padding: 6px 4px;
-    background: rgba(57,255,20,0.02);
-    border: 1px solid rgba(57,255,20,0.06);
-    clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
-  }
-  .evo-stat .num { font-family: var(--font-hud); font-size: 16px; font-weight: 700; display: block; }
-  .evo-stat .lbl { font-family: var(--font-hud); font-size: 8px; letter-spacing: 1px; color: var(--dim); display: block; margin-top: 2px; }
-  .evo-proposal { padding: 5px 0; border-bottom: 1px solid rgba(57,255,20,0.04); }
+  .evo-ring-center .pct { font-family: var(--font-hud); font-size: 16px; font-weight: 700; color: var(--accent); }
+  .evo-ring-center .lbl { font-family: var(--font-hud); font-size: 6px; color: var(--dim); letter-spacing: 1px; }
+  .evo-legend { display: flex; flex-direction: column; gap: 3px; }
+  .evo-legend-item { display: flex; align-items: center; gap: 6px; font-size: 10px; }
+  .evo-legend-dot { width: 6px; height: 6px; border-radius: 50%; }
 
-  /* ── Life engine ── */
-  .activity-bar { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
-  .activity-bar .name {
-    width: 80px;
-    text-align: right;
-    color: var(--dim);
-    font-family: var(--font-hud);
-    font-size: 9px;
-    letter-spacing: 0.5px;
-  }
-  .activity-bar .bar {
-    flex: 1;
-    height: 6px;
-    background: rgba(57,255,20,0.04);
-    overflow: hidden;
-    clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 3px, 100% 100%, 3px 100%, 0 calc(100% - 3px));
-  }
-  .activity-bar .fill {
-    height: 100%;
-    background: linear-gradient(90deg, rgba(57,255,20,0.3), var(--green));
-    transition: width 0.6s ease;
-  }
-  .activity-bar .count { width: 30px; color: var(--green); font-size: 10px; font-family: var(--font-hud); }
+  .evo-proposal { padding: 4px 0; border-bottom: 1px solid rgba(57,255,20,0.03); }
 
-  .empty-msg { color: var(--dim); font-style: italic; text-align: center; padding: 24px 0; font-size: 11px; letter-spacing: 1px; }
+  /* Life engine */
+  .activity-bar { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  .activity-bar .name { width: 70px; text-align: right; color: var(--dim); font-family: var(--font-hud); font-size: 8px; letter-spacing: 0.5px; }
+  .activity-bar .bar { flex: 1; height: 5px; background: var(--accent-bg); overflow: hidden; }
+  .activity-bar .fill { height: 100%; background: linear-gradient(90deg, rgba(57,255,20,0.2), var(--accent)); transition: width 0.6s ease; }
+  .activity-bar .count { width: 26px; color: var(--accent); font-size: 10px; font-family: var(--font-hud); }
 
-  .life-status {
-    font-family: var(--font-hud);
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: 3px;
-    margin-bottom: 8px;
-  }
-  .life-status.active { color: var(--green); text-shadow: var(--glow-green); }
-  .life-status.paused { color: var(--amber); text-shadow: var(--glow-amber); }
+  .empty-msg { color: var(--dim); font-style: italic; text-align: center; padding: 20px 0; font-size: 11px; letter-spacing: 1px; }
+
+  .life-status { font-family: var(--font-hud); font-size: 13px; font-weight: 700; letter-spacing: 3px; margin-bottom: 6px; }
+  .life-status.active { color: var(--accent); text-shadow: 0 0 12px rgba(57,255,20,0.3); }
+  .life-status.paused { color: var(--amber); }
   .life-status.idle { color: var(--dim); }
 
-  /* ══════════════════════════════════════════
-     HUD RADAR WIDGET (hero decoration)
-  ══════════════════════════════════════════ */
-  .hud-radar {
+  /* ═══════ LOG TICKER (bottom) ═══════ */
+  .log-ticker {
+    position: relative;
+    border-top: 1px solid var(--panel-border);
+    background: rgba(5,8,12,0.95);
+    overflow: hidden;
+  }
+  .log-ticker .ticker-label {
     position: absolute;
-    width: 120px; height: 120px;
-    opacity: 0.15;
-    pointer-events: none;
+    top: 0; left: 0; bottom: 0;
+    width: 80px;
+    background: linear-gradient(90deg, var(--bg2) 70%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-hud);
+    font-size: 8px;
+    letter-spacing: 2px;
+    color: var(--accent);
+    z-index: 2;
   }
-  .hud-radar.left { left: 5%; top: 50%; transform: translateY(-50%); }
-  .hud-radar.right { right: 5%; top: 50%; transform: translateY(-50%); }
-
-  .hud-radar svg { width: 100%; height: 100%; }
-
-  @keyframes radar-sweep {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+  .log-ticker .ticker-label .dot-pulse {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-right: 6px;
+    animation: blink 1.5s ease-in-out infinite;
   }
+  .ticker-track {
+    display: flex;
+    animation: tickerScroll var(--ticker-duration, 60s) linear infinite;
+    padding: 6px 0 6px 90px;
+    white-space: nowrap;
+    gap: 40px;
+  }
+  @keyframes tickerScroll {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+  .ticker-item { font-size: 10px; white-space: nowrap; flex-shrink: 0; }
+  .ticker-item .ts { color: var(--dim); }
+  .ticker-item .lvl-error { color: var(--red); }
+  .ticker-item .lvl-warn { color: var(--amber); }
+  .ticker-item .lvl-info { color: var(--accent); }
+  .ticker-item .lvl-debug { color: var(--dim); }
+  .ticker-item .msg { color: var(--text); }
 
-  /* ── Responsive hero ── */
+  /* ═══════ RESPONSIVE ═══════ */
+  @media (max-width: 1100px) {
+    .span-8, .span-6, .span-4, .span-3 { grid-column: span 6; }
+    .gauge-ring { width: 72px; height: 72px; }
+    .gauge-center .pct { font-size: 14px; }
+  }
   @media (max-width: 768px) {
-    .hero-ascii { font-size: 8px; }
-    .hud-radar { display: none; }
-  }
-
-  @media (max-width: 480px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; }
+    .span-8, .span-6, .span-4, .span-3, .span-12 { grid-column: span 12; }
+    .content { grid-template-columns: 1fr; }
     .hero-ascii { font-size: 6px; }
-    .hero { padding: 32px 12px 28px; }
+    .gauge-row { gap: 12px; }
+    .gauge-ring { width: 64px; height: 64px; }
+    .gauge-center .pct { font-size: 12px; }
   }
 </style>
 </head>
 <body>
 
-<div class="grid-bg"></div>
+<canvas id="matrix-canvas"></canvas>
 <div class="scanlines"></div>
 
-<div class="container">
+<!-- ═══════ SIDEBAR ═══════ -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <svg viewBox="0 0 32 32" fill="none">
+      <polygon points="16,1 30,9 30,23 16,31 2,23 2,9" fill="none" stroke="rgba(57,255,20,0.5)" stroke-width="1"/>
+      <polygon points="16,6 25,11 25,21 16,26 7,21 7,11" fill="rgba(57,255,20,0.05)" stroke="rgba(57,255,20,0.7)" stroke-width="0.7"/>
+      <path d="M12,11 L12,21 M12,16 L20,11 M12,16 L20,21" stroke="#39ff14" stroke-width="2" stroke-linecap="round" fill="none"/>
+    </svg>
+  </div>
 
-  <!-- ══════════════ HERO ══════════════ -->
-  <div class="hero">
-    <div class="hero-frame">
-      <div class="corner tl"></div>
-      <div class="corner tr"></div>
-      <div class="corner bl"></div>
-      <div class="corner br"></div>
-    </div>
-    <div class="hero-line top"></div>
-    <div class="hero-line bottom"></div>
+  <div class="sidebar-nav">
+    <a class="nav-item active" href="#gauges" title="System">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      <span class="nav-label">SYS</span>
+    </a>
+    <a class="nav-item" href="#p-jobs" title="Jobs">
+      <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="5" rx="1"/><rect x="4" y="11" width="16" height="5" rx="1"/></svg>
+      <span class="nav-label">JOBS</span>
+    </a>
+    <a class="nav-item" href="#p-life" title="Life">
+      <svg viewBox="0 0 24 24"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
+      <span class="nav-label">LIFE</span>
+    </a>
+    <a class="nav-item" href="#p-evo" title="Evolution">
+      <svg viewBox="0 0 24 24"><path d="M12 2v4m0 12v4M2 12h4m12 0h4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>
+      <span class="nav-label">EVO</span>
+    </a>
+    <a class="nav-item" href="#p-mem" title="Memory">
+      <svg viewBox="0 0 24 24"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44A2.5 2.5 0 0 1 2 17.5a2.5 2.5 0 0 1 .72-1.76A2.5 2.5 0 0 1 5 12a2.5 2.5 0 0 1-2-4 2.5 2.5 0 0 1 4.5-1.5"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44A2.5 2.5 0 0 0 22 17.5a2.5 2.5 0 0 0-.72-1.76A2.5 2.5 0 0 0 19 12a2.5 2.5 0 0 0 2-4 2.5 2.5 0 0 0-4.5-1.5"/></svg>
+      <span class="nav-label">MEM</span>
+    </a>
+    <a class="nav-item" href="#p-logs" title="Logs">
+      <svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+      <span class="nav-label">LOGS</span>
+    </a>
+  </div>
 
-    <!-- Radar decorations -->
-    <div class="hud-radar left">
-      <svg viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="55" fill="none" stroke="rgba(57,255,20,0.3)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="40" fill="none" stroke="rgba(57,255,20,0.2)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="25" fill="none" stroke="rgba(57,255,20,0.15)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="10" fill="none" stroke="rgba(57,255,20,0.1)" stroke-width="0.5"/>
-        <line x1="5" y1="60" x2="115" y2="60" stroke="rgba(57,255,20,0.08)" stroke-width="0.5"/>
-        <line x1="60" y1="5" x2="60" y2="115" stroke="rgba(57,255,20,0.08)" stroke-width="0.5"/>
-        <g style="transform-origin:60px 60px; animation: radar-sweep 4s linear infinite;">
-          <line x1="60" y1="60" x2="60" y2="5" stroke="rgba(57,255,20,0.6)" stroke-width="1"/>
-          <path d="M60,60 L52,12 A55,55 0 0,1 60,5 Z" fill="rgba(57,255,20,0.08)"/>
-        </g>
-        <circle cx="75" cy="35" r="2" fill="rgba(57,255,20,0.5)"/>
-        <circle cx="42" cy="48" r="1.5" fill="rgba(57,255,20,0.5)"/>
-        <circle cx="80" cy="70" r="1.5" fill="rgba(57,255,20,0.3)"/>
-      </svg>
+  <!-- Sidebar mini gauges -->
+  <div class="sidebar-gauges">
+    <div class="mini-gauge" id="sb-cpu">
+      <svg viewBox="0 0 38 38"><circle class="track" cx="19" cy="19" r="16"/><circle class="fill" cx="19" cy="19" r="16" stroke-dasharray="100.5" stroke-dashoffset="100.5"/></svg>
+      <div class="mini-gauge-label"><span class="val">--%</span><span class="lbl">CPU</span></div>
     </div>
-    <div class="hud-radar right">
-      <svg viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="55" fill="none" stroke="rgba(57,255,20,0.3)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="40" fill="none" stroke="rgba(57,255,20,0.2)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="25" fill="none" stroke="rgba(57,255,20,0.15)" stroke-width="0.5"/>
-        <circle cx="60" cy="60" r="10" fill="none" stroke="rgba(57,255,20,0.1)" stroke-width="0.5"/>
-        <line x1="5" y1="60" x2="115" y2="60" stroke="rgba(57,255,20,0.08)" stroke-width="0.5"/>
-        <line x1="60" y1="5" x2="60" y2="115" stroke="rgba(57,255,20,0.08)" stroke-width="0.5"/>
-        <g style="transform-origin:60px 60px; animation: radar-sweep 6s linear infinite reverse;">
-          <line x1="60" y1="60" x2="60" y2="5" stroke="rgba(57,255,20,0.6)" stroke-width="1"/>
-          <path d="M60,60 L52,12 A55,55 0 0,1 60,5 Z" fill="rgba(57,255,20,0.08)"/>
-        </g>
-        <circle cx="45" cy="30" r="2" fill="rgba(57,255,20,0.5)"/>
-        <circle cx="78" cy="55" r="1.5" fill="rgba(57,255,20,0.4)"/>
-      </svg>
+    <div class="mini-gauge" id="sb-ram">
+      <svg viewBox="0 0 38 38"><circle class="track" cx="19" cy="19" r="16"/><circle class="fill" cx="19" cy="19" r="16" stroke-dasharray="100.5" stroke-dashoffset="100.5"/></svg>
+      <div class="mini-gauge-label"><span class="val">--%</span><span class="lbl">RAM</span></div>
     </div>
+    <div class="sidebar-conn" id="conn-dot"></div>
+    <div class="sidebar-clock" id="sb-clock">--:--</div>
+  </div>
+</nav>
 
-    <!-- ASCII Logo -->
-    <pre class="hero-ascii"><span class="logo-art">          ▄▄████████▄▄
+<!-- ═══════ MAIN ═══════ -->
+<div class="main">
+
+  <!-- Hero bar -->
+  <div class="hero-bar">
+    <canvas id="waveform-canvas"></canvas>
+    <div class="hero-center">
+      <pre class="hero-ascii"><span class="logo-art">          ▄▄████████▄▄
        ▄██▀▀        ▀▀██▄
      ▄█▀    ▄██████▄    ▀█▄
     █▀   ▄██▀      ▀██▄   ▀█
@@ -634,122 +633,147 @@
      ▀█▄   ▀██████▀   ▄█▀
        ▀██▄▄      ▄▄██▀
           ▀▀████████▀▀</span>
-
 <span class="logo-text"> █▄▀ █▀▀ █▀█ █▄ █ █▀▀ █   █▀▄ █▀█ ▀█▀
  █▀▄ █▀▀ █▄▀ █ ██ █▀▀ █   ██▀ █ █  █
  █ █ █▄▄ █ █ █ ▀█ █▄▄ █▄▄ █▄▀ █▄█  █</span></pre>
-
-    <!-- Status bar -->
-    <div class="status-bar">
-      <span><span class="conn-dot" id="conn-dot"></span><span class="label">link:</span> <span class="value" id="conn-status">CONNECTING</span></span>
-      <span class="sep">//</span>
-      <span><span class="label">status:</span> <span class="value" id="hdr-status">ONLINE</span></span>
-      <span class="sep">//</span>
-      <span><span class="label">uptime:</span> <span class="value" id="hdr-uptime">--</span></span>
-      <span class="sep">//</span>
-      <span><span class="label">pid:</span> <span class="value" id="hdr-pid">--</span></span>
-      <span class="sep">//</span>
-      <span><span class="label">node:</span> <span class="value" id="hdr-node">--</span></span>
-      <span class="sep">//</span>
-      <span><span class="label">time:</span> <span class="value" id="hdr-clock">--</span></span>
+      <div class="hero-status">
+        <span><span class="val" id="hdr-status">ONLINE</span></span>
+        <span class="sep">//</span>
+        <span>UPTIME <span class="val" id="hdr-uptime">--</span></span>
+        <span class="sep">//</span>
+        <span>PID <span class="val" id="hdr-pid">--</span></span>
+        <span class="sep">//</span>
+        <span>NODE <span class="val" id="hdr-node">--</span></span>
+        <span class="sep">//</span>
+        <span><span class="val" id="hdr-clock">--</span></span>
+      </div>
     </div>
   </div>
 
-  <!-- ══════════════ DASHBOARD GRID ══════════════ -->
-  <div class="grid">
-
-    <!-- SYS.STATUS -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>SYS.STATUS<span class="hud-tag">TELEMETRY</span></div>
-      <div class="panel-body" id="system-body"></div>
+  <!-- Gauge row -->
+  <div class="gauge-row" id="gauges">
+    <div class="gauge-widget">
+      <div class="gauge-ring" id="g-cpu1">
+        <svg viewBox="0 0 90 90"><circle class="track" cx="45" cy="45" r="38"/><circle class="fill" cx="45" cy="45" r="38" stroke-dasharray="238.8" stroke-dashoffset="238.8"/></svg>
+        <div class="gauge-center"><span class="pct">--%</span><span class="sub">--</span></div>
+      </div>
+      <div class="gauge-label">CPU 1M</div>
     </div>
-
-    <!-- NEURAL.CONFIG -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>NEURAL.CONFIG<span class="hud-tag">SETTINGS</span></div>
-      <div class="panel-body" id="config-body"></div>
+    <div class="gauge-widget">
+      <div class="gauge-ring" id="g-cpu5">
+        <svg viewBox="0 0 90 90"><circle class="track" cx="45" cy="45" r="38"/><circle class="fill" cx="45" cy="45" r="38" stroke-dasharray="238.8" stroke-dashoffset="238.8"/></svg>
+        <div class="gauge-center"><span class="pct">--%</span><span class="sub">--</span></div>
+      </div>
+      <div class="gauge-label">CPU 5M</div>
     </div>
+    <div class="gauge-widget">
+      <div class="gauge-ring" id="g-ram">
+        <svg viewBox="0 0 90 90"><circle class="track" cx="45" cy="45" r="38"/><circle class="fill" cx="45" cy="45" r="38" stroke-dasharray="238.8" stroke-dashoffset="238.8"/></svg>
+        <div class="gauge-center"><span class="pct">--%</span><span class="sub">--</span></div>
+      </div>
+      <div class="gauge-label">RAM</div>
+    </div>
+    <div class="gauge-widget">
+      <div class="gauge-ring" id="g-heap">
+        <svg viewBox="0 0 90 90"><circle class="track" cx="45" cy="45" r="38"/><circle class="fill" cx="45" cy="45" r="38" stroke-dasharray="238.8" stroke-dashoffset="238.8"/></svg>
+        <div class="gauge-center"><span class="pct">--%</span><span class="sub">--</span></div>
+      </div>
+      <div class="gauge-label">HEAP</div>
+    </div>
+  </div>
 
-    <!-- ACTIVE.JOBS -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>ACTIVE.JOBS<span class="hud-tag">SWARM</span></div>
+  <!-- Content grid -->
+  <div class="content">
+
+    <!-- JOBS (wide) -->
+    <div class="panel span-8" id="p-jobs">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>ACTIVE.JOBS<span class="tag">SWARM</span></div>
       <div class="panel-body" id="jobs-body"></div>
     </div>
 
-    <!-- AUTOMATIONS -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>AUTOMATIONS<span class="hud-tag">SCHEDULER</span></div>
-      <div class="panel-body" id="auto-body"></div>
+    <!-- CONFIG -->
+    <div class="panel span-4">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>NEURAL.CONFIG<span class="tag">SETTINGS</span></div>
+      <div class="panel-body" id="config-body"></div>
     </div>
 
-    <!-- LIFE.ENGINE -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>LIFE.ENGINE<span class="hud-tag">AUTONOMOUS</span></div>
+    <!-- LIFE -->
+    <div class="panel span-4" id="p-life">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>LIFE.ENGINE<span class="tag">AUTONOMOUS</span></div>
       <div class="panel-body" id="life-body"></div>
     </div>
 
     <!-- EVOLUTION -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>EVOLUTION<span class="hud-tag">SELF-IMPROVE</span></div>
+    <div class="panel span-4" id="p-evo">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>EVOLUTION<span class="tag">SELF-IMPROVE</span></div>
       <div class="panel-body" id="evo-body"></div>
     </div>
 
-    <!-- MEMORY.BANK -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>MEMORY.BANK<span class="hud-tag">EPISODIC</span></div>
+    <!-- MEMORY -->
+    <div class="panel span-4" id="p-mem">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>MEMORY.BANK<span class="tag">EPISODIC</span></div>
       <div class="panel-body" id="mem-body"></div>
     </div>
 
-    <!-- JOURNAL.TODAY -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>JOURNAL.TODAY<span class="hud-tag">LOG</span></div>
+    <!-- AUTOMATIONS -->
+    <div class="panel span-4">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>AUTOMATIONS<span class="tag">SCHEDULER</span></div>
+      <div class="panel-body short" id="auto-body"></div>
+    </div>
+
+    <!-- JOURNAL -->
+    <div class="panel span-4">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>JOURNAL.TODAY<span class="tag">LOG</span></div>
       <div class="panel-body" id="journal-body"></div>
     </div>
 
-    <!-- SHARE.QUEUE -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>SHARE.QUEUE<span class="hud-tag">OUTBOUND</span></div>
-      <div class="panel-body" id="shares-body"></div>
+    <!-- SHARES + CHARACTER + CONVERSATIONS + SELF -->
+    <div class="panel span-4">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>SHARE.QUEUE<span class="tag">OUTBOUND</span></div>
+      <div class="panel-body short" id="shares-body"></div>
     </div>
 
-    <!-- CHARACTER -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>CHARACTER<span class="hud-tag">PERSONA</span></div>
-      <div class="panel-body" id="char-body"></div>
+    <div class="panel span-3">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>CHARACTER<span class="tag">PERSONA</span></div>
+      <div class="panel-body short" id="char-body"></div>
     </div>
 
-    <!-- CONVERSATIONS -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>CONVERSATIONS<span class="hud-tag">CHANNELS</span></div>
-      <div class="panel-body" id="conv-body"></div>
+    <div class="panel span-3">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>CONVERSATIONS<span class="tag">CHANNELS</span></div>
+      <div class="panel-body short" id="conv-body"></div>
     </div>
 
-    <!-- SELF.AWARENESS -->
-    <div class="panel">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>SELF.AWARENESS<span class="hud-tag">IDENTITY</span></div>
-      <div class="panel-body" id="self-body"></div>
+    <div class="panel span-6">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>SELF.AWARENESS<span class="tag">IDENTITY</span></div>
+      <div class="panel-body short" id="self-body"></div>
     </div>
 
-    <!-- LOG.STREAM -->
-    <div class="panel full-width">
-      <div class="scan-line"></div>
-      <div class="panel-header"><span class="indicator"></span>LOG.STREAM<span class="hud-tag">REAL-TIME</span></div>
+    <!-- LOG STREAM (full) -->
+    <div class="panel span-12" id="p-logs">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>LOG.STREAM<span class="tag">REAL-TIME</span></div>
       <div class="panel-body tall" id="logs-body"></div>
     </div>
 
   </div>
+
+  <!-- Scrolling log ticker -->
+  <div class="log-ticker" id="log-ticker">
+    <div class="ticker-label"><span class="dot-pulse"></span>LIVE</div>
+    <div class="ticker-track" id="ticker-track"></div>
+  </div>
+
 </div>
 
 <script>
@@ -759,93 +783,103 @@
     if (!s) return '';
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
-
   function formatDuration(seconds) {
     if (seconds == null || seconds < 0) return '--';
     const s = Math.floor(seconds);
     if (s < 60) return s + 's';
     if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
-    const h = Math.floor(s/3600);
-    const m = Math.floor((s%3600)/60);
-    return h + 'h ' + m + 'm';
+    return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
   }
-
   function timeAgo(ts) {
     if (!ts) return 'never';
-    const diff = Date.now() - ts;
-    const s = Math.floor(diff/1000);
+    const s = Math.floor((Date.now() - ts)/1000);
     if (s < 60) return 'just now';
     if (s < 3600) return Math.floor(s/60) + 'm ago';
     if (s < 86400) return Math.floor(s/3600) + 'h ago';
     return Math.floor(s/86400) + 'd ago';
   }
-
   function formatBytes(b) {
     if (b < 1024) return b + ' B';
     if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
     if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
     return (b/1073741824).toFixed(2) + ' GB';
   }
-
-  function barColor(pct) {
-    if (pct < 50) return 'green';
-    if (pct < 80) return 'amber';
-    return 'red';
-  }
-
+  function barColor(pct) { return pct < 50 ? 'green' : pct < 80 ? 'amber' : 'red'; }
   function makeBar(label, pct, color) {
-    return `<div class="row"><span class="k">${esc(label)}</span><span class="v">${pct.toFixed(1)}%</span></div>
-<div class="bar-track"><div class="bar-fill ${color || barColor(pct)}" style="width:${Math.min(pct,100)}%"></div></div>`;
+    return `<div class="row"><span class="k">${esc(label)}</span><span class="v">${pct.toFixed(1)}%</span></div><div class="bar-track"><div class="bar-fill ${color || barColor(pct)}" style="width:${Math.min(pct,100)}%"></div></div>`;
   }
-
-  const $ = (id) => document.getElementById(id);
+  const $ = id => document.getElementById(id);
 
   // ── Clock ──
   setInterval(() => {
     const now = new Date();
-    const pad = n => String(n).padStart(2,'0');
-    $('hdr-clock').textContent = now.getFullYear() + '.' + pad(now.getMonth()+1) + '.' + pad(now.getDate()) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+    const p = n => String(n).padStart(2,'0');
+    const full = now.getFullYear() + '.' + p(now.getMonth()+1) + '.' + p(now.getDate()) + ' ' + p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds());
+    $('hdr-clock').textContent = full;
+    $('sb-clock').textContent = p(now.getHours()) + ':' + p(now.getMinutes());
   }, 1000);
 
-  // ── Load config & self once ──
-  let configData = null;
-  let selfData = null;
+  // ── Gauge helper ──
+  function setGauge(id, pct, label) {
+    const el = $(id);
+    if (!el) return;
+    const circumference = parseFloat(el.querySelector('.fill').getAttribute('stroke-dasharray'));
+    const offset = circumference * (1 - Math.min(pct, 100) / 100);
+    const fill = el.querySelector('.fill');
+    fill.style.strokeDashoffset = offset;
+    fill.classList.remove('amber', 'red');
+    if (pct >= 80) fill.classList.add('red');
+    else if (pct >= 50) fill.classList.add('amber');
+    const pctEl = el.querySelector('.pct');
+    if (pctEl) {
+      pctEl.textContent = pct.toFixed(0) + '%';
+      pctEl.classList.remove('amber','red');
+      if (pct >= 80) pctEl.classList.add('red');
+      else if (pct >= 50) pctEl.classList.add('amber');
+    }
+    const sub = el.querySelector('.sub');
+    if (sub && label) sub.textContent = label;
+  }
 
+  function setMiniGauge(id, pct) {
+    const el = $(id);
+    if (!el) return;
+    const fill = el.querySelector('.fill');
+    const circumference = parseFloat(fill.getAttribute('stroke-dasharray'));
+    fill.style.strokeDashoffset = circumference * (1 - Math.min(pct, 100) / 100);
+    fill.classList.remove('amber','red');
+    if (pct >= 80) fill.classList.add('red');
+    else if (pct >= 50) fill.classList.add('amber');
+    el.querySelector('.val').textContent = pct.toFixed(0) + '%';
+  }
+
+  // ── SSE + config/self ──
+  let configData = null, selfData = null;
   fetch('/api/config').then(r=>r.json()).then(d => { configData = d; renderConfig(d); });
   fetch('/api/self').then(r=>r.json()).then(d => { selfData = d; renderSelf(d); });
 
-  // ── SSE ──
   let reconnectDelay = 1000;
-
   function connectSSE() {
     const es = new EventSource('/events');
-
     es.onopen = () => {
       reconnectDelay = 1000;
       $('conn-dot').classList.add('connected');
-      $('conn-status').textContent = 'ONLINE';
+      $('hdr-status').textContent = 'ONLINE';
     };
-
     es.onmessage = (evt) => {
-      try {
-        const snap = JSON.parse(evt.data);
-        renderSnapshot(snap);
-      } catch(e) { console.warn('SSE parse error', e); }
+      try { renderSnapshot(JSON.parse(evt.data)); } catch(e) {}
     };
-
     es.onerror = () => {
       es.close();
       $('conn-dot').classList.remove('connected');
-      $('conn-status').textContent = 'RECONNECTING';
+      $('hdr-status').textContent = 'RECONNECTING';
       setTimeout(connectSSE, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 1.5, 15000);
     };
   }
-
   connectSSE();
 
-  // ── Render ──
-
+  // ── Render snapshot ──
   function renderSnapshot(snap) {
     renderSystem(snap.system);
     renderJobs(snap.jobs);
@@ -858,6 +892,7 @@
     renderCharacter(snap.character);
     renderShares(snap.shares);
     renderLogs(snap.logs);
+    renderTicker(snap.logs);
   }
 
   function renderSystem(sys) {
@@ -866,262 +901,284 @@
     $('hdr-pid').textContent = sys.pid;
     $('hdr-node').textContent = sys.nodeVersion;
 
-    const cpuMax = sys.cpu.cores;
-    const loadPct1 = (sys.cpu.load1 / cpuMax * 100);
-    const loadPct5 = (sys.cpu.load5 / cpuMax * 100);
-    const loadPct15 = (sys.cpu.load15 / cpuMax * 100);
+    const cores = sys.cpu.cores;
+    const cpu1 = sys.cpu.load1 / cores * 100;
+    const cpu5 = sys.cpu.load5 / cores * 100;
     const ramPct = parseFloat(sys.ram.percent);
+    const heapPct = sys.process.heapTotal > 0 ? (sys.process.heap / sys.process.heapTotal * 100) : 0;
 
-    let html = '';
-    html += makeBar('CPU 1m (' + sys.cpu.load1.toFixed(2) + '/' + cpuMax + ')', loadPct1);
-    html += makeBar('CPU 5m (' + sys.cpu.load5.toFixed(2) + '/' + cpuMax + ')', loadPct5);
-    html += makeBar('CPU 15m (' + sys.cpu.load15.toFixed(2) + '/' + cpuMax + ')', loadPct15);
-    html += makeBar('RAM (' + formatBytes(sys.ram.used) + '/' + formatBytes(sys.ram.total) + ')', ramPct);
-    html += `<div class="row"><span class="k">Heap</span><span class="v">${formatBytes(sys.process.heap)} / ${formatBytes(sys.process.heapTotal)}</span></div>`;
-    html += `<div class="row"><span class="k">RSS</span><span class="v">${formatBytes(sys.process.rss)}</span></div>`;
-    html += `<div class="row"><span class="k">Uptime</span><span class="v">${formatDuration(sys.uptime)}</span></div>`;
-    $('system-body').innerHTML = html;
+    setGauge('g-cpu1', cpu1, sys.cpu.load1.toFixed(2) + '/' + cores);
+    setGauge('g-cpu5', cpu5, sys.cpu.load5.toFixed(2) + '/' + cores);
+    setGauge('g-ram', ramPct, formatBytes(sys.ram.used));
+    setGauge('g-heap', heapPct, formatBytes(sys.process.heap));
+    setMiniGauge('sb-cpu', cpu1);
+    setMiniGauge('sb-ram', ramPct);
   }
 
   function renderConfig(cfg) {
     if (!cfg) return;
-    let html = '';
-    html += `<div class="row"><span class="k">Orch Provider</span><span class="v">${esc(cfg.orchestrator.provider)}</span></div>`;
-    html += `<div class="row"><span class="k">Orch Model</span><span class="v">${esc(cfg.orchestrator.model)}</span></div>`;
-    html += `<div class="row"><span class="k">Orch Key</span><span class="v">${esc(cfg.orchestrator.api_key)}</span></div>`;
-    html += `<div class="row"><span class="k">Brain Provider</span><span class="v">${esc(cfg.brain.provider)}</span></div>`;
-    html += `<div class="row"><span class="k">Brain Model</span><span class="v">${esc(cfg.brain.model)}</span></div>`;
-    html += `<div class="row"><span class="k">Brain Key</span><span class="v">${esc(cfg.brain.api_key)}</span></div>`;
-    html += `<div class="row"><span class="k">Max Tool Depth</span><span class="v">${cfg.brain.max_tool_depth || '--'}</span></div>`;
+    let h = '';
+    h += `<div class="row"><span class="k">Orch Provider</span><span class="v">${esc(cfg.orchestrator.provider)}</span></div>`;
+    h += `<div class="row"><span class="k">Orch Model</span><span class="v">${esc(cfg.orchestrator.model)}</span></div>`;
+    h += `<div class="row"><span class="k">Orch Key</span><span class="v">${esc(cfg.orchestrator.api_key)}</span></div>`;
+    h += `<div class="row"><span class="k">Brain Provider</span><span class="v">${esc(cfg.brain.provider)}</span></div>`;
+    h += `<div class="row"><span class="k">Brain Model</span><span class="v">${esc(cfg.brain.model)}</span></div>`;
+    h += `<div class="row"><span class="k">Brain Key</span><span class="v">${esc(cfg.brain.api_key)}</span></div>`;
+    h += `<div class="row"><span class="k">Max Tool Depth</span><span class="v">${cfg.brain.max_tool_depth || '--'}</span></div>`;
     if (cfg.swarm) {
-      html += `<div class="row"><span class="k">Max Jobs</span><span class="v">${cfg.swarm.max_concurrent_jobs || '--'}</span></div>`;
-      html += `<div class="row"><span class="k">Job Timeout</span><span class="v">${cfg.swarm.job_timeout_seconds || '--'}s</span></div>`;
+      h += `<div class="row"><span class="k">Max Jobs</span><span class="v">${cfg.swarm.max_concurrent_jobs || '--'}</span></div>`;
+      h += `<div class="row"><span class="k">Job Timeout</span><span class="v">${cfg.swarm.job_timeout_seconds || '--'}s</span></div>`;
     }
     if (cfg.life) {
-      html += `<div class="row"><span class="k">Life</span><span class="v">${cfg.life.enabled ? 'ENABLED' : 'DISABLED'}</span></div>`;
-      if (cfg.life.self_coding) {
-        html += `<div class="row"><span class="k">Self-Coding</span><span class="v">${cfg.life.self_coding.enabled ? 'ON' : 'OFF'}</span></div>`;
-      }
+      h += `<div class="row"><span class="k">Life</span><span class="v">${cfg.life.enabled ? 'ENABLED' : 'DISABLED'}</span></div>`;
+      if (cfg.life.self_coding) h += `<div class="row"><span class="k">Self-Coding</span><span class="v">${cfg.life.self_coding.enabled ? 'ON' : 'OFF'}</span></div>`;
     }
-    html += `<div class="row"><span class="k">Allowed Users</span><span class="v">${cfg.telegram.allowed_users}</span></div>`;
-    $('config-body').innerHTML = html;
+    h += `<div class="row"><span class="k">Allowed Users</span><span class="v">${cfg.telegram.allowed_users}</span></div>`;
+    $('config-body').innerHTML = h;
   }
 
   function renderJobs(jobs) {
-    if (!jobs || jobs.length === 0) {
-      $('jobs-body').innerHTML = '<div class="empty-msg">NO ACTIVE JOBS</div>';
-      return;
-    }
-    let html = '';
+    if (!jobs || !jobs.length) { $('jobs-body').innerHTML = '<div class="empty-msg">NO ACTIVE JOBS</div>'; return; }
+    let h = '';
     for (const j of jobs) {
-      html += `<div class="job-row">
-<div class="job-meta">
-  <span class="job-id">${esc(j.id)}</span>
-  <span class="job-type">${esc(j.type)}</span>
-  <span class="badge ${j.status}">${j.status.toUpperCase()}</span>
-  <span style="color:var(--dim)">${formatDuration(j.duration)}</span>
-  <span style="color:var(--dim)">LLM:${j.llmCalls || 0} T:${j.toolCalls || 0}</span>
-</div>
-<div class="job-task">${esc((j.task||'').slice(0,120))}</div>`;
-      if (j.lastThinking) {
-        html += `<div class="job-sub">${esc(j.lastThinking.slice(0,100))}</div>`;
-      }
-      if (j.progress && j.progress.length > 0) {
-        html += `<div class="job-sub">${esc(j.progress[j.progress.length-1])}</div>`;
-      }
-      html += '</div>';
+      h += `<div class="job-row"><div class="job-meta"><span class="job-id">${esc(j.id)}</span><span class="job-type">${esc(j.type)}</span><span class="badge ${j.status}">${j.status.toUpperCase()}</span><span style="color:var(--dim)">${formatDuration(j.duration)}</span><span style="color:var(--dim)">LLM:${j.llmCalls||0} T:${j.toolCalls||0}</span></div><div class="job-task">${esc((j.task||'').slice(0,120))}</div>`;
+      if (j.lastThinking) h += `<div class="job-sub">${esc(j.lastThinking.slice(0,100))}</div>`;
+      if (j.progress?.length) h += `<div class="job-sub">${esc(j.progress[j.progress.length-1])}</div>`;
+      h += '</div>';
     }
-    $('jobs-body').innerHTML = html;
+    $('jobs-body').innerHTML = h;
   }
 
   function renderAutomations(autos) {
-    if (!autos || autos.length === 0) {
-      $('auto-body').innerHTML = '<div class="empty-msg">NO AUTOMATIONS</div>';
-      return;
-    }
-    let html = '';
+    if (!autos || !autos.length) { $('auto-body').innerHTML = '<div class="empty-msg">NO AUTOMATIONS</div>'; return; }
+    let h = '';
     for (const a of autos) {
-      const status = a.enabled ? '<span style="color:var(--green)">ENABLED</span>' : '<span style="color:var(--amber)">PAUSED</span>';
+      const st = a.enabled ? '<span style="color:var(--accent)">ON</span>' : '<span style="color:var(--amber)">OFF</span>';
       const sched = a.schedule ? (a.schedule.expression || a.schedule.type + (a.schedule.minutes ? ' ' + a.schedule.minutes + 'm' : '')) : '--';
-      html += `<div class="auto-item">
-<div><span class="auto-name">${esc(a.name)}</span> ${status}</div>
-<div class="auto-detail">Schedule: ${esc(sched)} | Runs: ${a.runCount} | Next: ${a.nextRun ? timeAgo(a.nextRun).replace(' ago','') : '--'}</div>`;
-      if (a.lastError) html += `<div class="auto-detail" style="color:var(--red)">ERR: ${esc(a.lastError.slice(0,80))}</div>`;
-      html += '</div>';
+      h += `<div class="auto-item"><div><span class="auto-name">${esc(a.name)}</span> ${st}</div><div class="auto-detail">Sched: ${esc(sched)} | Runs: ${a.runCount}</div>`;
+      if (a.lastError) h += `<div class="auto-detail" style="color:var(--red)">ERR: ${esc(a.lastError.slice(0,60))}</div>`;
+      h += '</div>';
     }
-    $('auto-body').innerHTML = html;
+    $('auto-body').innerHTML = h;
   }
 
   function renderLife(life) {
-    if (!life || life.status === 'unknown') {
-      $('life-body').innerHTML = '<div class="empty-msg">LIFE ENGINE UNAVAILABLE</div>';
-      return;
-    }
-    let html = '';
-    const statusClass = life.paused ? 'paused' : (life.status === 'active' ? 'active' : 'idle');
-    html += `<div class="life-status ${statusClass}">${(life.paused ? 'PAUSED' : life.status || 'IDLE').toUpperCase()}</div>`;
-    html += `<div class="row"><span class="k">Total Activities</span><span class="v">${life.totalActivities || 0}</span></div>`;
-    html += `<div class="row"><span class="k">Last Activity</span><span class="v">${esc(life.lastActivity || 'none')} (${esc(life.lastActivityAgo || 'never')})</span></div>`;
-
+    if (!life || life.status === 'unknown') { $('life-body').innerHTML = '<div class="empty-msg">UNAVAILABLE</div>'; return; }
+    let h = '';
+    const sc = life.paused ? 'paused' : (life.status === 'active' ? 'active' : 'idle');
+    h += `<div class="life-status ${sc}">${(life.paused ? 'PAUSED' : life.status || 'IDLE').toUpperCase()}</div>`;
+    h += `<div class="row"><span class="k">Total</span><span class="v">${life.totalActivities || 0}</span></div>`;
+    h += `<div class="row"><span class="k">Last</span><span class="v">${esc(life.lastActivity || 'none')} (${esc(life.lastActivityAgo || 'never')})</span></div>`;
     if (life.activityCounts) {
       const counts = life.activityCounts;
       const max = Math.max(1, ...Object.values(counts));
-      html += '<div style="margin-top:8px">';
-      for (const [name, count] of Object.entries(counts)) {
-        const pct = (count / max * 100).toFixed(0);
-        html += `<div class="activity-bar">
-<span class="name">${esc(name)}</span>
-<span class="bar"><span class="fill" style="width:${pct}%"></span></span>
-<span class="count">${count}</span>
-</div>`;
+      h += '<div style="margin-top:6px">';
+      for (const [n, c] of Object.entries(counts)) {
+        h += `<div class="activity-bar"><span class="name">${esc(n)}</span><span class="bar"><span class="fill" style="width:${(c/max*100).toFixed(0)}%"></span></span><span class="count">${c}</span></div>`;
       }
-      html += '</div>';
+      h += '</div>';
     }
-    $('life-body').innerHTML = html;
+    $('life-body').innerHTML = h;
   }
 
   function renderEvolution(evo) {
     if (!evo) { $('evo-body').innerHTML = '<div class="empty-msg">NO DATA</div>'; return; }
-    let html = '';
+    let h = '';
     if (evo.stats) {
       const s = evo.stats;
-      html += '<div class="evo-stats-grid">';
-      html += `<div class="evo-stat"><span class="num" style="color:var(--text-bright)">${s.totalProposals||0}</span><span class="lbl">TOTAL</span></div>`;
-      html += `<div class="evo-stat"><span class="num" style="color:var(--green)">${s.merged||0}</span><span class="lbl">MERGED</span></div>`;
-      html += `<div class="evo-stat"><span class="num" style="color:var(--amber)">${s.rejected||0}</span><span class="lbl">REJECTED</span></div>`;
-      html += `<div class="evo-stat"><span class="num" style="color:var(--red)">${s.failed||0}</span><span class="lbl">FAILED</span></div>`;
-      html += `<div class="evo-stat"><span class="num" style="color:var(--cyan)">${(s.successRate||0).toFixed(0)}%</span><span class="lbl">SUCCESS</span></div>`;
-      html += '</div>';
+      const total = (s.merged||0) + (s.rejected||0) + (s.failed||0);
+      const rate = s.successRate || 0;
+      // Ring chart
+      const circ = 2 * Math.PI * 30;
+      const merged = total > 0 ? (s.merged||0)/total*circ : 0;
+      const rejected = total > 0 ? (s.rejected||0)/total*circ : 0;
+      const failed = total > 0 ? (s.failed||0)/total*circ : 0;
+      h += '<div class="evo-ring-row">';
+      h += '<div class="evo-ring"><svg viewBox="0 0 80 80"><circle class="track" cx="40" cy="40" r="30"/>';
+      if (total > 0) {
+        h += `<circle cx="40" cy="40" r="30" fill="none" stroke="#39ff14" stroke-width="6" stroke-dasharray="${merged} ${circ-merged}" stroke-dashoffset="0"/>`;
+        h += `<circle cx="40" cy="40" r="30" fill="none" stroke="#ffb000" stroke-width="6" stroke-dasharray="${rejected} ${circ-rejected}" stroke-dashoffset="${-merged}"/>`;
+        h += `<circle cx="40" cy="40" r="30" fill="none" stroke="#ff3333" stroke-width="6" stroke-dasharray="${failed} ${circ-failed}" stroke-dashoffset="${-(merged+rejected)}"/>`;
+      }
+      h += '</svg><div class="evo-ring-center"><span class="pct">' + rate.toFixed(0) + '%</span><span class="lbl">SUCCESS</span></div></div>';
+      h += '<div class="evo-legend">';
+      h += `<div class="evo-legend-item"><span class="evo-legend-dot" style="background:#39ff14"></span>${s.merged||0} Merged</div>`;
+      h += `<div class="evo-legend-item"><span class="evo-legend-dot" style="background:#ffb000"></span>${s.rejected||0} Rejected</div>`;
+      h += `<div class="evo-legend-item"><span class="evo-legend-dot" style="background:#ff3333"></span>${s.failed||0} Failed</div>`;
+      h += `<div class="evo-legend-item" style="color:var(--text-bright);margin-top:2px">${s.totalProposals||0} Total</div>`;
+      h += '</div></div>';
     }
     if (evo.active) {
       const a = evo.active;
-      html += `<div class="evo-proposal" style="border-left:2px solid var(--cyan);padding-left:8px">`;
-      html += `<div style="color:var(--cyan);font-weight:600;font-family:var(--font-hud);font-size:10px;letter-spacing:1px">ACTIVE: ${esc(a.status)}</div>`;
-      html += `<div style="color:var(--text);font-size:11px;margin-top:2px">${esc(a.trigger||'')}</div>`;
-      if (a.branch) html += `<div style="color:var(--amber);font-size:10px;margin-top:1px">Branch: ${esc(a.branch)}</div>`;
-      if (a.filesChanged?.length) html += `<div style="color:var(--dim);font-size:10px">Files: ${a.filesChanged.length}</div>`;
-      html += '</div>';
+      h += `<div class="evo-proposal" style="border-left:2px solid var(--accent);padding-left:6px"><div style="color:var(--accent);font-family:var(--font-hud);font-size:9px;letter-spacing:1px">ACTIVE: ${esc(a.status)}</div><div style="color:var(--text);font-size:11px">${esc(a.trigger||'')}</div>`;
+      if (a.branch) h += `<div style="color:var(--amber);font-size:10px">Branch: ${esc(a.branch)}</div>`;
+      h += '</div>';
     }
-    if (evo.recent?.length > 0) {
-      html += '<div style="margin-top:8px;color:var(--dim);font-family:var(--font-hud);font-size:9px;letter-spacing:1px">RECENT</div>';
+    if (evo.recent?.length) {
       for (const p of evo.recent) {
-        html += `<div class="evo-proposal">
-<span class="badge ${p.status === 'merged' ? 'completed' : p.status === 'failed' ? 'failed' : p.status === 'rejected' ? 'cancelled' : 'queued'}">${esc(p.status)}</span>
-<span style="color:var(--text);font-size:11px;margin-left:6px">${esc((p.trigger||'').slice(0,60))}</span>
-<span style="color:var(--dim);font-size:10px;margin-left:6px">${timeAgo(p.createdAt)}</span>
-</div>`;
+        h += `<div class="evo-proposal"><span class="badge ${p.status==='merged'?'completed':p.status==='failed'?'failed':p.status==='rejected'?'cancelled':'queued'}">${esc(p.status)}</span> <span style="color:var(--text);font-size:11px">${esc((p.trigger||'').slice(0,50))}</span> <span style="color:var(--dim);font-size:9px">${timeAgo(p.createdAt)}</span></div>`;
       }
     }
-    if (!evo.stats?.totalProposals && !evo.active && (!evo.recent || evo.recent.length === 0)) {
-      html = '<div class="empty-msg">NO EVOLUTION DATA</div>';
-    }
-    $('evo-body').innerHTML = html;
+    if (!evo.stats?.totalProposals && !evo.active && !evo.recent?.length) h = '<div class="empty-msg">NO DATA</div>';
+    $('evo-body').innerHTML = h;
   }
 
   function renderMemories(mems) {
-    if (!mems || mems.length === 0) {
-      $('mem-body').innerHTML = '<div class="empty-msg">NO RECENT MEMORIES</div>';
-      return;
-    }
-    let html = '';
+    if (!mems || !mems.length) { $('mem-body').innerHTML = '<div class="empty-msg">NO MEMORIES</div>'; return; }
+    let h = '';
     for (const m of mems) {
-      const typeClass = m.type || 'interaction';
-      html += `<div class="mem-item">
-<span class="mem-time">${timeAgo(m.timestamp)}</span>
-<span class="mem-type ${esc(typeClass)}">${esc((m.type||'').toUpperCase())}</span>
-<div class="mem-summary">${esc((m.summary||'').slice(0,120))}</div>
-</div>`;
+      h += `<div class="mem-item"><span class="mem-time">${timeAgo(m.timestamp)}</span> <span class="mem-type ${esc(m.type||'interaction')}">${esc((m.type||'').toUpperCase())}</span><div class="mem-summary">${esc((m.summary||'').slice(0,100))}</div></div>`;
     }
-    $('mem-body').innerHTML = html;
+    $('mem-body').innerHTML = h;
   }
 
   function renderJournal(j) {
-    if (!j || !j.content) {
-      $('journal-body').innerHTML = '<div class="empty-msg">NO JOURNAL ENTRY TODAY</div>';
-      return;
-    }
-    const escaped = esc(j.content);
-    const highlighted = escaped.replace(/(\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM))?)/gi, '<span class="ts-line">$1</span>');
-    $('journal-body').innerHTML = `<div class="md-content">${highlighted}</div>`;
+    if (!j || !j.content) { $('journal-body').innerHTML = '<div class="empty-msg">NO JOURNAL TODAY</div>'; return; }
+    const escaped = esc(j.content).replace(/(\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM))?)/gi, '<span class="ts-line">$1</span>');
+    $('journal-body').innerHTML = `<div class="md-content">${escaped}</div>`;
   }
 
   function renderShares(shares) {
-    if (!shares || shares.length === 0) {
-      $('shares-body').innerHTML = '<div class="empty-msg">NO PENDING SHARES</div>';
-      return;
-    }
-    let html = '';
+    if (!shares || !shares.length) { $('shares-body').innerHTML = '<div class="empty-msg">NO SHARES</div>'; return; }
+    let h = '';
     for (const s of shares) {
-      const pri = s.priority || 'low';
-      html += `<div class="share-item">
-<span class="share-pri ${esc(pri)}">[${pri.toUpperCase()}]</span>
-<span style="color:var(--dim);font-size:10px">${esc(s.source||'')} · ${timeAgo(s.createdAt)}</span>
-<div style="color:var(--text);font-size:11px;margin-top:1px">${esc((s.content||'').slice(0,120))}</div>
-</div>`;
+      h += `<div class="share-item"><span class="share-pri ${esc(s.priority||'low')}">[${(s.priority||'low').toUpperCase()}]</span> <span style="color:var(--dim);font-size:9px">${esc(s.source||'')} · ${timeAgo(s.createdAt)}</span><div style="color:var(--text);font-size:11px">${esc((s.content||'').slice(0,100))}</div></div>`;
     }
-    $('shares-body').innerHTML = html;
+    $('shares-body').innerHTML = h;
   }
 
   function renderCharacter(ch) {
     if (!ch) { $('char-body').innerHTML = '<div class="empty-msg">NO DATA</div>'; return; }
-    let html = '';
+    let h = '';
     if (ch.active) {
-      html += `<div class="char-active">${esc(ch.active.emoji||'')} ${esc(ch.active.name)} <span style="color:var(--dim);font-size:11px">${esc(ch.active.type||'')}</span></div>`;
-      if (ch.active.tagline) html += `<div style="color:var(--text);font-size:11px;margin-bottom:8px;font-style:italic">${esc(ch.active.tagline)}</div>`;
+      h += `<div class="char-active">${esc(ch.active.emoji||'')} ${esc(ch.active.name)}</div>`;
+      if (ch.active.tagline) h += `<div style="color:var(--text);font-size:11px;margin-bottom:4px;font-style:italic">${esc(ch.active.tagline)}</div>`;
     }
-    if (ch.characters?.length > 0) {
+    if (ch.characters?.length) {
       for (const c of ch.characters) {
-        const isActive = ch.active && c.id === ch.active.id;
-        html += `<div class="char-item ${isActive ? 'active' : ''}">${esc(c.emoji||'')} ${esc(c.name)} <span style="color:var(--dim)">${esc(c.type||'')}</span></div>`;
+        const a = ch.active && c.id === ch.active.id;
+        h += `<div class="char-item ${a?'active':''}">${esc(c.emoji||'')} ${esc(c.name)}</div>`;
       }
     }
-    $('char-body').innerHTML = html;
+    $('char-body').innerHTML = h;
   }
 
   function renderConversations(convs) {
-    if (!convs || convs.length === 0) {
-      $('conv-body').innerHTML = '<div class="empty-msg">NO CONVERSATIONS</div>';
-      return;
-    }
-    let html = '';
+    if (!convs || !convs.length) { $('conv-body').innerHTML = '<div class="empty-msg">NONE</div>'; return; }
+    let h = '';
     for (const c of convs) {
-      const isLife = c.chatId === '__life__';
-      html += `<div class="conv-item">
-<span class="chat-id ${isLife ? 'life' : ''}">${esc(c.chatId)}</span>
-<span style="color:var(--dim)">${c.messageCount} msgs · ${timeAgo(c.lastTimestamp)}</span>
-</div>`;
+      h += `<div class="conv-item"><span class="chat-id ${c.chatId==='__life__'?'life':''}">${esc(c.chatId)}</span><span style="color:var(--dim)">${c.messageCount} · ${timeAgo(c.lastTimestamp)}</span></div>`;
     }
-    $('conv-body').innerHTML = html;
+    $('conv-body').innerHTML = h;
   }
 
   function renderSelf(s) {
-    if (!s || !s.content) {
-      $('self-body').innerHTML = '<div class="empty-msg">NO SELF-AWARENESS DATA</div>';
-      return;
-    }
+    if (!s || !s.content) { $('self-body').innerHTML = '<div class="empty-msg">NO DATA</div>'; return; }
     $('self-body').innerHTML = `<div class="md-content">${esc(s.content)}</div>`;
   }
 
   function renderLogs(logs) {
-    if (!logs || logs.length === 0) {
-      $('logs-body').innerHTML = '<div class="empty-msg">NO LOGS</div>';
-      return;
-    }
+    if (!logs || !logs.length) { $('logs-body').innerHTML = '<div class="empty-msg">NO LOGS</div>'; return; }
     const body = $('logs-body');
-    const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 20;
-
-    let html = '';
+    const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 20;
+    let h = '';
     for (const l of logs) {
-      const lvl = (l.level || 'info').toLowerCase();
-      const ts = l.timestamp ? l.timestamp.replace(/^.*T/, '').replace(/\..*$/, '') : '';
-      html += `<div class="log-line"><span class="ts">[${esc(ts)}]</span> <span class="lvl-${lvl}">${esc(lvl.toUpperCase().padEnd(5))}</span> <span class="msg">${esc(l.message)}</span></div>`;
+      const lvl = (l.level||'info').toLowerCase();
+      const ts = l.timestamp ? l.timestamp.replace(/^.*T/,'').replace(/\..*$/,'') : '';
+      h += `<div class="log-line"><span class="ts">[${esc(ts)}]</span> <span class="lvl-${lvl}">${esc(lvl.toUpperCase().padEnd(5))}</span> <span class="msg">${esc(l.message)}</span></div>`;
     }
-    body.innerHTML = html;
-
-    if (wasAtBottom) {
-      body.scrollTop = body.scrollHeight;
-    }
+    body.innerHTML = h;
+    if (atBottom) body.scrollTop = body.scrollHeight;
   }
+
+  // ── Scrolling ticker ──
+  function renderTicker(logs) {
+    if (!logs || !logs.length) return;
+    const last = logs.slice(-20);
+    let items = '';
+    for (const l of last) {
+      const lvl = (l.level||'info').toLowerCase();
+      const ts = l.timestamp ? l.timestamp.replace(/^.*T/,'').replace(/\..*$/,'') : '';
+      items += `<span class="ticker-item"><span class="ts">[${esc(ts)}]</span> <span class="lvl-${lvl}">${esc(lvl.toUpperCase())}</span> <span class="msg">${esc((l.message||'').slice(0,80))}</span></span>`;
+    }
+    // Duplicate for seamless loop
+    $('ticker-track').innerHTML = items + items;
+    const count = last.length;
+    document.documentElement.style.setProperty('--ticker-duration', Math.max(count * 4, 30) + 's');
+  }
+
+  // ── Matrix rain ──
+  (function() {
+    const canvas = $('matrix-canvas');
+    const ctx = canvas.getContext('2d');
+    let w, h, cols, drops;
+    const chars = 'アイウエオカキクケコサシスセソ0123456789ABCDEF{}[]<>/\\|';
+    const fs = 14;
+    let last = 0;
+
+    function resize() {
+      w = canvas.width = window.innerWidth;
+      h = canvas.height = window.innerHeight;
+      cols = Math.floor(w / fs);
+      drops = new Array(cols).fill(1);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    function draw(now) {
+      requestAnimationFrame(draw);
+      if (now - last < 66) return;
+      last = now;
+      ctx.fillStyle = 'rgba(5,8,12,0.05)';
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = '#39ff14';
+      ctx.font = fs + 'px monospace';
+      for (let i = 0; i < cols; i++) {
+        ctx.fillText(chars[Math.floor(Math.random() * chars.length)], i * fs, drops[i] * fs);
+        if (drops[i] * fs > h && Math.random() > 0.975) drops[i] = 0;
+        drops[i]++;
+      }
+    }
+    requestAnimationFrame(draw);
+  })();
+
+  // ── Waveform ──
+  (function() {
+    const canvas = $('waveform-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let w, h, phase = 0;
+
+    function resize() {
+      w = canvas.width = canvas.parentElement.offsetWidth;
+      h = canvas.height = 40;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    function draw() {
+      requestAnimationFrame(draw);
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = '#39ff14';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = 0; x < w; x++) {
+        const y = h/2 + Math.sin((x * 0.02) + phase) * 8 + Math.sin((x * 0.05) + phase * 1.5) * 4 + Math.sin((x * 0.01) + phase * 0.5) * 6;
+        x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      phase += 0.03;
+    }
+    requestAnimationFrame(draw);
+  })();
+
+  // ── Sidebar nav active state ──
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      item.classList.add('active');
+    });
+  });
 
 })();
 </script>
