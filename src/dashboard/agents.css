@@ -33,8 +33,21 @@
 /* ═══════ WORKFLOW CONTAINER ═══════ */
 .workflow-container {
   position: relative;
-  min-height: calc(100vh - 200px);
-  padding: 40px 20px 60px;
+  height: calc(100vh - 200px);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+}
+.workflow-container.grabbing { cursor: grabbing; }
+.workflow-container.dragging-node { cursor: default; }
+
+/* Pannable / zoomable layer */
+.workflow-canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .workflow-svg {
@@ -43,27 +56,43 @@
   width: 100%; height: 100%;
   pointer-events: none;
   z-index: 1;
+  overflow: visible;
 }
 
 /* ═══════ SVG CONNECTIONS ═══════ */
 .connection-path {
   fill: none;
-  stroke: rgba(57,255,20,0.15);
+  stroke: rgba(57,255,20,0.12);
   stroke-width: 1.5;
   marker-end: url(#arrow);
-  transition: stroke 0.3s, stroke-width 0.3s;
+  transition: stroke 0.4s, stroke-width 0.4s;
 }
 .connection-path.active {
-  stroke: var(--accent);
+  stroke: rgba(57,255,20,0.5);
   stroke-width: 2;
   marker-end: url(#arrow-active);
-  filter: drop-shadow(0 0 4px rgba(57,255,20,0.4));
-  stroke-dasharray: 8 4;
-  animation: flowDash 1s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(57,255,20,0.3));
 }
-@keyframes flowDash {
-  0% { stroke-dashoffset: 0; }
-  100% { stroke-dashoffset: -12; }
+
+/* Message particle traveling along path */
+.msg-particle {
+  fill: var(--accent);
+  filter: drop-shadow(0 0 6px var(--accent));
+  transition: r 0.2s;
+}
+.msg-particle.burst {
+  fill: var(--amber);
+  filter: drop-shadow(0 0 8px var(--amber));
+}
+
+/* Glow trail behind particle */
+.msg-trail {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0.3;
+  filter: drop-shadow(0 0 4px var(--accent));
 }
 
 /* ═══════ WORKFLOW NODES ═══════ */
@@ -72,15 +101,21 @@
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
   padding: 12px 16px;
-  cursor: pointer;
+  cursor: grab;
   z-index: 2;
-  transition: border-color 0.3s, box-shadow 0.3s, transform 0.2s;
+  transition: border-color 0.3s, box-shadow 0.3s;
   min-width: 180px;
+  user-select: none;
+}
+.workflow-node.dragging {
+  cursor: grabbing;
+  z-index: 10;
+  box-shadow: 0 0 30px rgba(57,255,20,0.15), 0 8px 32px rgba(0,0,0,0.4);
+  border-color: var(--accent);
 }
 .workflow-node:hover {
   border-color: var(--panel-border-hover);
   box-shadow: 0 0 20px rgba(57,255,20,0.08);
-  transform: translateY(-1px);
 }
 .workflow-node.selected {
   border-color: var(--accent);
@@ -88,6 +123,21 @@
 }
 .workflow-node.has-active-job {
   animation: nodeGlow 2s ease-in-out infinite;
+}
+
+/* Ripple flash on new job arrival */
+.workflow-node.ripple::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 2px solid var(--accent);
+  opacity: 1;
+  animation: nodeRipple 0.8s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes nodeRipple {
+  0% { inset: -4px; opacity: 0.8; border-width: 2px; }
+  100% { inset: -20px; opacity: 0; border-width: 0px; }
 }
 @keyframes nodeGlow {
   0%, 100% { box-shadow: 0 0 8px rgba(57,255,20,0.05); }
@@ -188,14 +238,95 @@
   background: rgba(57,255,20,0.15);
   border: 1px solid rgba(57,255,20,0.3);
   z-index: 3;
+  transition: all 0.3s;
 }
 .node-port.left { left: -4px; top: 50%; transform: translateY(-50%); }
 .node-port.right { right: -4px; top: 50%; transform: translateY(-50%); }
 .node-port.active {
   background: var(--accent);
   border-color: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
+  box-shadow: 0 0 8px var(--accent);
 }
+
+/* ═══════ ZOOM CONTROLS ═══════ */
+.zoom-controls {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.zoom-btn {
+  width: 32px; height: 32px;
+  background: var(--bg2);
+  border: 1px solid var(--panel-border);
+  color: var(--accent);
+  font-family: var(--font-hud);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  user-select: none;
+}
+.zoom-btn:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent-dim);
+}
+.zoom-btn:active {
+  background: rgba(57,255,20,0.12);
+}
+.zoom-btn.text {
+  font-size: 7px;
+  letter-spacing: 0.5px;
+}
+.zoom-level {
+  width: 32px; height: 24px;
+  background: rgba(8,14,24,0.8);
+  border: 1px solid var(--panel-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-hud);
+  font-size: 8px;
+  color: var(--dim);
+  letter-spacing: 0.5px;
+}
+
+/* ═══════ MINIMAP ═══════ */
+.minimap {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  width: 160px;
+  height: 100px;
+  background: rgba(5,8,12,0.85);
+  border: 1px solid var(--panel-border);
+  z-index: 50;
+  overflow: hidden;
+  backdrop-filter: blur(4px);
+}
+.minimap-viewport {
+  position: absolute;
+  border: 1px solid rgba(57,255,20,0.4);
+  background: rgba(57,255,20,0.04);
+  pointer-events: none;
+}
+.minimap-node {
+  position: absolute;
+  background: rgba(57,255,20,0.3);
+  border: 1px solid rgba(57,255,20,0.5);
+}
+.minimap-node.active {
+  background: var(--accent);
+  box-shadow: 0 0 4px var(--accent);
+}
+.minimap-node.user { background: rgba(68,136,255,0.4); border-color: rgba(68,136,255,0.6); }
+.minimap-node.orch { background: rgba(57,255,20,0.5); border-color: var(--accent); }
 
 /* ═══════ DETAIL PANEL ═══════ */
 .detail-panel {
@@ -324,28 +455,15 @@
     right: 0;
     width: 320px;
   }
-  .workflow-node {
-    min-width: 150px;
-  }
-  .workflow-node.orchestrator {
-    min-width: 180px;
-  }
+  .workflow-node { min-width: 150px; }
+  .workflow-node.orchestrator { min-width: 180px; }
+  .minimap { display: none; }
 }
 @media (max-width: 768px) {
-  .detail-panel {
-    width: 100%;
-    right: 0;
-  }
-  .workflow-container {
-    padding: 20px 10px 60px;
-  }
-  .workflow-node {
-    min-width: 130px;
-    padding: 8px 10px;
-  }
-  .agents-stats-bar {
-    gap: 16px;
-    padding: 8px 12px;
-  }
+  .detail-panel { width: 100%; right: 0; }
+  .workflow-node { min-width: 130px; padding: 8px 10px; }
+  .agents-stats-bar { gap: 16px; padding: 8px 12px; }
   .agents-stat-val { font-size: 13px; }
+  .zoom-controls { bottom: 8px; left: 8px; }
+  .minimap { display: none; }
 }

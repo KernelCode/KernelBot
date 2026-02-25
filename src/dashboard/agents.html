@@ -131,19 +131,34 @@
     <div class="agents-stat"><span class="agents-stat-val" id="stat-total-tools">0</span><span class="agents-stat-lbl">TOTAL TOOLS</span></div>
   </div>
 
-  <!-- Workflow container -->
+  <!-- Workflow container (pan/zoom) -->
   <div class="workflow-container" id="workflow-container">
-    <svg class="workflow-svg" id="workflow-svg">
-      <defs>
-        <marker id="arrow" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 3 L 0 6 z" fill="rgba(57,255,20,0.4)"/>
-        </marker>
-        <marker id="arrow-active" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 3 L 0 6 z" fill="#39ff14"/>
-        </marker>
-      </defs>
-    </svg>
-    <div id="workflow-nodes"></div>
+    <div class="workflow-canvas" id="workflow-canvas">
+      <svg class="workflow-svg" id="workflow-svg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 3 L 0 6 z" fill="rgba(57,255,20,0.4)"/>
+          </marker>
+          <marker id="arrow-active" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 3 L 0 6 z" fill="#39ff14"/>
+          </marker>
+        </defs>
+      </svg>
+      <div id="workflow-nodes"></div>
+    </div>
+
+    <!-- Zoom controls -->
+    <div class="zoom-controls">
+      <div class="zoom-btn" id="zoom-in" title="Zoom In">+</div>
+      <div class="zoom-level" id="zoom-level">100%</div>
+      <div class="zoom-btn" id="zoom-out" title="Zoom Out">&minus;</div>
+      <div class="zoom-btn text" id="zoom-fit" title="Fit to View">FIT</div>
+    </div>
+
+    <!-- Minimap -->
+    <div class="minimap" id="minimap">
+      <div class="minimap-viewport" id="minimap-viewport"></div>
+    </div>
   </div>
 
 </div>
