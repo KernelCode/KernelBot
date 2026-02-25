@@ -351,6 +351,14 @@ async function startBotFlow(config) {
     selfManager: charCtx.selfManager,
   };
 
+  // Optional cyberpunk terminal dashboard (must init before startBot so handle is available)
+  let dashboardHandle = null;
+  if (config.dashboard?.enabled) {
+    const { startDashboard } = await import('../src/dashboard/server.js');
+    dashboardHandle = startDashboard({ port: config.dashboard.port, ...dashboardDeps });
+    logger.info(`[Dashboard] Running on http://localhost:${config.dashboard.port}`);
+  }
+
   const bot = startBot(config, agent, conversationManager, jobManager, automationManager, {
     lifeEngine,
     memoryManager: charCtx.memoryManager,
@@ -378,22 +386,6 @@ async function startBotFlow(config) {
   }, 24 * 3600_000);
 
   showStartupComplete();
-
-  // Optional cyberpunk terminal dashboard
-  let dashboardHandle = null;
-  if (config.dashboard?.enabled) {
-    const { startDashboard } = await import('../src/dashboard/server.js');
-    dashboardHandle = startDashboard({
-      port: config.dashboard.port,
-      config, jobManager, automationManager, lifeEngine, conversationManager, characterManager,
-      memoryManager: charCtx.memoryManager,
-      journalManager: charCtx.journalManager,
-      shareQueue: charCtx.shareQueue,
-      evolutionTracker: charCtx.evolutionTracker,
-      selfManager: charCtx.selfManager,
-    });
-    logger.info(`[Dashboard] Running on http://localhost:${config.dashboard.port}`);
-  }
 
   // Start life engine if enabled
   const lifeEnabled = config.life?.enabled !== false;
