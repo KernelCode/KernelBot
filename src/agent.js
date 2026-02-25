@@ -915,12 +915,53 @@ export class OrchestratorAgent {
     // Start the job
     this.jobManager.startJob(job.id);
 
+    // Track activity for health monitoring — Claude Code streams events via onOutput.
+    // coder.js uses a "smart output" wrapper that consolidates tool activity lines (▸/▹/▪)
+    // into a single editable status message starting with ░▒▓. Text messages (💬) pass through
+    // directly. We intercept both patterns to keep the job's lastActivity/stats updated.
+    let toolCallCount = 0;
+    let llmCallCount = 0;
+    const wrappedOnOutput = onUpdate ? async (text, opts) => {
+      // Update job activity timestamp on every output event
+      job.lastActivity = Date.now();
+
+      if (typeof text === 'string') {
+        // Consolidated status message from coder.js smart output (contains ▸ lines inside)
+        if (text.startsWith('░▒▓')) {
+          // Count ▸ lines inside the consolidated block to estimate tool calls
+          const toolLines = text.match(/^▸ .+$/gm) || [];
+          if (toolLines.length > toolCallCount) {
+            toolCallCount = toolLines.length;
+            job.updateStats({ toolCalls: toolCallCount });
+          }
+          // Use the last activity line as progress
+          if (toolLines.length > 0) {
+            job.addProgress(toolLines[toolLines.length - 1].slice(0, 100));
+          }
+        }
+        // Direct tool activity line (before smart output kicks in, or raw lines)
+        else if (text.startsWith('▸') || text.startsWith('▹')) {
+          toolCallCount++;
+          job.updateStats({ toolCalls: toolCallCount });
+          job.addProgress(text.slice(0, 100));
+        }
+        // LLM text output
+        else if (text.startsWith('💬')) {
+          llmCallCount++;
+          const thinking = text.replace(/^💬\s*\*Claude Code:\*\s*\n?/, '');
+          job.updateStats({ llmCalls: llmCallCount, lastThinking: thinking.slice(0, 300) });
+        }
+      }
+
+      return onUpdate(text, opts);
+    } : null;
+
     try {
       const spawner = getSpawner(this.config);
       const result = await spawner.run({
         workingDirectory,
         prompt,
-        onOutput: onUpdate,
+        onOutput: wrappedOnOutput,
         signal: abortController.signal,
       });
 
