@@ -5,7 +5,35 @@ import { getLogger } from '../utils/logger.js';
 const workerTypeEnum = Object.keys(WORKER_TYPES);
 
 /**
- * Tool definitions for the orchestrator's 3 meta-tools.
+ * Tokenize a task string for similarity comparison.
+ * Lowercase, strip punctuation, filter words ≤2 chars.
+ */
+function tokenize(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+}
+
+/**
+ * Jaccard word-overlap similarity between two task strings.
+ * Returns a value between 0 and 1.
+ */
+function taskSimilarity(a, b) {
+  const setA = new Set(tokenize(a));
+  const setB = new Set(tokenize(b));
+  if (setA.size === 0 && setB.size === 0) return 1;
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let intersection = 0;
+  for (const word of setA) {
+    if (setB.has(word)) intersection++;
+  }
+  return intersection / (setA.size + setB.size - intersection);
+}
+
+/**
+ * Tool definitions for the orchestrator's meta-tools.
  */
 export const orchestratorToolDefinitions = [
   {
@@ -53,6 +81,20 @@ export const orchestratorToolDefinitions = [
         job_id: {
           type: 'string',
           description: 'The ID of the job to cancel.',
+        },
+      },
+      required: ['job_id'],
+    },
+  },
+  {
+    name: 'check_job',
+    description: 'Get detailed diagnostics for a specific job — status, elapsed time, activity log, and stuck detection. Use this to investigate workers that seem slow or unresponsive.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        job_id: {
+          type: 'string',
+          description: 'The ID of the job to check.',
         },
       },
       required: ['job_id'],
@@ -313,6 +355,26 @@ export async function executeOrchestratorTool(name, input, context) {
         }
       }
 
+      // Duplicate task detection — compare against running + queued jobs in this chat
+      const activeJobs = jobManager.getJobsForChat(chatId)
+        .filter(j => (j.status === 'running' || j.status === 'queued') && j.workerType === worker_type);
+
+      for (const existing of activeJobs) {
+        const sim = taskSimilarity(task, existing.task);
+        if (sim > 0.7) {
+          logger.warn(`[dispatch_task] Duplicate blocked — ${(sim * 100).toFixed(0)}% similar to job ${existing.id}: "${existing.task.slice(0, 80)}"`);
+          return {
+            error: `A very similar ${worker_type} task is already ${existing.status} (job ${existing.id}, ${(sim * 100).toFixed(0)}% match). Wait for it to finish or cancel it first.`,
+            existing_job_id: existing.id,
+            similarity: Math.round(sim * 100),
+          };
+        }
+        if (sim > 0.4) {
+          logger.info(`[dispatch_task] Similar task warning — ${(sim * 100).toFixed(0)}% overlap with job ${existing.id}`);
+          credentialWarning = [credentialWarning, `Warning: This task is ${(sim * 100).toFixed(0)}% similar to an active ${worker_type} job (${existing.id}). Proceeding anyway.`].filter(Boolean).join('\n');
+        }
+      }
+
       // Create the job with context and dependencies
       const job = jobManager.createJob(chatId, worker_type, task);
       job.context = [taskContext, credentialWarning].filter(Boolean).join('\n\n') || null;
@@ -342,12 +404,21 @@ export async function executeOrchestratorTool(name, input, context) {
         }
       });
 
-      return {
+      // Collect sibling active jobs for awareness
+      const siblingJobs = jobManager.getJobsForChat(chatId)
+        .filter(j => j.id !== job.id && (j.status === 'running' || j.status === 'queued'))
+        .map(j => ({ id: j.id, worker_type: j.workerType, status: j.status, task: j.task.slice(0, 80) }));
+
+      const result = {
         job_id: job.id,
         worker_type,
         status: 'dispatched',
         message: `${workerConfig.emoji} ${workerConfig.label} started.`,
       };
+      if (siblingJobs.length > 0) {
+        result.other_active_jobs = siblingJobs;
+      }
+      return result;
     }
 
     case 'list_jobs': {
@@ -397,6 +468,68 @@ export async function executeOrchestratorTool(name, input, context) {
         status: 'cancelled',
         message: `Cancelled ${WORKER_TYPES[job.workerType]?.emoji || ''} ${job.workerType} worker.`,
       };
+    }
+
+    case 'check_job': {
+      const { job_id } = input;
+      logger.info(`[check_job] Checking job ${job_id}`);
+      const job = jobManager.getJob(job_id);
+      if (!job) {
+        return { error: `Job ${job_id} not found.` };
+      }
+
+      const now = Date.now();
+      const elapsed = job.startedAt ? Math.round((now - job.startedAt) / 1000) : 0;
+      const timeoutSec = job.timeoutMs ? Math.round(job.timeoutMs / 1000) : null;
+      const timeRemaining = (timeoutSec && job.startedAt) ? Math.max(0, timeoutSec - elapsed) : null;
+
+      const result = {
+        job_id: job.id,
+        worker_type: job.workerType,
+        status: job.status,
+        task: job.task.slice(0, 200),
+        elapsed_seconds: elapsed,
+        timeout_seconds: timeoutSec,
+        time_remaining_seconds: timeRemaining,
+        llm_calls: job.llmCalls,
+        tool_calls: job.toolCalls,
+        last_thinking: job.lastThinking ? job.lastThinking.slice(0, 300) : null,
+        recent_activity: job.progress.slice(-10),
+        last_activity_seconds_ago: job.lastActivity ? Math.round((now - job.lastActivity) / 1000) : null,
+      };
+
+      // Stuck detection diagnostics (only for running jobs)
+      // Long-running workers (coding, devops) get higher thresholds
+      if (job.status === 'running') {
+        const diagnostics = [];
+        const isLongRunning = ['coding', 'devops'].includes(job.workerType);
+        const idleThreshold = isLongRunning ? 600 : 120;
+        const loopLlmThreshold = isLongRunning ? 50 : 15;
+
+        const idleSec = job.lastActivity ? Math.round((now - job.lastActivity) / 1000) : elapsed;
+        if (idleSec > idleThreshold) {
+          diagnostics.push(`IDLE for ${idleSec}s — no activity detected`);
+        }
+        if (job.llmCalls > loopLlmThreshold && job.toolCalls < 3) {
+          diagnostics.push(`POSSIBLY LOOPING — ${job.llmCalls} LLM calls but only ${job.toolCalls} tool calls`);
+        }
+        if (timeoutSec && elapsed > timeoutSec * 0.75) {
+          const pct = Math.round((elapsed / timeoutSec) * 100);
+          diagnostics.push(`${pct}% of timeout used (${elapsed}s / ${timeoutSec}s)`);
+        }
+        if (diagnostics.length > 0) {
+          result.warnings = diagnostics;
+        }
+      }
+
+      if (job.dependsOn.length > 0) result.depends_on = job.dependsOn;
+      if (job.error) result.error = job.error;
+      if (job.structuredResult) {
+        result.result_summary = job.structuredResult.summary;
+        result.result_status = job.structuredResult.status;
+      }
+
+      return result;
     }
 
     case 'create_automation': {
