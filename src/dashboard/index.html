@@ -25,6 +25,8 @@
     --text: #8fa8bc;
     --text-bright: #d0e0f0;
     --sidebar-w: 56px;
+    --topbar-h: 42px;
+    --rightbar-w: 52px;
     --font-hud: 'Orbitron', 'Share Tech Mono', monospace;
     --font-mono: 'Share Tech Mono', 'Fira Code', monospace;
     --font-ui: 'Rajdhani', 'Share Tech Mono', sans-serif;
@@ -157,9 +159,154 @@
   }
   .sidebar-conn.connected { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
 
+  /* ═══════ TOP BAR ═══════ */
+  .top-bar {
+    position: fixed;
+    top: 0;
+    left: var(--sidebar-w);
+    right: 0;
+    height: var(--topbar-h);
+    background: var(--bg2);
+    border-bottom: 1px solid var(--panel-border);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    font-family: var(--font-hud);
+  }
+  .top-bar::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, var(--accent), rgba(57,255,20,0.15) 30%, transparent 70%, rgba(57,255,20,0.15) 90%, var(--accent));
+  }
+  .top-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .top-bar-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    color: var(--accent);
+  }
+  .top-bar-sep {
+    color: rgba(57,255,20,0.2);
+    font-size: 12px;
+    font-weight: 300;
+  }
+  .top-bar-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+  }
+  .top-bar-nav-item {
+    font-family: var(--font-hud);
+    font-size: 8px;
+    letter-spacing: 1.5px;
+    color: var(--dim);
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: color 0.2s, background 0.2s;
+    border: 1px solid transparent;
+    text-decoration: none;
+  }
+  .top-bar-nav-item:hover { color: var(--accent); background: var(--accent-bg); }
+  .top-bar-nav-item.active { color: var(--accent); border-color: var(--panel-border); background: var(--accent-bg); }
+  .top-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 10px;
+    color: var(--dim);
+  }
+  .top-bar-right .val { color: var(--accent); }
+  .top-bar-right .sep { color: rgba(57,255,20,0.15); }
+  .top-bar-conn {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--red);
+    transition: all 0.3s;
+  }
+  .top-bar-conn.connected { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  /* ═══════ RIGHT BAR ═══════ */
+  .right-bar {
+    position: fixed;
+    top: var(--topbar-h);
+    right: 0;
+    bottom: 0;
+    width: var(--rightbar-w);
+    background: var(--bg2);
+    border-left: 1px solid var(--panel-border);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 14px 0;
+    gap: 4px;
+  }
+  .right-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 0;
+    width: 100%;
+    cursor: default;
+    transition: background 0.2s;
+  }
+  .right-stat:hover { background: var(--accent-bg); }
+  .right-stat .r-val {
+    font-family: var(--font-hud);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .right-stat .r-val.zero { color: var(--dim); }
+  .right-stat .r-val.warn { color: var(--amber); }
+  .right-stat .r-lbl {
+    font-family: var(--font-hud);
+    font-size: 6px;
+    color: var(--dim);
+    letter-spacing: 1px;
+  }
+  .right-stat .r-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    margin: 2px 0;
+  }
+  .r-dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .r-dot.paused { background: var(--amber); box-shadow: 0 0 8px var(--amber); animation: blink 2s ease-in-out infinite; }
+  .r-dot.off { background: var(--dim); }
+  .right-divider {
+    width: 28px;
+    height: 1px;
+    background: var(--panel-border);
+    margin: 4px 0;
+  }
+  .right-bar-clock {
+    margin-top: auto;
+    font-family: var(--font-hud);
+    font-size: 8px;
+    color: var(--dim);
+    letter-spacing: 1px;
+    writing-mode: vertical-lr;
+    text-orientation: mixed;
+    padding-bottom: 4px;
+  }
+
   /* ═══════ MAIN CONTENT ═══════ */
   .main {
     margin-left: var(--sidebar-w);
+    margin-right: var(--rightbar-w);
+    padding-top: var(--topbar-h);
     position: relative;
     z-index: 1;
     min-height: 100vh;
@@ -172,9 +319,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 20px 24px 16px;
+    padding: 18px 24px;
     border-bottom: 1px solid var(--panel-border);
     overflow: hidden;
+    min-height: 70px;
   }
   .hero-bar::after {
     content: '';
@@ -185,38 +333,54 @@
     background: linear-gradient(90deg, transparent, var(--accent-dim), transparent);
   }
 
-  .hero-center { text-align: center; position: relative; }
 
-  .hero-ascii {
-    font-family: var(--font-mono);
-    font-size: 9px;
-    line-height: 1.1;
-    color: var(--accent);
-    text-shadow: 0 0 10px rgba(57,255,20,0.25);
-    white-space: pre;
-    margin-bottom: 6px;
+  .hero-pulse {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    flex-wrap: wrap;
   }
-  .hero-ascii .logo-text { color: var(--text-bright); text-shadow: 0 0 6px rgba(57,255,20,0.12); }
+  .pulse-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    min-width: 60px;
+  }
+  .pulse-label {
+    font-family: var(--font-hud);
+    font-size: 7px;
+    letter-spacing: 2px;
+    color: var(--dim);
+  }
+  .pulse-val {
+    font-family: var(--font-hud);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 1px;
+    text-shadow: 0 0 8px rgba(57,255,20,0.3);
+  }
+  .pulse-val.idle { color: var(--dim); text-shadow: none; }
+  .pulse-val.active { color: var(--accent); animation: pulseGlow 2s ease-in-out infinite; }
+  .pulse-val.warn { color: var(--amber); text-shadow: 0 0 8px rgba(255,176,0,0.3); }
+  @keyframes pulseGlow {
+    0%, 100% { text-shadow: 0 0 4px rgba(57,255,20,0.2); }
+    50% { text-shadow: 0 0 12px rgba(57,255,20,0.5); }
+  }
 
-  /* Waveform canvas */
+  /* Waveform canvas — full hero background */
   #waveform-canvas {
     position: absolute;
-    bottom: 0; left: 0;
-    width: 100%; height: 40px;
-    opacity: 0.15;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    opacity: 0.25;
     pointer-events: none;
   }
 
-  .hero-status {
-    display: flex;
-    justify-content: center;
-    gap: 14px;
-    font-size: 10px;
-    color: var(--dim);
-    flex-wrap: wrap;
-  }
-  .hero-status .val { color: var(--accent); }
-  .hero-status .sep { color: rgba(57,255,20,0.15); }
 
   /* ═══════ GAUGE ROW ═══════ */
   .gauge-row {
@@ -491,16 +655,266 @@
   .life-status.paused { color: var(--amber); }
   .life-status.idle { color: var(--dim); }
 
+  /* ═══════ INTEGRATION STATUS BAR ═══════ */
+  .integrations-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 8px 24px;
+    border-bottom: 1px solid var(--panel-border);
+    flex-wrap: wrap;
+  }
+  .integ-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-hud);
+    font-size: 8px;
+    letter-spacing: 1px;
+    color: var(--dim);
+  }
+  .integ-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--dim);
+  }
+  .integ-dot.on { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .integ-dot.off { background: rgba(255,51,51,0.5); }
+
+  /* ═══════ EXPANDABLE JOB DETAIL ═══════ */
+  .job-row { cursor: pointer; }
+  .job-detail {
+    display: none;
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: rgba(57,255,20,0.02);
+    border: 1px solid rgba(57,255,20,0.06);
+    border-radius: 2px;
+  }
+  .job-detail.open { display: block; }
+  .job-detail-section { margin-bottom: 4px; }
+  .job-detail-label {
+    font-family: var(--font-hud);
+    font-size: 7px;
+    letter-spacing: 1.5px;
+    color: var(--dim);
+    margin-bottom: 1px;
+  }
+  .job-detail-val { color: var(--text); font-size: 10px; line-height: 1.4; }
+  .job-detail-val.error { color: var(--red); }
+  .job-detail-val .tool-tag {
+    display: inline-block;
+    padding: 0 4px;
+    margin: 1px 2px;
+    border: 1px solid rgba(57,255,20,0.12);
+    color: var(--accent);
+    font-size: 9px;
+    font-family: var(--font-mono);
+  }
+  .job-detail-val .artifact-tag {
+    display: inline-block;
+    padding: 0 4px;
+    margin: 1px 2px;
+    border: 1px solid rgba(255,176,0,0.2);
+    color: var(--amber);
+    font-size: 9px;
+  }
+  .job-progress-timeline {
+    max-height: 100px;
+    overflow-y: auto;
+    font-size: 10px;
+    color: var(--dim);
+    line-height: 1.5;
+  }
+  .job-progress-timeline::-webkit-scrollbar { width: 2px; }
+  .job-progress-timeline::-webkit-scrollbar-thumb { background: var(--accent-dim); }
+
+  /* ═══════ WORKER CARDS (Capabilities) ═══════ */
+  .worker-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+  .worker-card {
+    padding: 6px 8px;
+    border: 1px solid rgba(57,255,20,0.06);
+    background: rgba(57,255,20,0.02);
+    transition: border-color 0.2s;
+  }
+  .worker-card:hover { border-color: rgba(57,255,20,0.2); }
+  .worker-card-head {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 3px;
+  }
+  .worker-emoji { font-size: 14px; }
+  .worker-name {
+    font-family: var(--font-hud);
+    font-size: 8px;
+    letter-spacing: 1px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .worker-desc { font-size: 10px; color: var(--text); margin-bottom: 3px; }
+  .worker-meta {
+    display: flex;
+    gap: 8px;
+    font-size: 9px;
+    color: var(--dim);
+  }
+  .worker-meta .v { color: var(--accent); }
+
+  /* ═══════ KNOWLEDGE ITEMS ═══════ */
+  .knowledge-item {
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(57,255,20,0.03);
+  }
+  .knowledge-item:last-child { border-bottom: none; }
+  .knowledge-topic {
+    font-family: var(--font-hud);
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .knowledge-summary { font-size: 10px; color: var(--text); margin-top: 1px; }
+  .knowledge-related { font-size: 9px; color: var(--dim); margin-top: 1px; }
+
+  /* ═══════ IDEAS ITEMS ═══════ */
+  .idea-item {
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(57,255,20,0.03);
+    font-size: 10px;
+    color: var(--text);
+  }
+  .idea-item:last-child { border-bottom: none; }
+  .idea-item .improve-tag {
+    font-family: var(--font-hud);
+    font-size: 7px;
+    letter-spacing: 1px;
+    color: var(--amber);
+    margin-right: 4px;
+  }
+  .idea-time { font-size: 9px; color: var(--dim); margin-left: 4px; }
+
+  /* ═══════ LESSONS ═══════ */
+  .lesson-item {
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(57,255,20,0.03);
+  }
+  .lesson-item:last-child { border-bottom: none; }
+  .lesson-cat {
+    display: inline-block;
+    padding: 0 4px;
+    font-family: var(--font-hud);
+    font-size: 7px;
+    letter-spacing: 1px;
+    color: var(--magenta);
+    border: 1px solid rgba(255,0,255,0.15);
+    margin-right: 4px;
+  }
+  .lesson-text { font-size: 10px; color: var(--text); }
+  .lesson-importance {
+    font-family: var(--font-hud);
+    font-size: 8px;
+    color: var(--dim);
+    margin-left: 4px;
+  }
+
+  /* ═══════ COOLDOWN BARS ═══════ */
+  .cooldown-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+  }
+  .cooldown-label {
+    width: 75px;
+    text-align: right;
+    font-family: var(--font-hud);
+    font-size: 8px;
+    letter-spacing: 0.5px;
+    color: var(--dim);
+  }
+  .cooldown-bar-track {
+    flex: 1;
+    height: 4px;
+    background: var(--accent-bg);
+    overflow: hidden;
+  }
+  .cooldown-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), rgba(57,255,20,0.3));
+    transition: width 0.8s ease;
+  }
+  .cooldown-fill.ready { background: rgba(57,255,20,0.15); }
+  .cooldown-time {
+    width: 32px;
+    font-size: 9px;
+    color: var(--accent);
+    font-family: var(--font-hud);
+  }
+
+  /* ═══════ PANEL TABS ═══════ */
+  .panel-tabs {
+    display: flex;
+    gap: 1px;
+    padding: 0 12px;
+    margin: -1px 0 4px 0;
+    background: rgba(57,255,20,0.02);
+    border-bottom: 1px solid rgba(57,255,20,0.05);
+  }
+  .panel-tab {
+    padding: 3px 8px;
+    font-family: var(--font-hud);
+    font-size: 7px;
+    letter-spacing: 1px;
+    color: var(--dim);
+    cursor: pointer;
+    border-bottom: 1px solid transparent;
+    transition: color 0.2s, border-color 0.2s;
+  }
+  .panel-tab:hover { color: var(--text); }
+  .panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ═══════ MEMORY TAGS + IMPORTANCE ═══════ */
+  .mem-tags { margin-top: 1px; }
+  .mem-tag {
+    display: inline-block;
+    padding: 0 3px;
+    margin-right: 2px;
+    font-size: 8px;
+    color: var(--dim);
+    border: 1px solid rgba(57,255,20,0.06);
+  }
+  .mem-importance {
+    float: right;
+    font-family: var(--font-hud);
+    font-size: 8px;
+    color: var(--dim);
+  }
+  .mem-importance.high { color: var(--accent); }
+
+  /* ═══════ SHARE HISTORY ═══════ */
+  .share-shared {
+    opacity: 0.6;
+    border-left: 2px solid rgba(57,255,20,0.1);
+    padding-left: 6px;
+  }
+
   /* ═══════ LOG TICKER (bottom sticky) ═══════ */
   .log-ticker {
     position: fixed;
     bottom: 0;
     left: var(--sidebar-w);
     right: 0;
+    height: 28px;
     border-top: 1px solid var(--panel-border);
     background: rgba(5,8,12,0.97);
     overflow: hidden;
-    z-index: 90;
+    z-index: 101;
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
   }
@@ -546,17 +960,24 @@
 
   /* ═══════ RESPONSIVE ═══════ */
   @media (max-width: 1100px) {
+    .right-bar { display: none; }
+    .main { margin-right: 0; }
     .span-8, .span-6, .span-4, .span-3 { grid-column: span 6; }
     .gauge-ring { width: 72px; height: 72px; }
     .gauge-center .pct { font-size: 14px; }
+    .top-bar-nav { display: none; }
   }
   @media (max-width: 768px) {
     .sidebar { display: none; }
-    .main { margin-left: 0; }
+    .top-bar { left: 0; }
+    .right-bar { display: none; }
+    .main { margin-left: 0; margin-right: 0; padding-top: var(--topbar-h); }
     .log-ticker { left: 0; }
     .span-8, .span-6, .span-4, .span-3, .span-12 { grid-column: span 12; }
     .content { grid-template-columns: 1fr; }
-    .hero-ascii { font-size: 6px; }
+    .hero-pulse { gap: 12px; }
+    .pulse-stat { min-width: 50px; }
+    .pulse-val { font-size: 11px; }
     .gauge-row { gap: 12px; }
     .gauge-ring { width: 64px; height: 64px; }
     .gauge-center .pct { font-size: 12px; }
@@ -571,10 +992,14 @@
 <!-- ═══════ SIDEBAR ═══════ -->
 <nav class="sidebar">
   <div class="sidebar-logo">
-    <svg viewBox="0 0 32 32" fill="none">
-      <polygon points="16,1 30,9 30,23 16,31 2,23 2,9" fill="none" stroke="rgba(57,255,20,0.5)" stroke-width="1"/>
-      <polygon points="16,6 25,11 25,21 16,26 7,21 7,11" fill="rgba(57,255,20,0.05)" stroke="rgba(57,255,20,0.7)" stroke-width="0.7"/>
-      <path d="M12,11 L12,21 M12,16 L20,11 M12,16 L20,21" stroke="#39ff14" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <svg viewBox="0 0 32 32" shape-rendering="crispEdges">
+      <!-- Pixel-art spiral vortex: 3 rings with rotating gaps -->
+      <!-- Outer ring — gap at top-right (1 o'clock) -->
+      <path fill="rgba(57,255,20,0.35)" d="M10,2h10v2h-10z M8,4h2v2h-2z M6,6h2v4h-2z M4,10h2v8h-2z M6,18h2v2h-2z M8,20h2v2h-2z M10,22h14v2h-14z M24,18h2v4h-2z M26,8h2v10h-2z M24,6h2v2h-2z"/>
+      <!-- Middle ring — gap at bottom-right (4 o'clock) -->
+      <path fill="rgba(57,255,20,0.6)" d="M12,8h8v2h-8z M10,10h2v10h-2z M20,10h2v6h-2z M18,18h2v2h-2z M12,20h6v2h-6z"/>
+      <!-- Inner core — L-shape spiral hint -->
+      <path fill="#39ff14" d="M14,14h4v2h-2v2h-2z"/>
     </svg>
   </div>
 
@@ -615,10 +1040,81 @@
       <svg viewBox="0 0 38 38"><circle class="track" cx="19" cy="19" r="16"/><circle class="fill" cx="19" cy="19" r="16" stroke-dasharray="100.5" stroke-dashoffset="100.5"/></svg>
       <div class="mini-gauge-label"><span class="val">--%</span><span class="lbl">RAM</span></div>
     </div>
-    <div class="sidebar-conn" id="conn-dot"></div>
-    <div class="sidebar-clock" id="sb-clock">--:--</div>
+    <div class="sidebar-conn connected" id="conn-dot"></div>
   </div>
 </nav>
+
+<!-- ═══════ TOP BAR ═══════ -->
+<header class="top-bar">
+  <div class="top-bar-left">
+    <span class="top-bar-title">KernelBot</span>
+    <span class="top-bar-sep">//</span>
+    <span class="top-bar-nav">
+      <a class="top-bar-nav-item active" href="#gauges">SYSTEM</a>
+      <a class="top-bar-nav-item" href="#p-jobs">JOBS</a>
+      <a class="top-bar-nav-item" href="#p-life">LIFE</a>
+      <a class="top-bar-nav-item" href="#p-evo">EVO</a>
+      <a class="top-bar-nav-item" href="#p-mem">MEMORY</a>
+      <a class="top-bar-nav-item" href="#p-logs">LOGS</a>
+    </span>
+  </div>
+  <div class="top-bar-right">
+    <span class="top-bar-conn" id="top-conn"></span>
+    <span><span class="val" id="hdr-status">ONLINE</span></span>
+    <span class="sep">//</span>
+    <span>UP <span class="val" id="hdr-uptime">--</span></span>
+    <span class="sep">//</span>
+    <span>PID <span class="val" id="hdr-pid">--</span></span>
+    <span class="sep">//</span>
+    <span>NODE <span class="val" id="hdr-node">--</span></span>
+    <span class="sep">//</span>
+    <span class="val" id="hdr-clock">--</span>
+  </div>
+</header>
+
+<!-- ═══════ RIGHT BAR ═══════ -->
+<aside class="right-bar">
+  <div class="right-stat" title="Running Jobs">
+    <span class="r-val zero" id="rb-jobs">0</span>
+    <span class="r-lbl">JOBS</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Total Jobs">
+    <span class="r-val zero" id="rb-total-jobs">0</span>
+    <span class="r-lbl">TOTAL</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Life Engine">
+    <span class="r-dot off" id="rb-life-dot"></span>
+    <span class="r-lbl">LIFE</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Activities">
+    <span class="r-val zero" id="rb-activities">0</span>
+    <span class="r-lbl">ACTS</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Memories">
+    <span class="r-val zero" id="rb-mem">0</span>
+    <span class="r-lbl">MEM</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Share Queue">
+    <span class="r-val zero" id="rb-shares">0</span>
+    <span class="r-lbl">SHARE</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Evolution Proposals">
+    <span class="r-val zero" id="rb-evo">0</span>
+    <span class="r-lbl">EVO</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Conversations">
+    <span class="r-val zero" id="rb-convs">0</span>
+    <span class="r-lbl">CHATS</span>
+  </div>
+  <div class="right-bar-clock" id="rb-clock">--:--</div>
+</aside>
 
 <!-- ═══════ MAIN ═══════ -->
 <div class="main">
@@ -626,36 +1122,36 @@
   <!-- Hero bar -->
   <div class="hero-bar">
     <canvas id="waveform-canvas"></canvas>
-    <div class="hero-center">
-      <pre class="hero-ascii"><span class="logo-art">          ▄▄████████▄▄
-       ▄██▀▀        ▀▀██▄
-     ▄█▀    ▄██████▄    ▀█▄
-    █▀   ▄██▀      ▀██▄   ▀█
-   █▀  ▄█▀   ▄████▄  ▀█▄  ▀█
-  ▐█  ██   ▄█▀    ▀█▄  ██  █▌
-  ▐█  █▌  █▀   ██   ▀█ ▐█  █▌
-  ▐█  █▌  ▀█▄  ▀▀██▀  ▐█  █▌
-   █▄  ██   ▀▀████▀  ██  ▄█
-    █▄  ▀██▄      ▄██▀  ▄█
-     ▀█▄   ▀██████▀   ▄█▀
-       ▀██▄▄      ▄▄██▀
-          ▀▀████████▀▀</span>
-<span class="logo-text"> █▄▀ █▀▀ █▀█ █▄ █ █▀▀ █   █▀▄ █▀█ ▀█▀
- █▀▄ █▀▀ █▄▀ █ ██ █▀▀ █   ██▀ █ █  █
- █ █ █▄▄ █ █ █ ▀█ █▄▄ █▄▄ █▄▀ █▄█  █</span></pre>
-      <div class="hero-status">
-        <span><span class="val" id="hdr-status">ONLINE</span></span>
-        <span class="sep">//</span>
-        <span>UPTIME <span class="val" id="hdr-uptime">--</span></span>
-        <span class="sep">//</span>
-        <span>PID <span class="val" id="hdr-pid">--</span></span>
-        <span class="sep">//</span>
-        <span>NODE <span class="val" id="hdr-node">--</span></span>
-        <span class="sep">//</span>
-        <span><span class="val" id="hdr-clock">--</span></span>
+    <div class="hero-pulse">
+      <div class="pulse-stat">
+        <span class="pulse-label">BRAIN</span>
+        <span class="pulse-val" id="pulse-brain">--</span>
+      </div>
+      <div class="pulse-stat">
+        <span class="pulse-label">ACTIVITY</span>
+        <span class="pulse-val idle" id="pulse-activity">IDLE</span>
+      </div>
+      <div class="pulse-stat">
+        <span class="pulse-label">JOBS</span>
+        <span class="pulse-val idle" id="pulse-jobs">0</span>
+      </div>
+      <div class="pulse-stat">
+        <span class="pulse-label">CPU</span>
+        <span class="pulse-val" id="pulse-cpu">--%</span>
+      </div>
+      <div class="pulse-stat">
+        <span class="pulse-label">HEAP</span>
+        <span class="pulse-val" id="pulse-heap">--</span>
+      </div>
+      <div class="pulse-stat">
+        <span class="pulse-label">UPTIME</span>
+        <span class="pulse-val" id="pulse-uptime">--</span>
       </div>
     </div>
   </div>
+
+  <!-- Integration Status Bar -->
+  <div class="integrations-bar" id="integrations-bar"></div>
 
   <!-- Gauge row -->
   <div class="gauge-row" id="gauges">
@@ -695,7 +1191,7 @@
     <!-- JOBS (wide) -->
     <div class="panel span-8" id="p-jobs">
       <div class="sweep"></div>
-      <div class="panel-header"><span class="dot"></span>ACTIVE.JOBS<span class="tag">SWARM</span></div>
+      <div class="panel-header"><span class="dot"></span>JOBS<span class="tag" id="jobs-count-tag">SWARM // 0</span></div>
       <div class="panel-body" id="jobs-body"></div>
     </div>
 
@@ -706,24 +1202,35 @@
       <div class="panel-body" id="config-body"></div>
     </div>
 
+    <!-- CAPABILITIES -->
+    <div class="panel span-6" id="p-caps">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>CAPABILITIES<span class="tag" id="caps-tag">WORKERS</span></div>
+      <div class="panel-body" id="caps-body"></div>
+    </div>
+
     <!-- LIFE -->
-    <div class="panel span-4" id="p-life">
+    <div class="panel span-6" id="p-life">
       <div class="sweep"></div>
       <div class="panel-header"><span class="dot"></span>LIFE.ENGINE<span class="tag">AUTONOMOUS</span></div>
       <div class="panel-body" id="life-body"></div>
     </div>
 
     <!-- EVOLUTION -->
-    <div class="panel span-4" id="p-evo">
+    <div class="panel span-6" id="p-evo">
       <div class="sweep"></div>
       <div class="panel-header"><span class="dot"></span>EVOLUTION<span class="tag">SELF-IMPROVE</span></div>
       <div class="panel-body" id="evo-body"></div>
     </div>
 
     <!-- MEMORY -->
-    <div class="panel span-4" id="p-mem">
+    <div class="panel span-6" id="p-mem">
       <div class="sweep"></div>
-      <div class="panel-header"><span class="dot"></span>MEMORY.BANK<span class="tag">EPISODIC</span></div>
+      <div class="panel-header"><span class="dot"></span>MEMORY.BANK<span class="tag" id="mem-tag">EPISODIC</span></div>
+      <div class="panel-tabs" id="mem-tabs">
+        <span class="panel-tab active" data-tab="episodic">EPISODIC</span>
+        <span class="panel-tab" data-tab="knowledge">KNOWLEDGE</span>
+      </div>
       <div class="panel-body" id="mem-body"></div>
     </div>
 
@@ -737,33 +1244,62 @@
     <!-- JOURNAL -->
     <div class="panel span-4">
       <div class="sweep"></div>
-      <div class="panel-header"><span class="dot"></span>JOURNAL.TODAY<span class="tag">LOG</span></div>
+      <div class="panel-header"><span class="dot"></span>JOURNAL<span class="tag" id="journal-tag">TODAY</span></div>
+      <div class="panel-tabs" id="journal-tabs"></div>
       <div class="panel-body" id="journal-body"></div>
     </div>
 
-    <!-- SHARES + CHARACTER + CONVERSATIONS + SELF -->
+    <!-- IDEAS BACKLOG -->
+    <div class="panel span-4" id="p-ideas">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>IDEAS.BACKLOG<span class="tag" id="ideas-tag">BRAIN</span></div>
+      <div class="panel-body short" id="ideas-body"></div>
+    </div>
+
+    <!-- SHARES -->
     <div class="panel span-4">
       <div class="sweep"></div>
-      <div class="panel-header"><span class="dot"></span>SHARE.QUEUE<span class="tag">OUTBOUND</span></div>
+      <div class="panel-header"><span class="dot"></span>SHARE.QUEUE<span class="tag" id="shares-tag">OUTBOUND</span></div>
+      <div class="panel-tabs" id="shares-tabs">
+        <span class="panel-tab active" data-tab="pending">PENDING</span>
+        <span class="panel-tab" data-tab="shared">HISTORY</span>
+      </div>
       <div class="panel-body short" id="shares-body"></div>
     </div>
 
-    <div class="panel span-3">
+    <!-- LESSONS -->
+    <div class="panel span-4" id="p-lessons">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>LESSONS<span class="tag" id="lessons-tag">WISDOM</span></div>
+      <div class="panel-body short" id="lessons-body"></div>
+    </div>
+
+    <!-- CHARACTER -->
+    <div class="panel span-4">
       <div class="sweep"></div>
       <div class="panel-header"><span class="dot"></span>CHARACTER<span class="tag">PERSONA</span></div>
       <div class="panel-body short" id="char-body"></div>
     </div>
 
-    <div class="panel span-3">
+    <!-- CONVERSATIONS -->
+    <div class="panel span-4">
       <div class="sweep"></div>
       <div class="panel-header"><span class="dot"></span>CONVERSATIONS<span class="tag">CHANNELS</span></div>
       <div class="panel-body short" id="conv-body"></div>
     </div>
 
-    <div class="panel span-6">
+    <!-- SELF.AWARENESS -->
+    <div class="panel span-4">
       <div class="sweep"></div>
       <div class="panel-header"><span class="dot"></span>SELF.AWARENESS<span class="tag">IDENTITY</span></div>
       <div class="panel-body short" id="self-body"></div>
+    </div>
+
+    <!-- SELF (expanded) -->
+    <div class="panel span-4">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>SELF.GOALS<span class="tag">ASPIRATION</span></div>
+      <div class="panel-body short" id="self-goals-body"></div>
     </div>
 
     <!-- LOG STREAM (full) -->
@@ -824,7 +1360,8 @@
     const p = n => String(n).padStart(2,'0');
     const full = now.getFullYear() + '.' + p(now.getMonth()+1) + '.' + p(now.getDate()) + ' ' + p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds());
     $('hdr-clock').textContent = full;
-    $('sb-clock').textContent = p(now.getHours()) + ':' + p(now.getMinutes());
+    const rbClock = $('rb-clock');
+    if (rbClock) rbClock.textContent = p(now.getHours()) + ':' + p(now.getMinutes());
   }, 1000);
 
   // ── Gauge helper ──
@@ -861,9 +1398,14 @@
     el.querySelector('.val').textContent = pct.toFixed(0) + '%';
   }
 
-  // ── SSE + config/self ──
+  // ── State ──
   let configData = null, selfData = null;
-  fetch('/api/config').then(r=>r.json()).then(d => { configData = d; renderConfig(d); });
+  let activeMemTab = 'episodic', activeShareTab = 'pending', activeJournalDate = 'today';
+  let lastKnowledge = [], lastSharesData = { pending: [], shared: [], todayCount: 0 };
+  let lastMemories = [];
+
+  // ── Init fetches ──
+  fetch('/api/config').then(r=>r.json()).then(d => { configData = d; renderConfig(d); renderIntegrations(d); });
   fetch('/api/self').then(r=>r.json()).then(d => { selfData = d; renderSelf(d); });
 
   let reconnectDelay = 1000;
@@ -872,6 +1414,7 @@
     es.onopen = () => {
       reconnectDelay = 1000;
       $('conn-dot').classList.add('connected');
+      $('top-conn').classList.add('connected');
       $('hdr-status').textContent = 'ONLINE';
     };
     es.onmessage = (evt) => {
@@ -880,6 +1423,7 @@
     es.onerror = () => {
       es.close();
       $('conn-dot').classList.remove('connected');
+      $('top-conn').classList.remove('connected');
       $('hdr-status').textContent = 'RECONNECTING';
       setTimeout(connectSSE, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 1.5, 15000);
@@ -893,14 +1437,87 @@
     renderJobs(snap.jobs);
     renderAutomations(snap.automations);
     renderLife(snap.life);
-    renderMemories(snap.memories);
+    lastMemories = snap.memories || [];
+    if (activeMemTab === 'episodic') renderMemories(lastMemories);
+    else renderKnowledge(snap.knowledge || []);
+    lastKnowledge = snap.knowledge || [];
     renderJournal(snap.journal);
     renderEvolution(snap.evolution);
+    renderLessons(snap.evolution?.lessons || []);
     renderConversations(snap.conversations);
     renderCharacter(snap.character);
-    renderShares(snap.shares);
+    lastSharesData = snap.shares || { pending: [], shared: [], todayCount: 0 };
+    renderShares(lastSharesData);
+    renderCapabilities(snap.capabilities);
+    renderIdeas(snap.life?.ideas || []);
     renderLogs(snap.logs);
     renderTicker(snap.logs);
+    updateRightBar(snap);
+    updatePulse(snap);
+  }
+
+  // ── Hero pulse live stats ──
+  function updatePulse(snap) {
+    // Brain model
+    const pBrain = $('pulse-brain');
+    if (pBrain && configData) {
+      const model = configData.brain?.model || '--';
+      pBrain.textContent = model.length > 16 ? model.slice(0, 14) + '..' : model;
+      pBrain.className = 'pulse-val active';
+    }
+    // Current life activity
+    const pAct = $('pulse-activity');
+    if (pAct) {
+      const life = snap.life;
+      if (life && life.paused) { pAct.textContent = 'PAUSED'; pAct.className = 'pulse-val warn'; }
+      else if (life && life.status === 'active') { pAct.textContent = (life.lastActivity || 'ACTIVE').toUpperCase(); pAct.className = 'pulse-val active'; }
+      else { pAct.textContent = 'IDLE'; pAct.className = 'pulse-val idle'; }
+    }
+    // Jobs
+    const pJobs = $('pulse-jobs');
+    if (pJobs) {
+      const jobs = snap.jobs || [];
+      const running = jobs.filter(j => j.status === 'running').length;
+      pJobs.textContent = running > 0 ? running + ' RUN' : jobs.length > 0 ? jobs.length + ' TOTAL' : '0';
+      pJobs.className = 'pulse-val' + (running > 0 ? ' active' : ' idle');
+    }
+  }
+
+  // ── Right bar quick stats ──
+  function updateRightBar(snap) {
+    // Jobs
+    const jobs = snap.jobs || [];
+    const running = jobs.filter(j => j.status === 'running').length;
+    const rbJobs = $('rb-jobs');
+    if (rbJobs) { rbJobs.textContent = running; rbJobs.className = 'r-val' + (running > 0 ? '' : ' zero'); }
+    const rbTotal = $('rb-total-jobs');
+    if (rbTotal) { rbTotal.textContent = jobs.length; rbTotal.className = 'r-val' + (jobs.length > 0 ? '' : ' zero'); }
+
+    // Life
+    const lifeDot = $('rb-life-dot');
+    if (lifeDot) {
+      const isActive = snap.life && !snap.life.paused && snap.life.status === 'active';
+      const isPaused = snap.life && snap.life.paused;
+      lifeDot.className = 'r-dot ' + (isActive ? 'on' : isPaused ? 'paused' : 'off');
+    }
+    const rbActs = $('rb-activities');
+    if (rbActs) { const total = snap.life?.totalActivities || 0; rbActs.textContent = total; rbActs.className = 'r-val' + (total > 0 ? '' : ' zero'); }
+
+    // Memories
+    const rbMem = $('rb-mem');
+    if (rbMem) { const c = (snap.memories || []).length; rbMem.textContent = c; rbMem.className = 'r-val' + (c > 0 ? '' : ' zero'); }
+
+    // Shares
+    const rbShares = $('rb-shares');
+    if (rbShares) { const c = snap.shares?.pending?.length || 0; rbShares.textContent = c; rbShares.className = 'r-val' + (c > 0 ? '' : ' zero'); }
+
+    // Evolution
+    const rbEvo = $('rb-evo');
+    if (rbEvo) { const c = snap.evolution?.stats?.totalProposals || 0; rbEvo.textContent = c; rbEvo.className = 'r-val' + (c > 0 ? '' : ' zero'); }
+
+    // Conversations
+    const rbConvs = $('rb-convs');
+    if (rbConvs) { const c = (snap.conversations || []).length; rbConvs.textContent = c; rbConvs.className = 'r-val' + (c > 0 ? '' : ' zero'); }
   }
 
   function renderSystem(sys) {
@@ -921,6 +1538,14 @@
     setGauge('g-heap', heapPct, formatBytes(sys.process.heap));
     setMiniGauge('sb-cpu', cpu1);
     setMiniGauge('sb-ram', ramPct);
+
+    // Hero pulse stats
+    const pCpu = $('pulse-cpu');
+    if (pCpu) { pCpu.textContent = cpu1.toFixed(0) + '%'; pCpu.className = 'pulse-val' + (cpu1 >= 80 ? ' warn' : cpu1 > 0 ? ' active' : ' idle'); }
+    const pHeap = $('pulse-heap');
+    if (pHeap) { pHeap.textContent = formatBytes(sys.process.heap); pHeap.className = 'pulse-val' + (heapPct >= 80 ? ' warn' : ' active'); }
+    const pUp = $('pulse-uptime');
+    if (pUp) { pUp.textContent = formatDuration(sys.uptime); pUp.className = 'pulse-val active'; }
   }
 
   function renderConfig(cfg) {
@@ -937,6 +1562,11 @@
       h += `<div class="row"><span class="k">Max Jobs</span><span class="v">${cfg.swarm.max_concurrent_jobs || '--'}</span></div>`;
       h += `<div class="row"><span class="k">Job Timeout</span><span class="v">${cfg.swarm.job_timeout_seconds || '--'}s</span></div>`;
     }
+    if (cfg.claude_code) {
+      h += `<div class="row"><span class="k">Claude Code</span><span class="v">${esc(cfg.claude_code.model)}</span></div>`;
+      h += `<div class="row"><span class="k">CC Auth</span><span class="v">${esc(cfg.claude_code.auth_mode)}</span></div>`;
+      h += `<div class="row"><span class="k">CC Max Turns</span><span class="v">${cfg.claude_code.max_turns || '--'}</span></div>`;
+    }
     if (cfg.life) {
       h += `<div class="row"><span class="k">Life</span><span class="v">${cfg.life.enabled ? 'ENABLED' : 'DISABLED'}</span></div>`;
       if (cfg.life.self_coding) h += `<div class="row"><span class="k">Self-Coding</span><span class="v">${cfg.life.self_coding.enabled ? 'ON' : 'OFF'}</span></div>`;
@@ -945,16 +1575,68 @@
     $('config-body').innerHTML = h;
   }
 
-  function renderJobs(jobs) {
-    if (!jobs || !jobs.length) { $('jobs-body').innerHTML = '<div class="empty-msg">NO ACTIVE JOBS</div>'; return; }
+  function renderIntegrations(cfg) {
+    if (!cfg || !cfg.integrations) return;
+    const items = [
+      { key: 'telegram', label: 'TELEGRAM' },
+      { key: 'github', label: 'GITHUB' },
+      { key: 'claude_code', label: 'CLAUDE' },
+      { key: 'linkedin', label: 'LINKEDIN' },
+      { key: 'x', label: 'X' },
+      { key: 'jira', label: 'JIRA' },
+      { key: 'elevenlabs', label: '11LABS' },
+    ];
     let h = '';
-    for (const j of jobs) {
-      h += `<div class="job-row"><div class="job-meta"><span class="job-id">${esc(j.id)}</span><span class="job-type">${esc(j.type)}</span><span class="badge ${j.status}">${j.status.toUpperCase()}</span><span style="color:var(--dim)">${formatDuration(j.duration)}</span><span style="color:var(--dim)">LLM:${j.llmCalls||0} T:${j.toolCalls||0}</span></div><div class="job-task">${esc((j.task||'').slice(0,120))}</div>`;
-      if (j.lastThinking) h += `<div class="job-sub">${esc(j.lastThinking.slice(0,100))}</div>`;
-      if (j.progress?.length) h += `<div class="job-sub">${esc(j.progress[j.progress.length-1])}</div>`;
-      h += '</div>';
+    for (const item of items) {
+      const on = cfg.integrations[item.key];
+      h += `<div class="integ-item"><span class="integ-dot ${on ? 'on' : 'off'}"></span>${item.label}</div>`;
+    }
+    $('integrations-bar').innerHTML = h;
+  }
+
+  function renderJobs(jobs) {
+    if (!jobs || !jobs.length) { $('jobs-body').innerHTML = '<div class="empty-msg">NO JOBS</div>'; updateJobsTag(0, 0); return; }
+    const order = { running: 0, queued: 1, completed: 2, failed: 3, cancelled: 4 };
+    const sorted = [...jobs].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || (b.createdAt || 0) - (a.createdAt || 0));
+    const running = sorted.filter(j => j.status === 'running').length;
+    updateJobsTag(sorted.length, running);
+    let h = '';
+    for (const j of sorted) {
+      h += `<div class="job-row" onclick="this.querySelector('.job-detail')?.classList.toggle('open')">`;
+      h += `<div class="job-meta"><span class="job-id">${esc(j.id)}</span><span class="job-type">${esc(j.type)}</span><span class="badge ${j.status}">${j.status.toUpperCase()}</span><span style="color:var(--dim)">${formatDuration(j.duration)}</span><span style="color:var(--dim)">LLM:${j.llmCalls||0} T:${j.toolCalls||0}</span></div>`;
+      h += `<div class="job-task">${esc((j.task||'').slice(0,120))}</div>`;
+      if (j.status === 'running' && j.lastThinking) h += `<div class="job-sub">${esc(j.lastThinking.slice(0,100))}</div>`;
+      if (j.status === 'running' && j.progress?.length) h += `<div class="job-sub">${esc(j.progress[j.progress.length-1])}</div>`;
+      if (j.status === 'completed' && j.completedAt) h += `<div class="job-sub">Completed ${timeAgo(j.completedAt)}</div>`;
+      if (j.status === 'failed') h += `<div class="job-sub" style="color:var(--red)">Failed ${timeAgo(j.completedAt)}</div>`;
+      if (j.status === 'cancelled') h += `<div class="job-sub" style="color:var(--amber)">Cancelled ${timeAgo(j.completedAt)}</div>`;
+      // Expandable detail section
+      h += '<div class="job-detail">';
+      if (j.error) h += `<div class="job-detail-section"><div class="job-detail-label">ERROR</div><div class="job-detail-val error">${esc(j.error)}</div></div>`;
+      if (j.context) h += `<div class="job-detail-section"><div class="job-detail-label">CONTEXT</div><div class="job-detail-val">${esc(j.context.slice(0,300))}</div></div>`;
+      if (j.dependsOn?.length) h += `<div class="job-detail-section"><div class="job-detail-label">DEPENDS ON</div><div class="job-detail-val">${j.dependsOn.map(d => `<span class="tool-tag">${esc(d)}</span>`).join('')}</div></div>`;
+      if (j.timeoutMs) h += `<div class="job-detail-section"><div class="job-detail-label">TIMEOUT</div><div class="job-detail-val">${formatDuration(j.timeoutMs/1000)}</div></div>`;
+      if (j.structuredResult) {
+        const sr = j.structuredResult;
+        if (sr.summary) h += `<div class="job-detail-section"><div class="job-detail-label">SUMMARY</div><div class="job-detail-val">${esc(sr.summary)}</div></div>`;
+        if (sr.details) h += `<div class="job-detail-section"><div class="job-detail-label">DETAILS</div><div class="job-detail-val">${esc(sr.details.slice(0,500))}</div></div>`;
+        if (sr.toolsUsed?.length) h += `<div class="job-detail-section"><div class="job-detail-label">TOOLS USED</div><div class="job-detail-val">${sr.toolsUsed.map(t => `<span class="tool-tag">${esc(t)}</span>`).join('')}</div></div>`;
+        if (sr.artifacts?.length) h += `<div class="job-detail-section"><div class="job-detail-label">ARTIFACTS</div><div class="job-detail-val">${sr.artifacts.map(a => `<span class="artifact-tag">${esc(typeof a === 'string' ? a : JSON.stringify(a).slice(0,60))}</span>`).join('')}</div></div>`;
+        if (sr.errors?.length) h += `<div class="job-detail-section"><div class="job-detail-label">ERRORS</div><div class="job-detail-val error">${sr.errors.map(e => esc(e)).join('<br>')}</div></div>`;
+        if (sr.followUp) h += `<div class="job-detail-section"><div class="job-detail-label">FOLLOW-UP</div><div class="job-detail-val">${esc(sr.followUp)}</div></div>`;
+      }
+      if (j.progress?.length > 1) {
+        h += `<div class="job-detail-section"><div class="job-detail-label">PROGRESS (${j.progress.length})</div><div class="job-progress-timeline">`;
+        for (const p of j.progress) h += `<div>${esc(p)}</div>`;
+        h += '</div></div>';
+      }
+      h += '</div></div>';
     }
     $('jobs-body').innerHTML = h;
+  }
+  function updateJobsTag(total, running) {
+    const tag = $('jobs-count-tag');
+    if (tag) tag.textContent = 'SWARM // ' + total + (running > 0 ? ' (' + running + ' ACTIVE)' : '');
   }
 
   function renderAutomations(autos) {
@@ -975,14 +1657,31 @@
     let h = '';
     const sc = life.paused ? 'paused' : (life.status === 'active' ? 'active' : 'idle');
     h += `<div class="life-status ${sc}">${(life.paused ? 'PAUSED' : life.status || 'IDLE').toUpperCase()}</div>`;
-    h += `<div class="row"><span class="k">Total</span><span class="v">${life.totalActivities || 0}</span></div>`;
-    h += `<div class="row"><span class="k">Last</span><span class="v">${esc(life.lastActivity || 'none')} (${esc(life.lastActivityAgo || 'never')})</span></div>`;
+    h += `<div class="row"><span class="k">Total Activities</span><span class="v">${life.totalActivities || 0}</span></div>`;
+    h += `<div class="row"><span class="k">Last Activity</span><span class="v">${esc(life.lastActivity || 'none')} (${esc(life.lastActivityAgo || 'never')})</span></div>`;
+    h += `<div class="row"><span class="k">Wake-Up</span><span class="v">${esc(life.lastWakeUpAgo || 'never')}</span></div>`;
     if (life.activityCounts) {
       const counts = life.activityCounts;
       const max = Math.max(1, ...Object.values(counts));
       h += '<div style="margin-top:6px">';
       for (const [n, c] of Object.entries(counts)) {
         h += `<div class="activity-bar"><span class="name">${esc(n)}</span><span class="bar"><span class="fill" style="width:${(c/max*100).toFixed(0)}%"></span></span><span class="count">${c}</span></div>`;
+      }
+      h += '</div>';
+    }
+    // Cooldowns
+    if (life.cooldowns) {
+      h += '<div style="margin-top:8px;border-top:1px solid rgba(57,255,20,0.05);padding-top:6px">';
+      h += '<div style="font-family:var(--font-hud);font-size:7px;letter-spacing:1.5px;color:var(--dim);margin-bottom:4px">COOLDOWNS</div>';
+      const cdNames = { journal: 'JOURNAL', self_code: 'SELF CODE', code_review: 'CODE REV', reflect: 'REFLECT' };
+      const cdMaxMs = { journal: 4*3600000, self_code: 2*3600000, code_review: 4*3600000, reflect: 4*3600000 };
+      for (const [key, label] of Object.entries(cdNames)) {
+        const ms = life.cooldowns[key] || 0;
+        const maxMs = cdMaxMs[key];
+        const pct = ms > 0 ? (ms / maxMs * 100) : 0;
+        const ready = ms <= 0;
+        const timeStr = ready ? 'READY' : formatDuration(Math.ceil(ms / 1000));
+        h += `<div class="cooldown-row"><span class="cooldown-label">${label}</span><div class="cooldown-bar-track"><div class="cooldown-fill${ready ? ' ready' : ''}" style="width:${ready ? 100 : 100 - pct}%"></div></div><span class="cooldown-time">${timeStr}</span></div>`;
       }
       h += '</div>';
     }
@@ -1035,22 +1734,52 @@
     if (!mems || !mems.length) { $('mem-body').innerHTML = '<div class="empty-msg">NO MEMORIES</div>'; return; }
     let h = '';
     for (const m of mems) {
-      h += `<div class="mem-item"><span class="mem-time">${timeAgo(m.timestamp)}</span> <span class="mem-type ${esc(m.type||'interaction')}">${esc((m.type||'').toUpperCase())}</span><div class="mem-summary">${esc((m.summary||'').slice(0,100))}</div></div>`;
+      const imp = m.importance || 0;
+      const impCls = imp >= 7 ? 'high' : '';
+      h += `<div class="mem-item"><span class="mem-time">${timeAgo(m.timestamp)}</span> <span class="mem-type ${esc(m.type||'interaction')}">${esc((m.type||'').toUpperCase())}</span>`;
+      if (imp > 0) h += `<span class="mem-importance ${impCls}">IMP:${imp}</span>`;
+      h += `<div class="mem-summary">${esc((m.summary||'').slice(0,120))}</div>`;
+      if (m.tags?.length) {
+        h += '<div class="mem-tags">';
+        for (const t of m.tags.slice(0, 5)) h += `<span class="mem-tag">${esc(t)}</span>`;
+        h += '</div>';
+      }
+      h += '</div>';
     }
     $('mem-body').innerHTML = h;
   }
 
   function renderJournal(j) {
-    if (!j || !j.content) { $('journal-body').innerHTML = '<div class="empty-msg">NO JOURNAL TODAY</div>'; return; }
-    const escaped = esc(j.content).replace(/(\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM))?)/gi, '<span class="ts-line">$1</span>');
+    if (!j) { $('journal-body').innerHTML = '<div class="empty-msg">NO JOURNAL DATA</div>'; return; }
+    // Build date tabs
+    const tabsEl = $('journal-tabs');
+    if (tabsEl && j.dates?.length) {
+      let th = `<span class="panel-tab ${activeJournalDate === 'today' ? 'active' : ''}" data-tab="today">TODAY</span>`;
+      for (const d of j.dates.slice(0, 6)) {
+        if (d === j.dates[0] && activeJournalDate === 'today') continue; // today is already shown
+        const short = d.slice(5); // MM-DD
+        th += `<span class="panel-tab ${activeJournalDate === d ? 'active' : ''}" data-tab="${esc(d)}">${short}</span>`;
+      }
+      tabsEl.innerHTML = th;
+    }
+    const tag = $('journal-tag');
+    if (tag) tag.textContent = activeJournalDate === 'today' ? 'TODAY' : activeJournalDate;
+    const content = activeJournalDate === 'today' ? j.content : (j.recent?.find(r => r.date === activeJournalDate)?.content);
+    if (!content) { $('journal-body').innerHTML = '<div class="empty-msg">NO ENTRY</div>'; return; }
+    const escaped = esc(content).replace(/(\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM))?)/gi, '<span class="ts-line">$1</span>');
     $('journal-body').innerHTML = `<div class="md-content">${escaped}</div>`;
   }
 
-  function renderShares(shares) {
-    if (!shares || !shares.length) { $('shares-body').innerHTML = '<div class="empty-msg">NO SHARES</div>'; return; }
+  function renderShares(data) {
+    if (!data) { $('shares-body').innerHTML = '<div class="empty-msg">NO SHARES</div>'; return; }
+    const tag = $('shares-tag');
+    if (tag) tag.textContent = `OUTBOUND // ${data.todayCount || 0} TODAY`;
+    const list = activeShareTab === 'pending' ? (data.pending || []) : (data.shared || []);
+    if (!list.length) { $('shares-body').innerHTML = `<div class="empty-msg">${activeShareTab === 'pending' ? 'NO PENDING SHARES' : 'NO HISTORY'}</div>`; return; }
     let h = '';
-    for (const s of shares) {
-      h += `<div class="share-item"><span class="share-pri ${esc(s.priority||'low')}">[${(s.priority||'low').toUpperCase()}]</span> <span style="color:var(--dim);font-size:9px">${esc(s.source||'')} · ${timeAgo(s.createdAt)}</span><div style="color:var(--text);font-size:11px">${esc((s.content||'').slice(0,100))}</div></div>`;
+    for (const s of list) {
+      const cls = activeShareTab === 'shared' ? 'share-item share-shared' : 'share-item';
+      h += `<div class="${cls}"><span class="share-pri ${esc(s.priority||'low')}">[${(s.priority||'low').toUpperCase()}]</span> <span style="color:var(--dim);font-size:9px">${esc(s.source||'')} · ${timeAgo(s.createdAt)}</span><div style="color:var(--text);font-size:11px">${esc((s.content||'').slice(0,100))}</div></div>`;
     }
     $('shares-body').innerHTML = h;
   }
@@ -1062,11 +1791,16 @@
       h += `<div class="char-active">${esc(ch.active.emoji||'')} ${esc(ch.active.name)}</div>`;
       if (ch.active.tagline) h += `<div style="color:var(--text);font-size:11px;margin-bottom:4px;font-style:italic">${esc(ch.active.tagline)}</div>`;
     }
+    if (ch.origin) h += `<div class="row"><span class="k">Origin</span><span class="v">${esc(ch.origin)}</span></div>`;
+    if (ch.age) h += `<div class="row"><span class="k">Age</span><span class="v">${esc(ch.age)}</span></div>`;
+    if (ch.lastActiveAt) h += `<div class="row"><span class="k">Last Active</span><span class="v">${timeAgo(ch.lastActiveAt)}</span></div>`;
     if (ch.characters?.length) {
+      h += '<div style="margin-top:4px;border-top:1px solid rgba(57,255,20,0.05);padding-top:4px">';
       for (const c of ch.characters) {
         const a = ch.active && c.id === ch.active.id;
         h += `<div class="char-item ${a?'active':''}">${esc(c.emoji||'')} ${esc(c.name)}</div>`;
       }
+      h += '</div>';
     }
     $('char-body').innerHTML = h;
   }
@@ -1075,15 +1809,137 @@
     if (!convs || !convs.length) { $('conv-body').innerHTML = '<div class="empty-msg">NONE</div>'; return; }
     let h = '';
     for (const c of convs) {
-      h += `<div class="conv-item"><span class="chat-id ${c.chatId==='__life__'?'life':''}">${esc(c.chatId)}</span><span style="color:var(--dim)">${c.messageCount} · ${timeAgo(c.lastTimestamp)}</span></div>`;
+      h += `<div class="conv-item"><span class="chat-id ${c.chatId==='__life__'?'life':''}">${esc(c.chatId)}</span><span style="color:var(--dim)">${c.messageCount} msgs · ${timeAgo(c.lastTimestamp)}</span></div>`;
+      if (c.userMessages || c.assistantMessages) {
+        h += `<div style="font-size:9px;color:var(--dim);padding-left:4px">USR:${c.userMessages||0} BOT:${c.assistantMessages||0}`;
+        if (c.activeSkill) h += ` <span style="color:var(--magenta)">SKILL:${esc(c.activeSkill)}</span>`;
+        h += '</div>';
+      }
     }
     $('conv-body').innerHTML = h;
   }
 
   function renderSelf(s) {
-    if (!s || !s.content) { $('self-body').innerHTML = '<div class="empty-msg">NO DATA</div>'; return; }
-    $('self-body').innerHTML = `<div class="md-content">${esc(s.content)}</div>`;
+    if (!s || !s.content) {
+      $('self-body').innerHTML = '<div class="empty-msg">NO DATA</div>';
+      $('self-goals-body').innerHTML = '<div class="empty-msg">NO DATA</div>';
+      return;
+    }
+    // Split content into sections — goals go to separate panel
+    const lines = s.content.split('\n');
+    let awareness = [], goals = [], inGoals = false;
+    for (const line of lines) {
+      if (/^#+\s*(goals|aspirations|objectives)/i.test(line)) { inGoals = true; goals.push(line); continue; }
+      if (inGoals && /^#+\s/.test(line) && !/goals|aspirations|objectives/i.test(line)) { inGoals = false; }
+      if (inGoals) goals.push(line); else awareness.push(line);
+    }
+    $('self-body').innerHTML = `<div class="md-content">${esc(awareness.join('\n') || s.content)}</div>`;
+    $('self-goals-body').innerHTML = goals.length ? `<div class="md-content">${esc(goals.join('\n'))}</div>` : '<div class="empty-msg">NO GOALS DEFINED</div>';
   }
+
+  function renderCapabilities(caps) {
+    if (!caps || !caps.workers) { $('caps-body').innerHTML = '<div class="empty-msg">NO DATA</div>'; return; }
+    const tag = $('caps-tag');
+    if (tag) tag.textContent = `WORKERS // ${caps.totalTools || 0} TOOLS`;
+    let h = '<div class="worker-grid">';
+    const workerList = Array.isArray(caps.workers) ? caps.workers : Object.values(caps.workers);
+    for (const w of workerList) {
+      h += '<div class="worker-card">';
+      h += `<div class="worker-card-head"><span class="worker-emoji">${esc(w.emoji)}</span><span class="worker-name">${esc(w.label)}</span></div>`;
+      h += `<div class="worker-desc">${esc(w.description)}</div>`;
+      h += `<div class="worker-meta"><span>Tools: <span class="v">${w.tools?.length || 0}</span></span><span>Timeout: <span class="v">${formatDuration(w.timeout)}</span></span></div>`;
+      if (w.tools?.length) {
+        h += '<div style="margin-top:3px">';
+        for (const t of w.tools.slice(0, 8)) h += `<span class="tool-tag" style="font-size:8px">${esc(t)}</span>`;
+        if (w.tools.length > 8) h += `<span style="color:var(--dim);font-size:8px">+${w.tools.length - 8}</span>`;
+        h += '</div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+    $('caps-body').innerHTML = h;
+  }
+
+  function renderKnowledge(topics) {
+    if (!topics || !topics.length) { $('mem-body').innerHTML = '<div class="empty-msg">NO KNOWLEDGE</div>'; return; }
+    const tag = $('mem-tag');
+    if (tag) tag.textContent = 'SEMANTIC';
+    let h = '';
+    for (const t of topics) {
+      h += '<div class="knowledge-item">';
+      h += `<span class="knowledge-topic">${esc(t.topic)}</span>`;
+      if (t.sources?.length) h += ` <span style="color:var(--dim);font-size:8px">${t.sources.length} sources</span>`;
+      if (t.summary) h += `<div class="knowledge-summary">${esc(t.summary.slice(0, 120))}</div>`;
+      if (t.relatedTopics?.length) h += `<div class="knowledge-related">Related: ${t.relatedTopics.slice(0, 4).map(r => esc(r)).join(', ')}</div>`;
+      if (t.learnedAt) h += `<div style="font-size:8px;color:var(--dim)">${timeAgo(new Date(t.learnedAt).getTime())}</div>`;
+      h += '</div>';
+    }
+    $('mem-body').innerHTML = h;
+  }
+
+  function renderIdeas(ideas) {
+    if (!ideas || !ideas.length) { $('ideas-body').innerHTML = '<div class="empty-msg">NO IDEAS</div>'; return; }
+    const tag = $('ideas-tag');
+    if (tag) tag.textContent = `BRAIN // ${ideas.length}`;
+    let h = '';
+    for (const idea of ideas) {
+      if (typeof idea === 'string') {
+        const isImprove = idea.startsWith('IMPROVE:');
+        h += `<div class="idea-item">${isImprove ? '<span class="improve-tag">IMPROVE</span>' : ''}${esc(isImprove ? idea.slice(8).trim() : idea)}</div>`;
+      } else {
+        h += `<div class="idea-item">`;
+        if (idea.type) h += `<span class="improve-tag">${esc(idea.type.toUpperCase())}</span>`;
+        h += `${esc(idea.text || idea.content || JSON.stringify(idea).slice(0, 80))}`;
+        if (idea.timestamp) h += `<span class="idea-time">${timeAgo(idea.timestamp)}</span>`;
+        h += '</div>';
+      }
+    }
+    $('ideas-body').innerHTML = h;
+  }
+
+  function renderLessons(lessons) {
+    if (!lessons || !lessons.length) { $('lessons-body').innerHTML = '<div class="empty-msg">NO LESSONS</div>'; return; }
+    const tag = $('lessons-tag');
+    if (tag) tag.textContent = `WISDOM // ${lessons.length}`;
+    let h = '';
+    for (const l of lessons) {
+      h += '<div class="lesson-item">';
+      if (l.category) h += `<span class="lesson-cat">${esc(l.category.toUpperCase())}</span>`;
+      h += `<span class="lesson-text">${esc((l.lesson || l.text || '').slice(0, 120))}</span>`;
+      if (l.importance) h += `<span class="lesson-importance">IMP:${l.importance}</span>`;
+      h += '</div>';
+    }
+    $('lessons-body').innerHTML = h;
+  }
+
+  // ── Tab click handlers ──
+  document.addEventListener('click', (e) => {
+    const tab = e.target.closest('.panel-tab');
+    if (!tab) return;
+    const parent = tab.closest('.panel-tabs');
+    if (!parent) return;
+    const tabId = parent.id;
+    const val = tab.dataset.tab;
+
+    if (tabId === 'mem-tabs') {
+      activeMemTab = val;
+      parent.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const memTag = $('mem-tag');
+      if (memTag) memTag.textContent = val === 'episodic' ? 'EPISODIC' : 'SEMANTIC';
+      if (val === 'episodic') renderMemories(lastMemories);
+      else renderKnowledge(lastKnowledge);
+    } else if (tabId === 'shares-tabs') {
+      activeShareTab = val;
+      parent.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderShares(lastSharesData);
+    } else if (tabId === 'journal-tabs') {
+      activeJournalDate = val;
+      parent.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+    }
+  });
 
   function renderLogs(logs) {
     if (!logs || !logs.length) { $('logs-body').innerHTML = '<div class="empty-msg">NO LOGS</div>'; return; }
@@ -1115,124 +1971,36 @@
     document.documentElement.style.setProperty('--ticker-duration', Math.max(count * 4, 30) + 's');
   }
 
-  // ── Particle network constellation ──
+  // ── Circuit grid background (static grid only) ──
   (function() {
     const canvas = $('particle-canvas');
     const ctx = canvas.getContext('2d');
     let w, h;
-    const PARTICLE_COUNT = 80;
-    const CONNECT_DIST = 160;
-    const MOUSE_DIST = 200;
-    let mouse = { x: -9999, y: -9999 };
-    let particles = [];
+    const GRID = 50;
 
     function resize() {
       w = canvas.width = window.innerWidth;
       h = canvas.height = window.innerHeight;
+      drawGrid();
     }
 
-    function createParticle() {
-      return {
-        x: Math.random() * w,
-        y: Math.random() * h,
-        vx: (Math.random() - 0.5) * 0.4,
-        vy: (Math.random() - 0.5) * 0.4,
-        r: Math.random() * 1.5 + 0.5,
-        pulse: Math.random() * Math.PI * 2,
-        pulseSpeed: 0.01 + Math.random() * 0.02,
-      };
-    }
-
-    function init() {
-      resize();
-      particles = [];
-      for (let i = 0; i < PARTICLE_COUNT; i++) particles.push(createParticle());
-    }
-
-    init();
-    window.addEventListener('resize', () => { resize(); init(); });
-    document.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
-    document.addEventListener('mouseleave', () => { mouse.x = -9999; mouse.y = -9999; });
-
-    function draw() {
-      requestAnimationFrame(draw);
+    function drawGrid() {
       ctx.clearRect(0, 0, w, h);
-
-      // Update & draw particles
-      for (let i = 0; i < particles.length; i++) {
-        const p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.pulse += p.pulseSpeed;
-
-        // Wrap around edges
-        if (p.x < -10) p.x = w + 10;
-        if (p.x > w + 10) p.x = -10;
-        if (p.y < -10) p.y = h + 10;
-        if (p.y > h + 10) p.y = -10;
-
-        // Mouse attraction (subtle)
-        const dx = mouse.x - p.x;
-        const dy = mouse.y - p.y;
-        const md = Math.sqrt(dx*dx + dy*dy);
-        if (md < MOUSE_DIST) {
-          const force = (1 - md / MOUSE_DIST) * 0.015;
-          p.vx += dx * force;
-          p.vy += dy * force;
-        }
-
-        // Dampen velocity
-        p.vx *= 0.99;
-        p.vy *= 0.99;
-
-        // Draw particle
-        const alpha = 0.3 + Math.sin(p.pulse) * 0.15;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(57,255,20,${alpha})`;
-        ctx.fill();
-
-        // Glow for larger particles
-        if (p.r > 1.2) {
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.r * 3, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(57,255,20,${alpha * 0.08})`;
-          ctx.fill();
-        }
-
-        // Connect nearby particles
-        for (let j = i + 1; j < particles.length; j++) {
-          const p2 = particles[j];
-          const cx = p.x - p2.x;
-          const cy = p.y - p2.y;
-          const dist = Math.sqrt(cx*cx + cy*cy);
-          if (dist < CONNECT_DIST) {
-            const lineAlpha = (1 - dist / CONNECT_DIST) * 0.12;
-            ctx.beginPath();
-            ctx.moveTo(p.x, p.y);
-            ctx.lineTo(p2.x, p2.y);
-            ctx.strokeStyle = `rgba(57,255,20,${lineAlpha})`;
-            ctx.lineWidth = 0.5;
-            ctx.stroke();
-          }
-        }
-
-        // Connect to mouse
-        if (md < MOUSE_DIST) {
-          const lineAlpha = (1 - md / MOUSE_DIST) * 0.2;
-          ctx.beginPath();
-          ctx.moveTo(p.x, p.y);
-          ctx.lineTo(mouse.x, mouse.y);
-          ctx.strokeStyle = `rgba(57,255,20,${lineAlpha})`;
-          ctx.lineWidth = 0.5;
-          ctx.stroke();
-        }
+      ctx.strokeStyle = 'rgba(57,255,20,0.02)';
+      ctx.lineWidth = 0.5;
+      for (let x = 0; x <= w; x += GRID) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+      for (let y = 0; y <= h; y += GRID) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
       }
     }
-    requestAnimationFrame(draw);
+
+    resize();
+    window.addEventListener('resize', resize);
   })();
 
-  // ── Waveform ──
+  // ── Multi-layer waveform (EKG-style pulse) ──
   (function() {
     const canvas = $('waveform-canvas');
     if (!canvas) return;
@@ -1240,33 +2008,63 @@
     let w, h, phase = 0;
 
     function resize() {
-      w = canvas.width = canvas.parentElement.offsetWidth;
-      h = canvas.height = 40;
+      const parent = canvas.parentElement;
+      w = canvas.width = parent.offsetWidth;
+      h = canvas.height = parent.offsetHeight;
     }
     resize();
     window.addEventListener('resize', resize);
 
+    const waves = [
+      { freq: 0.015, amp: 0.25, speed: 0.02, alpha: 0.5, width: 1.5 },
+      { freq: 0.025, amp: 0.15, speed: 0.035, alpha: 0.3, width: 1 },
+      { freq: 0.04,  amp: 0.08, speed: 0.05, alpha: 0.15, width: 0.8 },
+    ];
+
     function draw() {
       requestAnimationFrame(draw);
       ctx.clearRect(0, 0, w, h);
-      ctx.strokeStyle = '#39ff14';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let x = 0; x < w; x++) {
-        const y = h/2 + Math.sin((x * 0.02) + phase) * 8 + Math.sin((x * 0.05) + phase * 1.5) * 4 + Math.sin((x * 0.01) + phase * 0.5) * 6;
-        x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      for (const wave of waves) {
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(57,255,20,${wave.alpha})`;
+        ctx.lineWidth = wave.width;
+        for (let x = 0; x < w; x++) {
+          const y = h/2 + Math.sin(x * wave.freq + phase * wave.speed * 60) * h * wave.amp
+                       + Math.sin(x * wave.freq * 2.3 + phase * wave.speed * 40) * h * wave.amp * 0.4;
+          x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
-      phase += 0.03;
+      phase += 0.016;
     }
     requestAnimationFrame(draw);
   })();
 
-  // ── Sidebar nav active state ──
+  // ── Nav active state sync (sidebar + top bar) ──
   document.querySelectorAll('.nav-item').forEach(item => {
     item.addEventListener('click', () => {
       document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
       item.classList.add('active');
+      // Sync top bar nav
+      const href = item.getAttribute('href');
+      document.querySelectorAll('.top-bar-nav-item').forEach(n => n.classList.remove('active'));
+      const match = document.querySelector(`.top-bar-nav-item[href="${href}"]`);
+      if (match) match.classList.add('active');
+    });
+  });
+  document.querySelectorAll('.top-bar-nav-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelectorAll('.top-bar-nav-item').forEach(n => n.classList.remove('active'));
+      item.classList.add('active');
+      // Sync sidebar nav
+      const href = item.getAttribute('href');
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      const match = document.querySelector(`.nav-item[href="${href}"]`);
+      if (match) match.classList.add('active');
+      // Scroll to section
+      const target = document.querySelector(href);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   });
 

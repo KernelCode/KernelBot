@@ -11,6 +11,8 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { loadavg, totalmem, freemem, cpus } from 'os';
 import { getLogger } from '../utils/logger.js';
+import { WORKER_TYPES } from '../swarm/worker-registry.js';
+import { TOOL_CATEGORIES } from '../tools/categories.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -106,6 +108,7 @@ export function startDashboard(deps) {
 
   function getConfigData() {
     const mask = (val) => val ? '●●●●●●●●' : 'NOT SET';
+    const has = (val) => !!val;
     return {
       orchestrator: {
         provider: config.orchestrator?.provider || 'anthropic',
@@ -139,6 +142,21 @@ export function startDashboard(deps) {
       },
       telegram: { allowed_users: config.telegram?.allowed_users?.length || 0 },
       bot: config.bot || {},
+      claude_code: {
+        model: config.claude_code?.model || 'default',
+        max_turns: config.claude_code?.max_turns,
+        timeout_seconds: config.claude_code?.timeout_seconds,
+        auth_mode: config.claude_code?.auth_mode || 'system',
+      },
+      integrations: {
+        telegram: has(config.telegram?.bot_token),
+        github: has(config.github?.token),
+        jira: has(config.jira?.api_token),
+        linkedin: has(config.linkedin?.access_token),
+        x: has(config.x?.consumer_key),
+        elevenlabs: has(config.elevenlabs?.api_key),
+        claude_code: has(config.claude_code?.api_key || config.claude_code?.oauth_token) || config.claude_code?.auth_mode === 'system',
+      },
     };
   }
 
@@ -153,12 +171,26 @@ export function startDashboard(deps) {
         duration: job.duration,
         llmCalls: job.llmCalls,
         toolCalls: job.toolCalls,
-        progress: job.progress?.slice(-5) || [],
+        progress: job.progress || [],
         lastThinking: job.lastThinking,
         createdAt: job.createdAt,
         startedAt: job.startedAt,
         completedAt: job.completedAt,
         chatId: job.chatId,
+        error: job.error,
+        context: job.context,
+        dependsOn: job.dependsOn || [],
+        timeoutMs: job.timeoutMs,
+        lastActivity: job.lastActivity,
+        structuredResult: job.structuredResult ? {
+          summary: job.structuredResult.summary,
+          status: job.structuredResult.status,
+          details: job.structuredResult.details,
+          artifacts: job.structuredResult.artifacts,
+          followUp: job.structuredResult.followUp,
+          toolsUsed: job.structuredResult.toolsUsed,
+          errors: job.structuredResult.errors,
+        } : null,
       });
     }
     return jobs.sort((a, b) => b.createdAt - a.createdAt);
@@ -183,20 +215,37 @@ export function startDashboard(deps) {
 
   function getLifeData() {
     try {
-      return lifeEngine.getStatus();
+      const status = lifeEngine.getStatus();
+      const state = lifeEngine._state || {};
+      const now = Date.now();
+      const scCfg = config.life?.self_coding || {};
+      const cooldowns = {
+        journal: state.lastJournalTime ? Math.max(0, 4 * 3600000 - (now - state.lastJournalTime)) : 0,
+        self_code: state.lastSelfCodeTime ? Math.max(0, (scCfg.cooldown_hours ?? 2) * 3600000 - (now - state.lastSelfCodeTime)) : 0,
+        code_review: state.lastCodeReviewTime ? Math.max(0, (scCfg.code_review_cooldown_hours ?? 4) * 3600000 - (now - state.lastCodeReviewTime)) : 0,
+        reflect: state.lastReflectTime ? Math.max(0, 4 * 3600000 - (now - state.lastReflectTime)) : 0,
+      };
+      let ideas = [];
+      try { ideas = lifeEngine._loadIdeas(); } catch { /* skip */ }
+      const weights = config.life?.activity_weights || {};
+      return { ...status, cooldowns, ideas: ideas.slice(-20), weights };
     } catch { return { status: 'unknown' }; }
   }
 
   function getMemoriesData() {
     try {
-      return memoryManager.getRecentEpisodic(48, 20);
+      return memoryManager.getRecentEpisodic(72, 30);
     } catch { return []; }
   }
 
   function getJournalData() {
     try {
-      return { content: journalManager.getToday() || '' };
-    } catch { return { content: '' }; }
+      return {
+        content: journalManager.getToday() || '',
+        recent: journalManager.getRecent(7),
+        dates: journalManager.list(30),
+      };
+    } catch { return { content: '', recent: [], dates: [] }; }
   }
 
   function getEvolutionData() {
@@ -204,9 +253,11 @@ export function startDashboard(deps) {
       return {
         stats: evolutionTracker.getStats(),
         active: evolutionTracker.getActiveProposal(),
-        recent: evolutionTracker.getRecentProposals(5),
+        recent: evolutionTracker.getRecentProposals(10),
+        lessons: evolutionTracker.getRecentLessons(15),
+        prsToCheck: evolutionTracker.getPRsToCheck().length,
       };
-    } catch { return { stats: {}, active: null, recent: [] }; }
+    } catch { return { stats: {}, active: null, recent: [], lessons: [], prsToCheck: 0 }; }
   }
 
   function getConversationsData() {
@@ -214,10 +265,16 @@ export function startDashboard(deps) {
       const summaries = [];
       for (const [chatId, messages] of conversationManager.conversations) {
         const last = messages.length > 0 ? messages[messages.length - 1] : null;
+        const skill = conversationManager.activeSkills?.get(chatId) || null;
+        const userMsgs = messages.filter(m => m.role === 'user').length;
+        const assistantMsgs = messages.filter(m => m.role === 'assistant').length;
         summaries.push({
           chatId,
           messageCount: messages.length,
+          userMessages: userMsgs,
+          assistantMessages: assistantMsgs,
           lastTimestamp: last?.timestamp || null,
+          activeSkill: skill,
         });
       }
       return summaries.sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
@@ -230,22 +287,67 @@ export function startDashboard(deps) {
       const active = characterManager.getCharacter(activeId);
       const all = characterManager.listCharacters();
       return {
-        active: active ? { id: activeId, name: active.name, emoji: active.emoji, type: active.type, tagline: active.tagline } : null,
-        characters: all.map(c => ({ id: c.id, name: c.name, emoji: c.emoji, type: c.type, tagline: c.tagline })),
+        active: active ? {
+          id: activeId, name: active.name, emoji: active.emoji,
+          type: active.type, tagline: active.tagline,
+          origin: active.origin, age: active.age,
+          lastActiveAt: active.lastActiveAt,
+        } : null,
+        characters: all.map(c => ({
+          id: c.id, name: c.name, emoji: c.emoji, type: c.type, tagline: c.tagline,
+        })),
       };
     } catch { return { active: null, characters: [] }; }
   }
 
   function getSharesData() {
     try {
-      return shareQueue.getPending(null, 20);
-    } catch { return []; }
+      return {
+        pending: shareQueue.getPending(null, 20),
+        shared: (shareQueue._data?.shared || []).slice(-15),
+        todayCount: shareQueue.getSharedTodayCount(),
+      };
+    } catch { return { pending: [], shared: [], todayCount: 0 }; }
   }
 
   function getSelfData() {
     try {
       return { content: selfManager.loadAll() };
     } catch { return { content: '' }; }
+  }
+
+  function getCapabilitiesData() {
+    const workers = {};
+    for (const [type, def] of Object.entries(WORKER_TYPES)) {
+      const toolNames = [];
+      for (const cat of def.categories) {
+        const tools = TOOL_CATEGORIES[cat];
+        if (tools) toolNames.push(...tools);
+      }
+      workers[type] = {
+        label: def.label,
+        emoji: def.emoji,
+        description: def.description,
+        timeout: def.timeout,
+        categories: def.categories,
+        tools: [...new Set(toolNames)],
+      };
+    }
+    const totalTools = new Set(Object.values(TOOL_CATEGORIES).flat()).size;
+    return { workers, categories: Object.keys(TOOL_CATEGORIES), totalTools };
+  }
+
+  function getKnowledgeData() {
+    try {
+      const data = memoryManager._loadSemantic();
+      return Object.entries(data).map(([topic, val]) => ({
+        topic,
+        summary: val.summary,
+        sources: val.sources || [],
+        relatedTopics: val.relatedTopics || [],
+        learnedAt: val.learnedAt,
+      })).sort((a, b) => (b.learnedAt || 0) - (a.learnedAt || 0));
+    } catch { return []; }
   }
 
   // --- Full snapshot for SSE ---
@@ -263,6 +365,8 @@ export function startDashboard(deps) {
       character: getCharacterData(),
       shares: getSharesData(),
       logs: parseLogs(tailLog(100)),
+      capabilities: getCapabilitiesData(),
+      knowledge: getKnowledgeData(),
     };
   }
 
@@ -347,6 +451,8 @@ export function startDashboard(deps) {
       '/api/logs': () => parseLogs(tailLog(100)),
       '/api/shares': getSharesData,
       '/api/self': getSelfData,
+      '/api/capabilities': getCapabilitiesData,
+      '/api/knowledge': getKnowledgeData,
     };
 
     if (routes[path]) {
