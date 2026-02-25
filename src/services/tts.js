@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { getLogger } from '../utils/logger.js';
@@ -8,6 +8,7 @@ import { getLogger } from '../utils/logger.js';
 const CACHE_DIR = join(homedir(), '.kernelbot', 'tts-cache');
 const DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'; // ElevenLabs "George" voice
 const MAX_TEXT_LENGTH = 5000; // ElevenLabs limit
+const MAX_CACHE_FILES = 100;  // Evict oldest entries when cache exceeds this count
 
 /**
  * Text-to-Speech service using ElevenLabs API.
@@ -90,6 +91,9 @@ export class TTSService {
       writeFileSync(cachedPath, audioBuffer);
       this.logger.info(`[TTS] Synthesized and cached: ${cachedPath} (${audioBuffer.length} bytes)`);
 
+      // Evict oldest cache entries if over the limit
+      this._evictCache();
+
       return cachedPath;
     } catch (err) {
       if (err.response) {
@@ -109,7 +113,33 @@ export class TTSService {
     return createHash('sha256').update(`${voiceId}:${text}`).digest('hex').slice(0, 16);
   }
 
-  /** Clear the TTS cache. */
+  /** Evict oldest cache entries when the cache exceeds MAX_CACHE_FILES. */
+  _evictCache() {
+    try {
+      const files = readdirSync(CACHE_DIR);
+      if (files.length <= MAX_CACHE_FILES) return;
+
+      // Sort by modification time (oldest first)
+      const sorted = files
+        .map((f) => {
+          const fullPath = join(CACHE_DIR, f);
+          try { return { name: f, mtime: statSync(fullPath).mtimeMs }; }
+          catch { return null; }
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.mtime - b.mtime);
+
+      const toRemove = sorted.length - MAX_CACHE_FILES;
+      for (let i = 0; i < toRemove; i++) {
+        try { unlinkSync(join(CACHE_DIR, sorted[i].name)); } catch {}
+      }
+      this.logger.info(`[TTS] Cache eviction: removed ${toRemove} oldest file(s), ${MAX_CACHE_FILES} remain`);
+    } catch {
+      // Cache dir may not exist yet
+    }
+  }
+
+  /** Clear the entire TTS cache. */
   clearCache() {
     try {
       const files = readdirSync(CACHE_DIR);

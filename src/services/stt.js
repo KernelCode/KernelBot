@@ -67,7 +67,10 @@ export class STTService {
         const result = await this._transcribeElevenLabs(filePath);
         if (result) return result;
       } catch (err) {
-        this.logger.warn(`[STT] ElevenLabs failed, trying fallback: ${err.message}`);
+        const detail = err.response
+          ? `API ${err.response.status}: ${JSON.stringify(err.response.data).slice(0, 200)}`
+          : err.message;
+        this.logger.warn(`[STT] ElevenLabs failed, trying fallback: ${detail}`);
       }
     }
 
@@ -76,7 +79,10 @@ export class STTService {
       try {
         return await this._transcribeWhisper(filePath);
       } catch (err) {
-        this.logger.error(`[STT] Whisper fallback also failed: ${err.message}`);
+        const detail = err.response
+          ? `API ${err.response.status}: ${JSON.stringify(err.response.data).slice(0, 200)}`
+          : err.message;
+        this.logger.error(`[STT] Whisper fallback also failed: ${detail}`);
       }
     }
 
