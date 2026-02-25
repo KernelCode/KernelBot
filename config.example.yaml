@@ -97,3 +97,7 @@ life:
   quiet_hours:
     start: 2                     # Hour to start quiet period (no activities)
     end: 6                       # Hour to end quiet period
+
+# Dashboard — optional cyberpunk terminal monitoring UI
+# dashboard:
+#   port: 3000    # HTTP port (omit or null to disable)

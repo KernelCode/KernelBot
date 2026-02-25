@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KERNEL // Terminal Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel-bg: #0d1117;
+    --panel-border: #1a2332;
+    --green: #00ff41;
+    --cyan: #00ffff;
+    --amber: #ffb000;
+    --red: #ff3333;
+    --magenta: #ff00ff;
+    --dim: #3a4a5a;
+    --text: #c0c8d0;
+    --text-bright: #e0e8f0;
+    --glow-green: 0 0 10px rgba(0,255,65,0.3);
+    --glow-cyan: 0 0 10px rgba(0,255,255,0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Fira Code', 'JetBrains Mono', 'Cascadia Code', 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-x: hidden;
+    min-height: 100vh;
+  }
+
+  /* Scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* CRT flicker */
+  @keyframes flicker {
+    0%, 95%, 100% { opacity: 1; }
+    96% { opacity: 0.92; }
+    97% { opacity: 0.98; }
+  }
+  body { animation: flicker 8s infinite; }
+
+  /* Matrix rain canvas */
+  #matrix-canvas {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 0;
+    opacity: 0.12;
+    pointer-events: none;
+  }
+
+  /* Main container */
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1800px;
+    margin: 0 auto;
+    padding: 12px;
+  }
+
+  /* Header */
+  .header {
+    text-align: center;
+    margin-bottom: 16px;
+    padding: 16px 0 8px;
+  }
+
+  .ascii-logo {
+    color: var(--cyan);
+    font-size: 10px;
+    line-height: 1.2;
+    text-shadow: var(--glow-cyan);
+    white-space: pre;
+    margin-bottom: 8px;
+  }
+
+  .status-bar {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 11px;
+    color: var(--dim);
+    padding: 6px 0;
+    border-top: 1px solid var(--panel-border);
+    border-bottom: 1px solid var(--panel-border);
+  }
+
+  .status-bar .label { color: var(--dim); }
+  .status-bar .value { color: var(--green); }
+  .status-bar .sep { color: var(--panel-border); }
+
+  .conn-dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--red);
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .conn-dot.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+  /* Dashboard grid */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  @media (max-width: 1200px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+  .grid .full-width { grid-column: 1 / -1; }
+
+  /* Panel */
+  .panel {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: rgba(0,255,255,0.03);
+    border-bottom: 1px solid var(--panel-border);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--cyan);
+    text-transform: uppercase;
+    cursor: default;
+    user-select: none;
+  }
+
+  .panel-header:hover {
+    animation: glitch 0.3s ease-in-out;
+  }
+
+  @keyframes glitch {
+    0% { transform: translate(0); }
+    20% { transform: translate(-2px, 1px); }
+    40% { transform: translate(2px, -1px); }
+    60% { transform: translate(-1px, -1px); }
+    80% { transform: translate(1px, 1px); }
+    100% { transform: translate(0); }
+  }
+
+  .panel-header .indicator {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 4px var(--cyan);
+  }
+
+  .panel-body {
+    padding: 8px 10px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .panel-body.tall { max-height: 450px; }
+
+  /* Scrollbar */
+  .panel-body::-webkit-scrollbar { width: 4px; }
+  .panel-body::-webkit-scrollbar-track { background: var(--bg); }
+  .panel-body::-webkit-scrollbar-thumb { background: var(--cyan); border-radius: 2px; }
+
+  /* Data rows */
+  .row { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid rgba(26,35,50,0.5); }
+  .row:last-child { border-bottom: none; }
+  .row .k { color: var(--dim); }
+  .row .v { color: var(--green); text-align: right; }
+
+  /* Progress bars */
+  .bar-track {
+    height: 10px;
+    background: rgba(0,255,65,0.08);
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 3px 0;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.5s ease;
+  }
+  .bar-fill.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .bar-fill.cyan { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+  .bar-fill.amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+  .bar-fill.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+  /* Status badges */
+  .badge {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 2px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+  .badge.running { background: rgba(0,255,255,0.15); color: var(--cyan); animation: pulse-cyan 2s infinite; }
+  .badge.completed { background: rgba(0,255,65,0.15); color: var(--green); }
+  .badge.failed { background: rgba(255,51,51,0.15); color: var(--red); }
+  .badge.cancelled { background: rgba(255,176,0,0.15); color: var(--amber); }
+  .badge.queued { background: rgba(58,74,90,0.3); color: var(--dim); }
+
+  @keyframes pulse-cyan {
+    0%, 100% { box-shadow: 0 0 2px var(--cyan); }
+    50% { box-shadow: 0 0 8px var(--cyan); }
+  }
+
+  /* Job table */
+  .job-row { padding: 5px 0; border-bottom: 1px solid rgba(26,35,50,0.5); }
+  .job-row:last-child { border-bottom: none; }
+  .job-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .job-id { color: var(--amber); font-weight: 600; }
+  .job-type { color: var(--magenta); }
+  .job-task { color: var(--text); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job-sub { color: var(--dim); font-size: 10px; margin-top: 2px; }
+
+  /* Log lines */
+  .log-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 1px 0; font-size: 11px; }
+  .log-line .ts { color: var(--dim); }
+  .log-line .lvl-error { color: var(--red); font-weight: 700; }
+  .log-line .lvl-warn { color: var(--amber); }
+  .log-line .lvl-info { color: var(--green); }
+  .log-line .lvl-debug { color: var(--dim); }
+  .log-line .msg { color: var(--text); }
+
+  /* Memory items */
+  .mem-item { padding: 3px 0; border-bottom: 1px solid rgba(26,35,50,0.3); }
+  .mem-item:last-child { border-bottom: none; }
+  .mem-time { color: var(--dim); font-size: 10px; }
+  .mem-type { font-size: 10px; font-weight: 600; }
+  .mem-type.interaction { color: var(--cyan); }
+  .mem-type.thought { color: var(--magenta); }
+  .mem-type.discovery { color: var(--amber); }
+  .mem-type.creation { color: var(--green); }
+  .mem-summary { color: var(--text); font-size: 11px; }
+
+  /* Share items */
+  .share-item { padding: 3px 0; border-bottom: 1px solid rgba(26,35,50,0.3); }
+  .share-pri.high { color: var(--cyan); }
+  .share-pri.medium { color: var(--green); }
+  .share-pri.low { color: var(--dim); }
+
+  /* Character */
+  .char-active { color: var(--cyan); font-size: 13px; margin-bottom: 6px; }
+  .char-item { color: var(--dim); font-size: 11px; padding: 1px 0; }
+  .char-item.active { color: var(--cyan); }
+
+  /* Conversation */
+  .conv-item { padding: 2px 0; display: flex; justify-content: space-between; border-bottom: 1px solid rgba(26,35,50,0.3); }
+  .conv-item .chat-id { color: var(--green); }
+  .conv-item .chat-id.life { color: var(--magenta); }
+
+  /* Automation */
+  .auto-item { padding: 4px 0; border-bottom: 1px solid rgba(26,35,50,0.3); }
+  .auto-name { color: var(--cyan); font-weight: 600; }
+  .auto-detail { color: var(--dim); font-size: 10px; }
+
+  /* Self / Journal scrollable markdown */
+  .md-content {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    color: var(--text);
+    font-size: 11px;
+  }
+  .md-content .ts-line { color: var(--cyan); }
+
+  /* Evolution */
+  .evo-stat { display: inline-block; margin-right: 12px; }
+  .evo-stat .num { color: var(--green); font-weight: 700; font-size: 14px; }
+  .evo-stat .lbl { color: var(--dim); font-size: 10px; }
+  .evo-proposal { padding: 4px 0; border-bottom: 1px solid rgba(26,35,50,0.3); }
+
+  /* Life engine bar chart */
+  .activity-bar { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  .activity-bar .name { width: 70px; text-align: right; color: var(--dim); font-size: 10px; }
+  .activity-bar .bar { flex: 1; height: 8px; background: rgba(0,255,65,0.08); border-radius: 2px; overflow: hidden; }
+  .activity-bar .fill { height: 100%; background: var(--green); border-radius: 2px; box-shadow: 0 0 4px var(--green); }
+  .activity-bar .count { width: 30px; color: var(--green); font-size: 10px; }
+
+  .empty-msg { color: var(--dim); font-style: italic; text-align: center; padding: 20px 0; }
+
+  /* Life status indicator */
+  .life-status { font-size: 14px; font-weight: 700; letter-spacing: 1px; margin-bottom: 8px; }
+  .life-status.active { color: var(--green); text-shadow: var(--glow-green); }
+  .life-status.paused { color: var(--amber); }
+  .life-status.idle { color: var(--dim); }
+</style>
+</head>
+<body>
+
+<canvas id="matrix-canvas"></canvas>
+
+<div class="container">
+  <!-- Header -->
+  <div class="header">
+    <pre class="ascii-logo">
+ ██╗  ██╗███████╗██████╗ ███╗   ██╗███████╗██╗
+ ██║ ██╔╝██╔════╝██╔══██╗████╗  ██║██╔════╝██║
+ █████╔╝ █████╗  ██████╔╝██╔██╗ ██║█████╗  ██║
+ ██╔═██╗ ██╔══╝  ██╔══██╗██║╚██╗██║██╔══╝  ██║
+ ██║  ██╗███████╗██║  ██║██║ ╚████║███████╗███████╗
+ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝
+    </pre>
+    <div class="status-bar">
+      <span><span class="conn-dot" id="conn-dot"></span><span class="label">LINK:</span> <span class="value" id="conn-status">CONNECTING</span></span>
+      <span class="sep">|</span>
+      <span><span class="label">STATUS:</span> <span class="value" id="hdr-status">ONLINE</span></span>
+      <span class="sep">|</span>
+      <span><span class="label">UPTIME:</span> <span class="value" id="hdr-uptime">--</span></span>
+      <span class="sep">|</span>
+      <span><span class="label">PID:</span> <span class="value" id="hdr-pid">--</span></span>
+      <span class="sep">|</span>
+      <span><span class="label">NODE:</span> <span class="value" id="hdr-node">--</span></span>
+      <span class="sep">|</span>
+      <span><span class="label">TIME:</span> <span class="value" id="hdr-clock">--</span></span>
+    </div>
+  </div>
+
+  <!-- Dashboard grid -->
+  <div class="grid">
+
+    <!-- SYS.STATUS -->
+    <div class="panel" id="p-system">
+      <div class="panel-header"><span class="indicator"></span>SYS.STATUS</div>
+      <div class="panel-body" id="system-body"></div>
+    </div>
+
+    <!-- NEURAL.CONFIG -->
+    <div class="panel" id="p-config">
+      <div class="panel-header"><span class="indicator"></span>NEURAL.CONFIG</div>
+      <div class="panel-body" id="config-body"></div>
+    </div>
+
+    <!-- ACTIVE.JOBS -->
+    <div class="panel" id="p-jobs">
+      <div class="panel-header"><span class="indicator"></span>ACTIVE.JOBS</div>
+      <div class="panel-body" id="jobs-body"></div>
+    </div>
+
+    <!-- AUTOMATIONS -->
+    <div class="panel" id="p-auto">
+      <div class="panel-header"><span class="indicator"></span>AUTOMATIONS</div>
+      <div class="panel-body" id="auto-body"></div>
+    </div>
+
+    <!-- LIFE.ENGINE -->
+    <div class="panel" id="p-life">
+      <div class="panel-header"><span class="indicator"></span>LIFE.ENGINE</div>
+      <div class="panel-body" id="life-body"></div>
+    </div>
+
+    <!-- EVOLUTION -->
+    <div class="panel" id="p-evo">
+      <div class="panel-header"><span class="indicator"></span>EVOLUTION</div>
+      <div class="panel-body" id="evo-body"></div>
+    </div>
+
+    <!-- MEMORY.BANK -->
+    <div class="panel" id="p-mem">
+      <div class="panel-header"><span class="indicator"></span>MEMORY.BANK</div>
+      <div class="panel-body" id="mem-body"></div>
+    </div>
+
+    <!-- JOURNAL.TODAY -->
+    <div class="panel" id="p-journal">
+      <div class="panel-header"><span class="indicator"></span>JOURNAL.TODAY</div>
+      <div class="panel-body" id="journal-body"></div>
+    </div>
+
+    <!-- SHARE.QUEUE -->
+    <div class="panel" id="p-shares">
+      <div class="panel-header"><span class="indicator"></span>SHARE.QUEUE</div>
+      <div class="panel-body" id="shares-body"></div>
+    </div>
+
+    <!-- CHARACTER -->
+    <div class="panel" id="p-char">
+      <div class="panel-header"><span class="indicator"></span>CHARACTER</div>
+      <div class="panel-body" id="char-body"></div>
+    </div>
+
+    <!-- CONVERSATIONS -->
+    <div class="panel" id="p-conv">
+      <div class="panel-header"><span class="indicator"></span>CONVERSATIONS</div>
+      <div class="panel-body" id="conv-body"></div>
+    </div>
+
+    <!-- SELF.AWARENESS -->
+    <div class="panel" id="p-self">
+      <div class="panel-header"><span class="indicator"></span>SELF.AWARENESS</div>
+      <div class="panel-body" id="self-body"></div>
+    </div>
+
+    <!-- LOG.STREAM -->
+    <div class="panel full-width" id="p-logs">
+      <div class="panel-header"><span class="indicator"></span>LOG.STREAM</div>
+      <div class="panel-body tall" id="logs-body"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function() {
+  // --- Utility functions ---
+  function esc(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function formatDuration(seconds) {
+    if (seconds == null || seconds < 0) return '--';
+    const s = Math.floor(seconds);
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+    const h = Math.floor(s/3600);
+    const m = Math.floor((s%3600)/60);
+    return h + 'h ' + m + 'm';
+  }
+
+  function timeAgo(ts) {
+    if (!ts) return 'never';
+    const diff = Date.now() - ts;
+    const s = Math.floor(diff/1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s/60) + 'm ago';
+    if (s < 86400) return Math.floor(s/3600) + 'h ago';
+    return Math.floor(s/86400) + 'd ago';
+  }
+
+  function formatBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+    return (b/1073741824).toFixed(2) + ' GB';
+  }
+
+  function barColor(pct) {
+    if (pct < 50) return 'green';
+    if (pct < 80) return 'amber';
+    return 'red';
+  }
+
+  function makeBar(label, pct, color) {
+    return `<div class="row"><span class="k">${esc(label)}</span><span class="v">${pct.toFixed(1)}%</span></div>
+<div class="bar-track"><div class="bar-fill ${color || barColor(pct)}" style="width:${Math.min(pct,100)}%"></div></div>`;
+  }
+
+  // --- Element cache ---
+  const $ = (id) => document.getElementById(id);
+
+  // --- Real-time clock ---
+  setInterval(() => {
+    const now = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    $('hdr-clock').textContent = now.getFullYear() + '.' + pad(now.getMonth()+1) + '.' + pad(now.getDate()) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+  }, 1000);
+
+  // --- Config & Self (loaded once) ---
+  let configData = null;
+  let selfData = null;
+
+  fetch('/api/config').then(r=>r.json()).then(d => { configData = d; renderConfig(d); });
+  fetch('/api/self').then(r=>r.json()).then(d => { selfData = d; renderSelf(d); });
+
+  // --- SSE connection ---
+  let reconnectDelay = 1000;
+
+  function connectSSE() {
+    const es = new EventSource('/events');
+
+    es.onopen = () => {
+      reconnectDelay = 1000;
+      $('conn-dot').classList.add('connected');
+      $('conn-status').textContent = 'ONLINE';
+    };
+
+    es.onmessage = (evt) => {
+      try {
+        const snap = JSON.parse(evt.data);
+        renderSnapshot(snap);
+      } catch(e) { console.warn('SSE parse error', e); }
+    };
+
+    es.onerror = () => {
+      es.close();
+      $('conn-dot').classList.remove('connected');
+      $('conn-status').textContent = 'RECONNECTING';
+      setTimeout(connectSSE, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 1.5, 15000);
+    };
+  }
+
+  connectSSE();
+
+  // --- Render functions ---
+
+  function renderSnapshot(snap) {
+    renderSystem(snap.system);
+    renderJobs(snap.jobs);
+    renderAutomations(snap.automations);
+    renderLife(snap.life);
+    renderMemories(snap.memories);
+    renderJournal(snap.journal);
+    renderEvolution(snap.evolution);
+    renderConversations(snap.conversations);
+    renderCharacter(snap.character);
+    renderShares(snap.shares);
+    renderLogs(snap.logs);
+  }
+
+  function renderSystem(sys) {
+    if (!sys) return;
+    $('hdr-uptime').textContent = formatDuration(sys.uptime);
+    $('hdr-pid').textContent = sys.pid;
+    $('hdr-node').textContent = sys.nodeVersion;
+
+    const cpuMax = sys.cpu.cores;
+    const loadPct1 = (sys.cpu.load1 / cpuMax * 100);
+    const loadPct5 = (sys.cpu.load5 / cpuMax * 100);
+    const loadPct15 = (sys.cpu.load15 / cpuMax * 100);
+    const ramPct = parseFloat(sys.ram.percent);
+
+    let html = '';
+    html += makeBar('CPU 1m (' + sys.cpu.load1.toFixed(2) + '/' + cpuMax + ')', loadPct1);
+    html += makeBar('CPU 5m (' + sys.cpu.load5.toFixed(2) + '/' + cpuMax + ')', loadPct5);
+    html += makeBar('CPU 15m (' + sys.cpu.load15.toFixed(2) + '/' + cpuMax + ')', loadPct15);
+    html += makeBar('RAM (' + formatBytes(sys.ram.used) + '/' + formatBytes(sys.ram.total) + ')', ramPct);
+    html += `<div class="row"><span class="k">Heap</span><span class="v">${formatBytes(sys.process.heap)} / ${formatBytes(sys.process.heapTotal)}</span></div>`;
+    html += `<div class="row"><span class="k">RSS</span><span class="v">${formatBytes(sys.process.rss)}</span></div>`;
+    html += `<div class="row"><span class="k">Uptime</span><span class="v">${formatDuration(sys.uptime)}</span></div>`;
+    $('system-body').innerHTML = html;
+  }
+
+  function renderConfig(cfg) {
+    if (!cfg) return;
+    let html = '';
+    html += `<div class="row"><span class="k">Orch Provider</span><span class="v">${esc(cfg.orchestrator.provider)}</span></div>`;
+    html += `<div class="row"><span class="k">Orch Model</span><span class="v">${esc(cfg.orchestrator.model)}</span></div>`;
+    html += `<div class="row"><span class="k">Orch Key</span><span class="v">${esc(cfg.orchestrator.api_key)}</span></div>`;
+    html += `<div class="row"><span class="k">Brain Provider</span><span class="v">${esc(cfg.brain.provider)}</span></div>`;
+    html += `<div class="row"><span class="k">Brain Model</span><span class="v">${esc(cfg.brain.model)}</span></div>`;
+    html += `<div class="row"><span class="k">Brain Key</span><span class="v">${esc(cfg.brain.api_key)}</span></div>`;
+    html += `<div class="row"><span class="k">Max Tool Depth</span><span class="v">${cfg.brain.max_tool_depth || '--'}</span></div>`;
+    if (cfg.swarm) {
+      html += `<div class="row"><span class="k">Max Jobs</span><span class="v">${cfg.swarm.max_concurrent_jobs || '--'}</span></div>`;
+      html += `<div class="row"><span class="k">Job Timeout</span><span class="v">${cfg.swarm.job_timeout_seconds || '--'}s</span></div>`;
+    }
+    if (cfg.life) {
+      html += `<div class="row"><span class="k">Life</span><span class="v">${cfg.life.enabled ? 'ENABLED' : 'DISABLED'}</span></div>`;
+      if (cfg.life.self_coding) {
+        html += `<div class="row"><span class="k">Self-Coding</span><span class="v">${cfg.life.self_coding.enabled ? 'ON' : 'OFF'}</span></div>`;
+      }
+    }
+    html += `<div class="row"><span class="k">Allowed Users</span><span class="v">${cfg.telegram.allowed_users}</span></div>`;
+    $('config-body').innerHTML = html;
+  }
+
+  function renderJobs(jobs) {
+    if (!jobs || jobs.length === 0) {
+      $('jobs-body').innerHTML = '<div class="empty-msg">No jobs</div>';
+      return;
+    }
+    let html = '';
+    for (const j of jobs) {
+      html += `<div class="job-row">
+<div class="job-meta">
+  <span class="job-id">${esc(j.id)}</span>
+  <span class="job-type">${esc(j.type)}</span>
+  <span class="badge ${j.status}">${j.status.toUpperCase()}</span>
+  <span style="color:var(--dim)">${formatDuration(j.duration)}</span>
+  <span style="color:var(--dim)">LLM:${j.llmCalls || 0} T:${j.toolCalls || 0}</span>
+</div>
+<div class="job-task">${esc((j.task||'').slice(0,120))}</div>`;
+      if (j.lastThinking) {
+        html += `<div class="job-sub">💭 ${esc(j.lastThinking.slice(0,100))}</div>`;
+      }
+      if (j.progress && j.progress.length > 0) {
+        html += `<div class="job-sub">▸ ${esc(j.progress[j.progress.length-1])}</div>`;
+      }
+      html += '</div>';
+    }
+    $('jobs-body').innerHTML = html;
+  }
+
+  function renderAutomations(autos) {
+    if (!autos || autos.length === 0) {
+      $('auto-body').innerHTML = '<div class="empty-msg">No automations</div>';
+      return;
+    }
+    let html = '';
+    for (const a of autos) {
+      const status = a.enabled ? '<span style="color:var(--green)">ENABLED</span>' : '<span style="color:var(--amber)">PAUSED</span>';
+      const sched = a.schedule ? (a.schedule.expression || a.schedule.type + (a.schedule.minutes ? ' ' + a.schedule.minutes + 'm' : '')) : '--';
+      html += `<div class="auto-item">
+<div><span class="auto-name">${esc(a.name)}</span> ${status}</div>
+<div class="auto-detail">Schedule: ${esc(sched)} | Runs: ${a.runCount} | Next: ${a.nextRun ? timeAgo(a.nextRun).replace(' ago','') : '--'}</div>`;
+      if (a.lastError) html += `<div class="auto-detail" style="color:var(--red)">ERR: ${esc(a.lastError.slice(0,80))}</div>`;
+      html += '</div>';
+    }
+    $('auto-body').innerHTML = html;
+  }
+
+  function renderLife(life) {
+    if (!life || life.status === 'unknown') {
+      $('life-body').innerHTML = '<div class="empty-msg">Life engine unavailable</div>';
+      return;
+    }
+    let html = '';
+    const statusClass = life.paused ? 'paused' : (life.status === 'active' ? 'active' : 'idle');
+    html += `<div class="life-status ${statusClass}">${(life.paused ? 'PAUSED' : life.status || 'IDLE').toUpperCase()}</div>`;
+    html += `<div class="row"><span class="k">Total Activities</span><span class="v">${life.totalActivities || 0}</span></div>`;
+    html += `<div class="row"><span class="k">Last Activity</span><span class="v">${esc(life.lastActivity || 'none')} (${esc(life.lastActivityAgo || 'never')})</span></div>`;
+
+    if (life.activityCounts) {
+      const counts = life.activityCounts;
+      const max = Math.max(1, ...Object.values(counts));
+      html += '<div style="margin-top:6px">';
+      for (const [name, count] of Object.entries(counts)) {
+        const pct = (count / max * 100).toFixed(0);
+        html += `<div class="activity-bar">
+<span class="name">${esc(name)}</span>
+<span class="bar"><span class="fill" style="width:${pct}%"></span></span>
+<span class="count">${count}</span>
+</div>`;
+      }
+      html += '</div>';
+    }
+    $('life-body').innerHTML = html;
+  }
+
+  function renderEvolution(evo) {
+    if (!evo) { $('evo-body').innerHTML = '<div class="empty-msg">No data</div>'; return; }
+    let html = '';
+    if (evo.stats) {
+      const s = evo.stats;
+      html += '<div style="margin-bottom:8px">';
+      html += `<span class="evo-stat"><span class="num">${s.totalProposals||0}</span> <span class="lbl">TOTAL</span></span>`;
+      html += `<span class="evo-stat"><span class="num" style="color:var(--green)">${s.merged||0}</span> <span class="lbl">MERGED</span></span>`;
+      html += `<span class="evo-stat"><span class="num" style="color:var(--amber)">${s.rejected||0}</span> <span class="lbl">REJECTED</span></span>`;
+      html += `<span class="evo-stat"><span class="num" style="color:var(--red)">${s.failed||0}</span> <span class="lbl">FAILED</span></span>`;
+      html += `<span class="evo-stat"><span class="num" style="color:var(--cyan)">${(s.successRate||0).toFixed(0)}%</span> <span class="lbl">SUCCESS</span></span>`;
+      html += '</div>';
+    }
+    if (evo.active) {
+      const a = evo.active;
+      html += `<div class="evo-proposal" style="border-left:2px solid var(--cyan);padding-left:6px">`;
+      html += `<div style="color:var(--cyan);font-weight:600">ACTIVE: ${esc(a.status)}</div>`;
+      html += `<div style="color:var(--text);font-size:11px">${esc(a.trigger||'')}</div>`;
+      if (a.branch) html += `<div style="color:var(--amber);font-size:10px">Branch: ${esc(a.branch)}</div>`;
+      if (a.filesChanged?.length) html += `<div style="color:var(--dim);font-size:10px">Files: ${a.filesChanged.length}</div>`;
+      html += '</div>';
+    }
+    if (evo.recent?.length > 0) {
+      html += '<div style="margin-top:6px;color:var(--dim);font-size:10px;letter-spacing:0.5px">RECENT</div>';
+      for (const p of evo.recent) {
+        html += `<div class="evo-proposal">
+<span class="badge ${p.status === 'merged' ? 'completed' : p.status === 'failed' ? 'failed' : p.status === 'rejected' ? 'cancelled' : 'queued'}">${esc(p.status)}</span>
+<span style="color:var(--text);font-size:11px;margin-left:4px">${esc((p.trigger||'').slice(0,60))}</span>
+<span style="color:var(--dim);font-size:10px;margin-left:4px">${timeAgo(p.createdAt)}</span>
+</div>`;
+      }
+    }
+    if (!evo.stats?.totalProposals && !evo.active && (!evo.recent || evo.recent.length === 0)) {
+      html = '<div class="empty-msg">No evolution data</div>';
+    }
+    $('evo-body').innerHTML = html;
+  }
+
+  function renderMemories(mems) {
+    if (!mems || mems.length === 0) {
+      $('mem-body').innerHTML = '<div class="empty-msg">No recent memories</div>';
+      return;
+    }
+    let html = '';
+    for (const m of mems) {
+      const typeClass = m.type || 'interaction';
+      html += `<div class="mem-item">
+<span class="mem-time">${timeAgo(m.timestamp)}</span>
+<span class="mem-type ${esc(typeClass)}">${esc(m.type||'')}</span>
+<div class="mem-summary">${esc((m.summary||'').slice(0,120))}</div>
+</div>`;
+    }
+    $('mem-body').innerHTML = html;
+  }
+
+  function renderJournal(j) {
+    if (!j || !j.content) {
+      $('journal-body').innerHTML = '<div class="empty-msg">No journal entry today</div>';
+      return;
+    }
+    // Highlight timestamps in journal
+    const escaped = esc(j.content);
+    const highlighted = escaped.replace(/(\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM))?)/gi, '<span class="ts-line">$1</span>');
+    $('journal-body').innerHTML = `<div class="md-content">${highlighted}</div>`;
+  }
+
+  function renderShares(shares) {
+    if (!shares || shares.length === 0) {
+      $('shares-body').innerHTML = '<div class="empty-msg">No pending shares</div>';
+      return;
+    }
+    let html = '';
+    for (const s of shares) {
+      const pri = s.priority || 'low';
+      html += `<div class="share-item">
+<span class="share-pri ${esc(pri)}">[${pri.toUpperCase()}]</span>
+<span style="color:var(--dim);font-size:10px">${esc(s.source||'')} · ${timeAgo(s.createdAt)}</span>
+<div style="color:var(--text);font-size:11px">${esc((s.content||'').slice(0,120))}</div>
+</div>`;
+    }
+    $('shares-body').innerHTML = html;
+  }
+
+  function renderCharacter(ch) {
+    if (!ch) { $('char-body').innerHTML = '<div class="empty-msg">No data</div>'; return; }
+    let html = '';
+    if (ch.active) {
+      html += `<div class="char-active">${esc(ch.active.emoji||'')} ${esc(ch.active.name)} <span style="color:var(--dim);font-size:11px">${esc(ch.active.type||'')}</span></div>`;
+      if (ch.active.tagline) html += `<div style="color:var(--text);font-size:11px;margin-bottom:6px;font-style:italic">${esc(ch.active.tagline)}</div>`;
+    }
+    if (ch.characters?.length > 0) {
+      for (const c of ch.characters) {
+        const isActive = ch.active && c.id === ch.active.id;
+        html += `<div class="char-item ${isActive ? 'active' : ''}">${esc(c.emoji||'')} ${esc(c.name)} <span style="color:var(--dim)">${esc(c.type||'')}</span></div>`;
+      }
+    }
+    $('char-body').innerHTML = html;
+  }
+
+  function renderConversations(convs) {
+    if (!convs || convs.length === 0) {
+      $('conv-body').innerHTML = '<div class="empty-msg">No conversations</div>';
+      return;
+    }
+    let html = '';
+    for (const c of convs) {
+      const isLife = c.chatId === '__life__';
+      html += `<div class="conv-item">
+<span class="chat-id ${isLife ? 'life' : ''}">${esc(c.chatId)}</span>
+<span style="color:var(--dim)">${c.messageCount} msgs · ${timeAgo(c.lastTimestamp)}</span>
+</div>`;
+    }
+    $('conv-body').innerHTML = html;
+  }
+
+  function renderSelf(s) {
+    if (!s || !s.content) {
+      $('self-body').innerHTML = '<div class="empty-msg">No self-awareness data</div>';
+      return;
+    }
+    $('self-body').innerHTML = `<div class="md-content">${esc(s.content)}</div>`;
+  }
+
+  function renderLogs(logs) {
+    if (!logs || logs.length === 0) {
+      $('logs-body').innerHTML = '<div class="empty-msg">No logs</div>';
+      return;
+    }
+    const body = $('logs-body');
+    const wasAtBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 20;
+
+    let html = '';
+    for (const l of logs) {
+      const lvl = (l.level || 'info').toLowerCase();
+      const ts = l.timestamp ? l.timestamp.replace(/^.*T/, '').replace(/\..*$/, '') : '';
+      html += `<div class="log-line"><span class="ts">[${esc(ts)}]</span> <span class="lvl-${lvl}">${esc(lvl.toUpperCase().padEnd(5))}</span> <span class="msg">${esc(l.message)}</span></div>`;
+    }
+    body.innerHTML = html;
+
+    if (wasAtBottom) {
+      body.scrollTop = body.scrollHeight;
+    }
+  }
+
+  // --- Matrix rain ---
+  (function initMatrix() {
+    const canvas = $('matrix-canvas');
+    const ctx = canvas.getContext('2d');
+    let w, h, columns, drops;
+    const chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789';
+    const fontSize = 14;
+    let lastFrame = 0;
+    const frameInterval = 1000 / 15; // ~15fps
+
+    function resize() {
+      w = canvas.width = window.innerWidth;
+      h = canvas.height = window.innerHeight;
+      columns = Math.floor(w / fontSize);
+      drops = new Array(columns).fill(1);
+    }
+
+    resize();
+    window.addEventListener('resize', resize);
+
+    function draw(now) {
+      requestAnimationFrame(draw);
+      if (now - lastFrame < frameInterval) return;
+      lastFrame = now;
+
+      ctx.fillStyle = 'rgba(10, 10, 10, 0.05)';
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = '#00ff41';
+      ctx.font = fontSize + 'px monospace';
+
+      for (let i = 0; i < columns; i++) {
+        const char = chars[Math.floor(Math.random() * chars.length)];
+        ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+        if (drops[i] * fontSize > h && Math.random() > 0.975) {
+          drops[i] = 0;
+        }
+        drops[i]++;
+      }
+    }
+
+    requestAnimationFrame(draw);
+  })();
+
+})();
+</script>
+</body>
+</html>
