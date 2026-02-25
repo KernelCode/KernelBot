@@ -100,4 +100,5 @@ life:
 
 # Dashboard — optional cyberpunk terminal monitoring UI
 # dashboard:
-#   port: 3000    # HTTP port (omit or null to disable)
+#   enabled: false   # Auto-start dashboard on boot (default: false)
+#   port: 3000       # HTTP port for the dashboard

@@ -61,6 +61,10 @@ const DEFAULTS = {
     max_history: 50,
     recent_window: 10,
   },
+  dashboard: {
+    enabled: false,
+    port: 3000,
+  },
   linkedin: {},
   x: {},
 };
