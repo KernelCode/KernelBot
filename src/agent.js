@@ -541,7 +541,7 @@ export class OrchestratorAgent {
 
       const msg = `❌ **${label} failed** (\`${job.id}\`): ${job.error}`;
       this.conversationManager.addMessage(convKey, 'assistant', msg);
-      this._sendUpdate(chatId, msg);
+      this._sendUpdate(chatId, msg).catch(() => {});
     });
 
     this.jobManager.on('job:cancelled', (job) => {
@@ -552,7 +552,7 @@ export class OrchestratorAgent {
       logger.info(`[Orchestrator] Job cancelled event: ${job.id} [${job.workerType}] in chat ${chatId}`);
 
       const msg = `🚫 **${label} cancelled** (\`${job.id}\`)`;
-      this._sendUpdate(chatId, msg);
+      this._sendUpdate(chatId, msg).catch(() => {});
     });
   }
 

@@ -38,7 +38,8 @@ export class CharacterManager {
       try {
         this._registry = JSON.parse(readFileSync(REGISTRY_FILE, 'utf-8'));
         logger.debug(`[CharacterManager] Loaded registry: ${Object.keys(this._registry.characters).length} characters`);
-      } catch {
+      } catch (err) {
+        logger.warn(`[CharacterManager] Failed to parse registry — resetting to defaults: ${err.message}`);
         this._registry = { ...DEFAULT_REGISTRY, characters: {} };
       }
       return;
@@ -59,7 +60,12 @@ export class CharacterManager {
   }
 
   _save() {
-    writeFileSync(REGISTRY_FILE, JSON.stringify(this._registry, null, 2), 'utf-8');
+    const logger = getLogger();
+    try {
+      writeFileSync(REGISTRY_FILE, JSON.stringify(this._registry, null, 2), 'utf-8');
+    } catch (err) {
+      logger.error(`[CharacterManager] Failed to save registry: ${err.message}`);
+    }
   }
 
   // ── Migration ────────────────────────────────────────────────
