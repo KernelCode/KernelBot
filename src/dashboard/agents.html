@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KERNEL // Agent Topology</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="agents.css">
+</head>
+<body>
+
+<canvas id="particle-canvas"></canvas>
+<div class="scanlines"></div>
+
+<!-- ═══════ SIDEBAR ═══════ -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <svg viewBox="0 0 32 32" shape-rendering="crispEdges">
+      <path fill="rgba(57,255,20,0.35)" d="M10,2h10v2h-10z M8,4h2v2h-2z M6,6h2v4h-2z M4,10h2v8h-2z M6,18h2v2h-2z M8,20h2v2h-2z M10,22h14v2h-14z M24,18h2v4h-2z M26,8h2v10h-2z M24,6h2v2h-2z"/>
+      <path fill="rgba(57,255,20,0.6)" d="M12,8h8v2h-8z M10,10h2v10h-2z M20,10h2v6h-2z M18,18h2v2h-2z M12,20h6v2h-6z"/>
+      <path fill="#39ff14" d="M14,14h4v2h-2v2h-2z"/>
+    </svg>
+  </div>
+
+  <div class="sidebar-nav">
+    <a class="nav-item" href="/" title="Dashboard">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      <span class="nav-label">DASH</span>
+    </a>
+    <a class="nav-item active" href="/agents.html" title="Agents">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v4M7.5 17.2l3-4.2M16.5 17.2l-3-4.2"/></svg>
+      <span class="nav-label">AGENTS</span>
+    </a>
+  </div>
+
+  <!-- Sidebar mini gauges -->
+  <div class="sidebar-gauges">
+    <div class="mini-gauge" id="sb-cpu">
+      <svg viewBox="0 0 38 38"><circle class="track" cx="19" cy="19" r="16"/><circle class="fill" cx="19" cy="19" r="16" stroke-dasharray="100.5" stroke-dashoffset="100.5"/></svg>
+      <div class="mini-gauge-label"><span class="val">--%</span><span class="lbl">CPU</span></div>
+    </div>
+    <div class="mini-gauge" id="sb-ram">
+      <svg viewBox="0 0 38 38"><circle class="track" cx="19" cy="19" r="16"/><circle class="fill" cx="19" cy="19" r="16" stroke-dasharray="100.5" stroke-dashoffset="100.5"/></svg>
+      <div class="mini-gauge-label"><span class="val">--%</span><span class="lbl">RAM</span></div>
+    </div>
+    <div class="sidebar-conn connected" id="conn-dot"></div>
+  </div>
+</nav>
+
+<!-- ═══════ TOP BAR ═══════ -->
+<header class="top-bar">
+  <div class="top-bar-left">
+    <span class="top-bar-title">KernelBot</span>
+    <span class="top-bar-sep">//</span>
+    <span class="top-bar-nav">
+      <a class="top-bar-nav-item" href="/">DASHBOARD</a>
+      <a class="top-bar-nav-item active" href="/agents.html">AGENTS</a>
+    </span>
+  </div>
+  <div class="top-bar-right">
+    <span class="top-bar-conn" id="top-conn"></span>
+    <span><span class="val" id="hdr-status">ONLINE</span></span>
+    <span class="sep">//</span>
+    <span>UP <span class="val" id="hdr-uptime">--</span></span>
+    <span class="sep">//</span>
+    <span class="val" id="hdr-clock">--</span>
+  </div>
+</header>
+
+<!-- ═══════ RIGHT BAR ═══════ -->
+<aside class="right-bar">
+  <div class="right-stat" title="Running Jobs">
+    <span class="r-val zero" id="rb-jobs">0</span>
+    <span class="r-lbl">RUNNING</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Total Jobs">
+    <span class="r-val zero" id="rb-total-jobs">0</span>
+    <span class="r-lbl">TOTAL</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Completed">
+    <span class="r-val zero" id="rb-completed">0</span>
+    <span class="r-lbl">DONE</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Failed">
+    <span class="r-val zero" id="rb-failed">0</span>
+    <span class="r-lbl">FAIL</span>
+  </div>
+  <div class="right-divider"></div>
+  <div class="right-stat" title="Worker Types">
+    <span class="r-val" id="rb-workers">6</span>
+    <span class="r-lbl">TYPES</span>
+  </div>
+  <div class="right-bar-clock" id="rb-clock">--:--</div>
+</aside>
+
+<!-- ═══════ MAIN ═══════ -->
+<div class="main">
+
+  <!-- Hero bar -->
+  <div class="hero-bar">
+    <canvas id="waveform-canvas"></canvas>
+    <div class="hero-pulse">
+      <div class="pulse-stat">
+        <span class="pulse-label">ORCHESTRATOR</span>
+        <span class="pulse-val" id="pulse-orch">--</span>
+      </div>
+      <div class="pulse-stat">
+        <span class="pulse-label">WORKER BRAIN</span>
+        <span class="pulse-val" id="pulse-brain">--</span>
+      </div>
+      <div class="pulse-stat">
+        <span class="pulse-label">ACTIVE JOBS</span>
+        <span class="pulse-val idle" id="pulse-jobs">0</span>
+      </div>
+      <div class="pulse-stat">
+        <span class="pulse-label">WORKER TYPES</span>
+        <span class="pulse-val" id="pulse-workers">6</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats summary bar -->
+  <div class="agents-stats-bar" id="agents-stats-bar">
+    <div class="agents-stat"><span class="agents-stat-val" id="stat-running">0</span><span class="agents-stat-lbl">RUNNING</span></div>
+    <div class="agents-stat"><span class="agents-stat-val" id="stat-queued">0</span><span class="agents-stat-lbl">QUEUED</span></div>
+    <div class="agents-stat"><span class="agents-stat-val completed" id="stat-completed">0</span><span class="agents-stat-lbl">COMPLETED</span></div>
+    <div class="agents-stat"><span class="agents-stat-val failed" id="stat-failed">0</span><span class="agents-stat-lbl">FAILED</span></div>
+    <div class="agents-stat"><span class="agents-stat-val" id="stat-total-tools">0</span><span class="agents-stat-lbl">TOTAL TOOLS</span></div>
+  </div>
+
+  <!-- Workflow container -->
+  <div class="workflow-container" id="workflow-container">
+    <svg class="workflow-svg" id="workflow-svg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 3 L 0 6 z" fill="rgba(57,255,20,0.4)"/>
+        </marker>
+        <marker id="arrow-active" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 3 L 0 6 z" fill="#39ff14"/>
+        </marker>
+      </defs>
+    </svg>
+    <div id="workflow-nodes"></div>
+  </div>
+
+</div>
+
+<!-- Detail slide-out panel -->
+<div class="detail-panel" id="detail-panel">
+  <div class="detail-panel-header">
+    <span class="detail-panel-title" id="detail-title">--</span>
+    <span class="detail-panel-close" id="detail-close">&times;</span>
+  </div>
+  <div class="detail-panel-body" id="detail-body"></div>
+</div>
+
+<!-- Scrolling log ticker (sticky bottom) -->
+<div class="log-ticker" id="log-ticker">
+  <div class="ticker-label"><span class="dot-pulse"></span>LIVE</div>
+  <div class="ticker-track" id="ticker-track"></div>
+</div>
+
+<script src="shared.js"></script>
+<script src="agents.js"></script>
+</body>
+</html>

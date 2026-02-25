@@ -7,7 +7,7 @@
 
 import { createServer } from 'http';
 import { readFileSync, statSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { loadavg, totalmem, freemem, cpus } from 'os';
 import { getLogger } from '../utils/logger.js';
@@ -39,16 +39,34 @@ export function startDashboard(deps) {
 
   const logger = getLogger();
 
-  // --- Static file caching ---
-  let cachedHtml = null;
-  const htmlPath = join(__dirname, 'index.html');
+  // --- Static file serving ---
+  const MIME_TYPES = {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.json': 'application/json',
+  };
 
-  function getHtml() {
-    // Re-read on each request in case we're developing, but cache in production
-    if (!cachedHtml) {
-      cachedHtml = readFileSync(htmlPath, 'utf-8');
+  function serveStaticFile(res, filePath) {
+    // Path traversal prevention
+    const resolved = join(__dirname, filePath);
+    if (!resolved.startsWith(__dirname)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Forbidden');
+      return true;
     }
-    return cachedHtml;
+    try {
+      const content = readFileSync(resolved);
+      const ext = extname(resolved);
+      const mime = MIME_TYPES[ext] || 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': mime });
+      res.end(content);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // --- Log tail ---
@@ -417,8 +435,13 @@ export function startDashboard(deps) {
 
     // Serve index.html
     if (path === '/' || path === '/index.html') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(getHtml());
+      serveStaticFile(res, 'index.html');
+      return;
+    }
+
+    // Serve agents page
+    if (path === '/agents' || path === '/agents.html') {
+      serveStaticFile(res, 'agents.html');
       return;
     }
 
@@ -463,6 +486,12 @@ export function startDashboard(deps) {
         res.end(JSON.stringify({ error: err.message }));
       }
       return;
+    }
+
+    // Static files (.css, .js, etc.)
+    if (/^\/([\w.-]+\.(css|js|svg|png))$/.test(path)) {
+      const fileName = path.slice(1);
+      if (serveStaticFile(res, fileName)) return;
     }
 
     // 404
