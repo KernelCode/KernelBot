@@ -499,20 +499,34 @@ export class OrchestratorAgent {
         if (summary) {
           logger.debug(`[Orchestrator] Job ${job.id} summary ready (${summary.length} chars) — delivering to user`);
           this.conversationManager.addMessage(convKey, 'assistant', summary);
-          await this._sendUpdate(chatId, summary, { editMessageId: notifyMsgId });
+          // Try to edit the notification, fall back to new message if edit fails
+          try {
+            await this._sendUpdate(chatId, summary, { editMessageId: notifyMsgId });
+          } catch {
+            await this._sendUpdate(chatId, summary).catch(() => {});
+          }
         } else {
           // Summary was null — store the fallback
           const fallback = this._buildSummaryFallback(job, label);
           logger.debug(`[Orchestrator] Job ${job.id} using fallback (${fallback.length} chars) — delivering to user`);
           this.conversationManager.addMessage(convKey, 'assistant', fallback);
-          await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
+          try {
+            await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
+          } catch {
+            await this._sendUpdate(chatId, fallback).catch(() => {});
+          }
         }
       } catch (err) {
         logger.error(`[Orchestrator] Failed to summarize job ${job.id}: ${err.message}`);
         // Store the fallback so the orchestrator retains context about what happened
         const fallback = this._buildSummaryFallback(job, label);
         this.conversationManager.addMessage(convKey, 'assistant', fallback);
-        await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId }).catch(() => {});
+        // Try to edit notification, fall back to new message
+        try {
+          await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
+        } catch {
+          await this._sendUpdate(chatId, fallback).catch(() => {});
+        }
       }
     });
 
@@ -570,9 +584,17 @@ export class OrchestratorAgent {
 
     logger.info(`[Orchestrator] Summarizing job ${job.id} [${job.workerType}] result for user`);
 
-    // Short results don't need LLM summarization
     const sr = job.structuredResult;
     const resultLen = (job.result || '').length;
+
+    // Direct coding jobs: Claude Code already produces clean, human-readable output.
+    // Skip LLM summarization to avoid timeouts and latency — use the result directly.
+    if (job.workerType === 'coding') {
+      logger.info(`[Orchestrator] Job ${job.id} is a coding job — using direct result (no LLM summary)`);
+      return this._buildSummaryFallback(job, label);
+    }
+
+    // Short results don't need LLM summarization
     if (sr?.structured && resultLen < 500) {
       logger.info(`[Orchestrator] Job ${job.id} result short enough — skipping LLM summary`);
       return this._buildSummaryFallback(job, label);
@@ -915,12 +937,53 @@ export class OrchestratorAgent {
     // Start the job
     this.jobManager.startJob(job.id);
 
+    // Track activity for health monitoring — Claude Code streams events via onOutput.
+    // coder.js uses a "smart output" wrapper that consolidates tool activity lines (▸/▹/▪)
+    // into a single editable status message starting with ░▒▓. Text messages (💬) pass through
+    // directly. We intercept both patterns to keep the job's lastActivity/stats updated.
+    let toolCallCount = 0;
+    let llmCallCount = 0;
+    const wrappedOnOutput = onUpdate ? async (text, opts) => {
+      // Update job activity timestamp on every output event
+      job.lastActivity = Date.now();
+
+      if (typeof text === 'string') {
+        // Consolidated status message from coder.js smart output (contains ▸ lines inside)
+        if (text.startsWith('░▒▓')) {
+          // Count ▸ lines inside the consolidated block to estimate tool calls
+          const toolLines = text.match(/^▸ .+$/gm) || [];
+          if (toolLines.length > toolCallCount) {
+            toolCallCount = toolLines.length;
+            job.updateStats({ toolCalls: toolCallCount });
+          }
+          // Use the last activity line as progress
+          if (toolLines.length > 0) {
+            job.addProgress(toolLines[toolLines.length - 1].slice(0, 100));
+          }
+        }
+        // Direct tool activity line (before smart output kicks in, or raw lines)
+        else if (text.startsWith('▸') || text.startsWith('▹')) {
+          toolCallCount++;
+          job.updateStats({ toolCalls: toolCallCount });
+          job.addProgress(text.slice(0, 100));
+        }
+        // LLM text output
+        else if (text.startsWith('💬')) {
+          llmCallCount++;
+          const thinking = text.replace(/^💬\s*\*Claude Code:\*\s*\n?/, '');
+          job.updateStats({ llmCalls: llmCallCount, lastThinking: thinking.slice(0, 300) });
+        }
+      }
+
+      return onUpdate(text, opts);
+    } : null;
+
     try {
       const spawner = getSpawner(this.config);
       const result = await spawner.run({
         workingDirectory,
         prompt,
-        onOutput: onUpdate,
+        onOutput: wrappedOnOutput,
         signal: abortController.signal,
       });
 
