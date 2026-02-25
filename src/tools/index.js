@@ -9,6 +9,7 @@ import { definitions as codingDefinitions, handlers as codingHandlers } from './
 import { definitions as browserDefinitions, handlers as browserHandlers } from './browser.js';
 import { definitions as jiraDefinitions, handlers as jiraHandlers } from './jira.js';
 import { definitions as linkedinDefinitions, handlers as linkedinHandlers } from './linkedin.js';
+import { definitions as xDefinitions, handlers as xHandlers } from './x.js';
 import { definitions as personaDefinitions, handlers as personaHandlers } from './persona.js';
 import { logToolCall } from '../security/audit.js';
 import { requiresConfirmation } from '../security/confirm.js';
@@ -25,6 +26,7 @@ export const toolDefinitions = [
   ...browserDefinitions,
   ...jiraDefinitions,
   ...linkedinDefinitions,
+  ...xDefinitions,
   ...personaDefinitions,
 ];
 
@@ -40,6 +42,7 @@ const handlerMap = {
   ...browserHandlers,
   ...jiraHandlers,
   ...linkedinHandlers,
+  ...xHandlers,
   ...personaHandlers,
 };
 

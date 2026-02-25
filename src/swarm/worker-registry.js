@@ -43,8 +43,8 @@ export const WORKER_TYPES = {
   social: {
     label: 'Social Worker',
     emoji: '📱',
-    categories: ['linkedin'],
-    description: 'LinkedIn posting, comments, feed reading',
+    categories: ['linkedin', 'x'],
+    description: 'LinkedIn and X (Twitter) posting, engagement, feed reading',
     timeout: 120,    // 2 minutes
   },
 };
