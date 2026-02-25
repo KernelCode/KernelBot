@@ -62,7 +62,8 @@ function showMenu(config) {
   console.log(`  ${chalk.cyan('8.')} Manage automations`);
   console.log(`  ${chalk.cyan('9.')} Switch character`);
   console.log(`  ${chalk.cyan('10.')} Link LinkedIn account`);
-  console.log(`  ${chalk.cyan('11.')} Exit`);
+  console.log(`  ${chalk.cyan('11.')} Dashboard`);
+  console.log(`  ${chalk.cyan('12.')} Exit`);
   console.log('');
 }
 
@@ -341,6 +342,15 @@ async function startBotFlow(config) {
     characterId: activeCharacterId,
   });
 
+  const dashboardDeps = {
+    config, jobManager, automationManager, lifeEngine, conversationManager, characterManager,
+    memoryManager: charCtx.memoryManager,
+    journalManager: charCtx.journalManager,
+    shareQueue: charCtx.shareQueue,
+    evolutionTracker: charCtx.evolutionTracker,
+    selfManager: charCtx.selfManager,
+  };
+
   const bot = startBot(config, agent, conversationManager, jobManager, automationManager, {
     lifeEngine,
     memoryManager: charCtx.memoryManager,
@@ -349,6 +359,8 @@ async function startBotFlow(config) {
     evolutionTracker: charCtx.evolutionTracker,
     codebaseKnowledge,
     characterManager,
+    dashboardHandle,
+    dashboardDeps,
   });
 
   // Periodic job cleanup and timeout enforcement
@@ -369,7 +381,7 @@ async function startBotFlow(config) {
 
   // Optional cyberpunk terminal dashboard
   let dashboardHandle = null;
-  if (config.dashboard?.port) {
+  if (config.dashboard?.enabled) {
     const { startDashboard } = await import('../src/dashboard/server.js');
     dashboardHandle = startDashboard({
       port: config.dashboard.port,
@@ -865,7 +877,22 @@ async function main() {
       case '10':
         await linkLinkedInCli(config, rl);
         break;
-      case '11':
+      case '11': {
+        const dashEnabled = config.dashboard?.enabled;
+        const dashPort = config.dashboard?.port || 3000;
+        console.log('');
+        console.log(chalk.bold('  Dashboard'));
+        console.log(chalk.dim(`  Enabled on boot: ${dashEnabled ? 'yes' : 'no'}`));
+        console.log(chalk.dim(`  Port: ${dashPort}`));
+        if (dashEnabled) {
+          console.log(chalk.dim(`  URL: http://localhost:${dashPort}`));
+        }
+        console.log(chalk.dim('  Set dashboard.enabled: true in config.yaml to auto-start'));
+        console.log(chalk.dim('  Use /dashboard in Telegram to start/stop at runtime'));
+        console.log('');
+        break;
+      }
+      case '12':
         running = false;
         break;
       default:

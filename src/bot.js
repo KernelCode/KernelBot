@@ -207,7 +207,7 @@ class ChatQueue {
 }
 
 export function startBot(config, agent, conversationManager, jobManager, automationManager, lifeDeps = {}) {
-  let { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge, characterManager } = lifeDeps;
+  let { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge, characterManager, dashboardHandle, dashboardDeps } = lifeDeps;
   const logger = getLogger();
   const bot = new TelegramBot(config.telegram.bot_token, {
     polling: {
@@ -300,6 +300,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     { command: 'evolution', description: 'Self-evolution status, history, and lessons' },
     { command: 'linkedin', description: 'Link/unlink LinkedIn account' },
     { command: 'x', description: 'Link/unlink X (Twitter) account' },
+    { command: 'dashboard', description: 'Start/stop the monitoring dashboard' },
     { command: 'context', description: 'Show all models, auth, and context info' },
     { command: 'clean', description: 'Clear conversation and start fresh' },
     { command: 'history', description: 'Show message count in memory' },
@@ -1766,6 +1767,63 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       return;
     }
 
+    // ── /dashboard command ────────────────────────────────────────
+    if (text === '/dashboard' || text.startsWith('/dashboard ')) {
+      logger.info(`[Bot] /dashboard command from ${username} (${userId}) in chat ${chatId}`);
+      const args = text.slice('/dashboard'.length).trim();
+      const port = config.dashboard?.port || 3000;
+
+      if (args === 'start') {
+        if (dashboardHandle) {
+          await bot.sendMessage(chatId, `Dashboard already running at http://localhost:${port}`);
+          return;
+        }
+        try {
+          const { startDashboard } = await import('./dashboard/server.js');
+          dashboardHandle = startDashboard({ port, ...dashboardDeps });
+          logger.info(`[Dashboard] Started via /dashboard command on port ${port}`);
+          await bot.sendMessage(chatId, `🖥️ Dashboard started at http://localhost:${port}`);
+        } catch (err) {
+          logger.error(`[Dashboard] Failed to start: ${err.message}`);
+          await bot.sendMessage(chatId, `Failed to start dashboard: ${err.message}`);
+        }
+        return;
+      }
+
+      if (args === 'stop') {
+        if (!dashboardHandle) {
+          await bot.sendMessage(chatId, 'Dashboard is not running.');
+          return;
+        }
+        try {
+          dashboardHandle.stop();
+          dashboardHandle = null;
+          logger.info('[Dashboard] Stopped via /dashboard command');
+          await bot.sendMessage(chatId, '🛑 Dashboard stopped.');
+        } catch (err) {
+          logger.error(`[Dashboard] Failed to stop: ${err.message}`);
+          await bot.sendMessage(chatId, `Failed to stop dashboard: ${err.message}`);
+        }
+        return;
+      }
+
+      // Default: show status
+      const running = !!dashboardHandle;
+      const lines = [
+        '🖥️ *Dashboard*',
+        '',
+        `*Status:* ${running ? '🟢 Running' : '⚪ Stopped'}`,
+        `*Port:* ${port}`,
+        running ? `*URL:* http://localhost:${port}` : '',
+        '',
+        '_Commands:_',
+        '`/dashboard start` — Start the dashboard',
+        '`/dashboard stop` — Stop the dashboard',
+      ].filter(Boolean);
+      await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
     // ── /journal command ─────────────────────────────────────────
     if (text === '/journal' || text.startsWith('/journal ')) {
       logger.info(`[Bot] /journal command from ${username} (${userId}) in chat ${chatId}`);
@@ -2214,6 +2272,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         '/journal — View today\'s journal or a past date',
         '/memories — View recent memories or search',
         '/evolution — Self-evolution status, history, lessons',
+        '/dashboard — Start/stop the monitoring dashboard',
         '/linkedin — Link/unlink your LinkedIn account',
         '/x — Link/unlink your X (Twitter) account',
         '/context — Show all models, auth, and context info',
