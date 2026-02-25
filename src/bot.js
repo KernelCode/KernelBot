@@ -290,6 +290,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     { command: 'memories', description: 'View recent memories or search' },
     { command: 'evolution', description: 'Self-evolution status, history, and lessons' },
     { command: 'linkedin', description: 'Link/unlink LinkedIn account' },
+    { command: 'x', description: 'Link/unlink X (Twitter) account' },
     { command: 'context', description: 'Show all models, auth, and context info' },
     { command: 'clean', description: 'Clear conversation and start fresh' },
     { command: 'history', description: 'Show message count in memory' },
@@ -2086,6 +2087,102 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       return;
     }
 
+    // ── /x command ─────────────────────────────────────────────────
+    if (text === '/x' || text.startsWith('/x ')) {
+      logger.info(`[Bot] /x command from ${username} (${userId}) in chat ${chatId}`);
+      const args = text.slice('/x'.length).trim();
+
+      // /x link <consumer_key> <consumer_secret> <access_token> <access_token_secret>
+      if (args.startsWith('link')) {
+        const keys = args.slice('link'.length).trim().split(/\s+/);
+        if (keys.length !== 4) {
+          await bot.sendMessage(chatId, [
+            '🔗 *Connect your X (Twitter) account*',
+            '',
+            'You need 4 credentials from your X Developer App:',
+            '1. Consumer Key (API Key)',
+            '2. Consumer Secret (API Secret)',
+            '3. Access Token',
+            '4. Access Token Secret',
+            '',
+            'Run: `/x link <consumer_key> <consumer_secret> <access_token> <access_token_secret>`',
+            '',
+            '⚠️ Make sure your app has *Read and Write* permissions for posting tweets.',
+          ].join('\n'), { parse_mode: 'Markdown' });
+          return;
+        }
+
+        const [consumerKey, consumerSecret, accessToken, accessTokenSecret] = keys;
+        await bot.sendMessage(chatId, '⏳ Validating credentials...');
+
+        try {
+          const { XApi } = await import('./services/x-api.js');
+          const client = new XApi({ consumerKey, consumerSecret, accessToken, accessTokenSecret });
+          const profile = await client.getMe();
+
+          const { saveCredential } = await import('./utils/config.js');
+          saveCredential(config, 'X_CONSUMER_KEY', consumerKey);
+          saveCredential(config, 'X_CONSUMER_SECRET', consumerSecret);
+          saveCredential(config, 'X_ACCESS_TOKEN', accessToken);
+          saveCredential(config, 'X_ACCESS_TOKEN_SECRET', accessTokenSecret);
+
+          await bot.sendMessage(chatId, [
+            '✅ *X (Twitter) connected!*',
+            '',
+            `👤 *${profile.name}* (@${profile.username})`,
+            profile.description ? `📝 ${profile.description}` : '',
+            '',
+            'You can now ask me to tweet, search tweets, like, retweet, and more.',
+          ].filter(Boolean).join('\n'), { parse_mode: 'Markdown' });
+        } catch (err) {
+          logger.error(`[Bot] X token validation failed: ${err.message}`);
+          const detail = err.response?.data?.detail || err.response?.data?.title || err.message;
+          await bot.sendMessage(chatId, `❌ Validation failed: ${detail}`);
+        }
+        return;
+      }
+
+      // /x unlink — clear saved credentials
+      if (args === 'unlink') {
+        if (!config.x?.consumer_key) {
+          await bot.sendMessage(chatId, 'Your X account is not connected.');
+          return;
+        }
+
+        const { saveCredential } = await import('./utils/config.js');
+        saveCredential(config, 'X_CONSUMER_KEY', '');
+        saveCredential(config, 'X_CONSUMER_SECRET', '');
+        saveCredential(config, 'X_ACCESS_TOKEN', '');
+        saveCredential(config, 'X_ACCESS_TOKEN_SECRET', '');
+        config.x = {};
+
+        await bot.sendMessage(chatId, '✅ X (Twitter) account disconnected.');
+        return;
+      }
+
+      // /x (status) — show connection status
+      if (!config.x?.consumer_key) {
+        await bot.sendMessage(chatId, [
+          '🐦 *X (Twitter) — Not Connected*',
+          '',
+          'Use `/x link <consumer_key> <consumer_secret> <access_token> <access_token_secret>` to connect.',
+          '',
+          'Get credentials from https://developer.x.com/en/portal/dashboard',
+        ].join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      await bot.sendMessage(chatId, [
+        '🐦 *X (Twitter) — Connected*',
+        '',
+        `🔑 Consumer Key: \`${config.x.consumer_key.slice(0, 6)}...${config.x.consumer_key.slice(-4)}\``,
+        `🔑 Access Token: \`${config.x.access_token.slice(0, 6)}...${config.x.access_token.slice(-4)}\``,
+        '',
+        '`/x unlink` — Disconnect account',
+      ].join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
     if (text === '/help') {
       const activeSkill = agent.getActiveSkill(chatId);
       const skillLine = activeSkill
@@ -2109,6 +2206,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         '/memories — View recent memories or search',
         '/evolution — Self-evolution status, history, lessons',
         '/linkedin — Link/unlink your LinkedIn account',
+        '/x — Link/unlink your X (Twitter) account',
         '/context — Show all models, auth, and context info',
         '/clean — Clear conversation and start fresh',
         '/history — Show message count in memory',

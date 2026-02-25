@@ -62,6 +62,7 @@ const DEFAULTS = {
     recent_window: 10,
   },
   linkedin: {},
+  x: {},
 };
 
 function deepMerge(target, source) {
@@ -533,6 +534,24 @@ export function loadConfig() {
     config.linkedin.person_urn = process.env.LINKEDIN_PERSON_URN;
   }
 
+  // X (Twitter) OAuth 1.0a credentials from env
+  if (process.env.X_CONSUMER_KEY) {
+    if (!config.x) config.x = {};
+    config.x.consumer_key = process.env.X_CONSUMER_KEY;
+  }
+  if (process.env.X_CONSUMER_SECRET) {
+    if (!config.x) config.x = {};
+    config.x.consumer_secret = process.env.X_CONSUMER_SECRET;
+  }
+  if (process.env.X_ACCESS_TOKEN) {
+    if (!config.x) config.x = {};
+    config.x.access_token = process.env.X_ACCESS_TOKEN;
+  }
+  if (process.env.X_ACCESS_TOKEN_SECRET) {
+    if (!config.x) config.x = {};
+    config.x.access_token_secret = process.env.X_ACCESS_TOKEN_SECRET;
+  }
+
   return config;
 }
 
@@ -604,6 +623,22 @@ export function saveCredential(config, envKey, value) {
       if (!config.linkedin) config.linkedin = {};
       config.linkedin.person_urn = value;
       break;
+    case 'X_CONSUMER_KEY':
+      if (!config.x) config.x = {};
+      config.x.consumer_key = value;
+      break;
+    case 'X_CONSUMER_SECRET':
+      if (!config.x) config.x = {};
+      config.x.consumer_secret = value;
+      break;
+    case 'X_ACCESS_TOKEN':
+      if (!config.x) config.x = {};
+      config.x.access_token = value;
+      break;
+    case 'X_ACCESS_TOKEN_SECRET':
+      if (!config.x) config.x = {};
+      config.x.access_token_secret = value;
+      break;
   }
 
   // Also set in process.env so tools pick it up
@@ -642,6 +677,14 @@ export function getMissingCredential(toolName, config) {
   if (linkedinTools.includes(toolName)) {
     if (!config.linkedin?.access_token && !process.env.LINKEDIN_ACCESS_TOKEN) {
       return { envKey: 'LINKEDIN_ACCESS_TOKEN', label: 'LinkedIn Access Token (from /linkedin link or https://www.linkedin.com/developers/tools/oauth/token-generator)' };
+    }
+  }
+
+  const xTools = ['x_post_tweet', 'x_reply_to_tweet', 'x_get_my_tweets', 'x_get_tweet', 'x_search_tweets', 'x_like_tweet', 'x_retweet', 'x_delete_tweet', 'x_get_profile'];
+
+  if (xTools.includes(toolName)) {
+    if (!config.x?.consumer_key && !process.env.X_CONSUMER_KEY) {
+      return { envKey: 'X_CONSUMER_KEY', label: 'X (Twitter) Consumer Key (from /x link or X Developer Portal)' };
     }
   }
 

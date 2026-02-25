@@ -14,6 +14,7 @@ export const TOOL_CATEGORIES = {
   browser: ['web_search', 'browse_website', 'screenshot_website', 'extract_content', 'send_image', 'interact_with_page'],
   jira: ['jira_get_ticket', 'jira_search_tickets', 'jira_list_my_tickets', 'jira_get_project_tickets'],
   linkedin: ['linkedin_create_post', 'linkedin_get_my_posts', 'linkedin_get_post', 'linkedin_comment_on_post', 'linkedin_get_comments', 'linkedin_like_post', 'linkedin_get_profile', 'linkedin_delete_post'],
+  x: ['x_post_tweet', 'x_reply_to_tweet', 'x_get_my_tweets', 'x_get_tweet', 'x_search_tweets', 'x_like_tweet', 'x_retweet', 'x_delete_tweet', 'x_get_profile'],
 };
 
 const CATEGORY_KEYWORDS = {
@@ -27,6 +28,7 @@ const CATEGORY_KEYWORDS = {
   browser: ['search', 'find', 'look up', 'browse', 'screenshot', 'scrape', 'website', 'web page', 'webpage', 'extract content', 'html', 'css selector'],
   jira: ['jira', 'ticket', 'issue', 'sprint', 'backlog', 'story', 'epic'],
   linkedin: ['linkedin', 'post on linkedin', 'linkedin post', 'linkedin comment', 'share on linkedin'],
+  x: ['twitter', 'tweet', 'x post', 'x.com', 'retweet', 'post on x', 'post on twitter'],
 };
 
 // Categories that imply other categories

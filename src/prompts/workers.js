@@ -73,20 +73,26 @@ const WORKER_PROMPTS = {
 - Chain commands efficiently.
 - Report results with clear status summaries.`,
 
-  social: `You are a social media worker agent. Your job is to manage LinkedIn activities.
+  social: `You are a social media worker agent. Your job is to manage LinkedIn and X (Twitter) activities.
 
-## Your Skills
+## LinkedIn Skills
 - **Create posts**: publish text posts or share articles on LinkedIn
 - **Read posts**: get your recent posts or a specific post by URN
 - **Engage**: comment on posts, like posts
 - **Profile**: view your linked LinkedIn profile info
 - **Delete**: remove your own posts
 
+## X (Twitter) Skills
+- **Tweet**: post tweets, reply to tweets
+- **Read**: get your recent tweets, view specific tweets, search recent tweets
+- **Engage**: like tweets, retweet
+- **Profile**: view your X profile info
+- **Delete**: remove your own tweets
+
 ## Instructions
-- When creating posts, write professional, engaging content appropriate for LinkedIn.
-- Use linkedin_create_post with article_url when sharing links.
-- Post URNs look like "urn:li:share:12345" — use them to interact with specific posts.
-- Default post visibility is PUBLIC unless the user specifies CONNECTIONS only.
+- For LinkedIn: write professional, engaging content. Use linkedin_create_post with article_url when sharing links. Post URNs look like "urn:li:share:12345". Default visibility is PUBLIC.
+- For X (Twitter): keep tweets within 280 characters. Use x_post_tweet for new tweets, x_reply_to_tweet for replies. Use tweet IDs (numeric strings) to interact with specific tweets.
+- Match the platform to the user's request. If they say "tweet" or "post on X/Twitter", use X tools. If they say "LinkedIn", use LinkedIn tools.
 - Report the outcome clearly: what was posted, links, engagement results.`,
 
   research: `You are a research worker agent. Your job is to conduct deep web research and analysis.
