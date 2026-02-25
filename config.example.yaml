@@ -81,6 +81,9 @@ life:
     self_code: 10                # Self-evolution proposals (requires self_coding.enabled)
     code_review: 5               # Codebase scanning + PR status checks
     reflect: 8                   # Read logs, analyze interactions, find improvement patterns
+  cooldown_hours:                # Per-activity cooldowns (hours) before the activity can repeat
+    journal: 4                   # Hours between journal entries
+    reflect: 4                   # Hours between reflection activities
   proactive_sharing: true        # Share discoveries with users proactively
   proactive_max_per_day: 3       # Max proactive messages per day
   memory_retention_days: 90      # Days to keep episodic memories

@@ -11,6 +11,28 @@ import { getMissingCredential, saveCredential, saveProviderToYaml, saveOrchestra
 import { resetClaudeCodeSpawner, getSpawner } from './tools/coding.js';
 import { truncateToolResult } from './utils/truncate.js';
 
+/**
+ * Format a time gap in minutes into natural, human-readable language.
+ * e.g. 45 → "about 45 minutes", 90 → "about an hour and a half",
+ *      180 → "about 3 hours", 1500 → "over a day"
+ */
+function formatTimeGap(minutes) {
+  if (minutes < 60) return `about ${minutes} minutes`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMins = minutes % 60;
+  if (hours < 24) {
+    if (hours === 1 && remainingMins < 15) return 'about an hour';
+    if (hours === 1 && remainingMins >= 15 && remainingMins < 45) return 'about an hour and a half';
+    if (hours === 1) return 'nearly 2 hours';
+    if (remainingMins < 15) return `about ${hours} hours`;
+    if (remainingMins >= 30) return `about ${hours} and a half hours`;
+    return `about ${hours} hours`;
+  }
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'over a day';
+  return `about ${days} days`;
+}
+
 export class OrchestratorAgent {
   constructor({ config, conversationManager, personaManager, selfManager, jobManager, automationManager, memoryManager, shareQueue, characterManager }) {
     this.config = config;
@@ -394,11 +416,8 @@ export class OrchestratorAgent {
       const gapMs = Date.now() - lastTs;
       const gapMinutes = Math.floor(gapMs / 60_000);
       if (gapMinutes >= 30) {
-        const gapHours = Math.floor(gapMinutes / 60);
-        const gapText = gapHours >= 1
-          ? `${gapHours} hour(s)`
-          : `${gapMinutes} minute(s)`;
-        temporalContext = `[Time gap detected: ${gapText} since last message. User may be starting a new topic.]`;
+        const gapText = formatTimeGap(gapMinutes);
+        temporalContext = `[Time gap detected: ${gapText} since last message. User may be starting a new topic — consider a fresh greeting.]`;
         logger.info(`Time gap detected for chat ${chatId}: ${gapText}`);
       }
     }

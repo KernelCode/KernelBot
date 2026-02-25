@@ -245,26 +245,27 @@ export class LifeEngine {
     // Rule: don't repeat same type twice in a row
     const last = this._state.lastActivity;
 
-    // Rule: journal cooldown 4h
-    if (this._state.lastJournalTime && now - this._state.lastJournalTime < 4 * 3600_000) {
+    // Cooldown durations (hours) — all configurable via life config, with sensible defaults
+    const journalCooldownMs   = (lifeConfig.cooldown_hours?.journal ?? 4) * 3600_000;
+    const reflectCooldownMs   = (lifeConfig.cooldown_hours?.reflect ?? 4) * 3600_000;
+    const selfCodingEnabled   = selfCodingConfig.enabled === true;
+    const selfCodeCooldownMs  = (selfCodingConfig.cooldown_hours ?? 2) * 3600_000;
+    const codeReviewCooldownMs = (selfCodingConfig.code_review_cooldown_hours ?? 4) * 3600_000;
+
+    // Apply cooldown rules
+    if (this._state.lastJournalTime && now - this._state.lastJournalTime < journalCooldownMs) {
       weights.journal = 0;
     }
 
-    // Rule: self_code cooldown (configurable, default 2h) + must be enabled
-    const selfCodingEnabled = selfCodingConfig.enabled === true;
-    const selfCodeCooldownMs = (selfCodingConfig.cooldown_hours ?? 2) * 3600_000;
     if (!selfCodingEnabled || (this._state.lastSelfCodeTime && now - this._state.lastSelfCodeTime < selfCodeCooldownMs)) {
       weights.self_code = 0;
     }
 
-    // Rule: code_review cooldown (configurable, default 4h) + must have evolution tracker
-    const codeReviewCooldownMs = (selfCodingConfig.code_review_cooldown_hours ?? 4) * 3600_000;
     if (!selfCodingEnabled || !this.evolutionTracker || (this._state.lastCodeReviewTime && now - this._state.lastCodeReviewTime < codeReviewCooldownMs)) {
       weights.code_review = 0;
     }
 
-    // Rule: reflect cooldown 4h
-    if (this._state.lastReflectTime && now - this._state.lastReflectTime < 4 * 3600_000) {
+    if (this._state.lastReflectTime && now - this._state.lastReflectTime < reflectCooldownMs) {
       weights.reflect = 0;
     }
 
