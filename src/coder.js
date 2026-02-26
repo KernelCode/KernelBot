@@ -137,7 +137,9 @@ export class ClaudeCodeSpawner {
   constructor(config) {
     this.config = config;
     this.maxTurns = config.claude_code?.max_turns || 50;
-    this.timeout = (config.claude_code?.timeout_seconds || 86400) * 1000;
+    // Default 30 minutes — generous enough for complex tasks (blog posts, PRs),
+    // but not so long that stuck processes waste resources for hours.
+    this.timeout = (config.claude_code?.timeout_seconds || 1800) * 1000;
   }
 
   _buildSpawnEnv() {
@@ -163,9 +165,10 @@ export class ClaudeCodeSpawner {
     return env;
   }
 
-  async run({ workingDirectory, prompt, maxTurns, onOutput, signal }) {
+  async run({ workingDirectory, prompt, maxTurns, timeoutMs, onOutput, signal }) {
     const logger = getLogger();
     const turns = maxTurns || this.maxTurns;
+    const effectiveTimeout = timeoutMs || this.timeout;
 
     ensureClaudeCodeSetup();
 
@@ -177,6 +180,7 @@ export class ClaudeCodeSpawner {
       '--max-turns', String(turns),
       '--output-format', 'stream-json',
       '--verbose',
+      '--yes',
       '--dangerously-skip-permissions',
     ];
     if (model) {
@@ -185,7 +189,7 @@ export class ClaudeCodeSpawner {
 
     const cmd = `claude ${args.map((a) => a.includes(' ') ? `"${a}"` : a).join(' ')}`;
     logger.info(`Spawning: ${cmd.slice(0, 300)}`);
-    logger.info(`CWD: ${workingDirectory}`);
+    logger.info(`CWD: ${workingDirectory} | Timeout: ${effectiveTimeout / 1000}s | Max turns: ${turns}`);
 
     // --- Smart output: consolidate tool activity into one editable message ---
     let statusMsgId = null;
@@ -301,10 +305,20 @@ export class ClaudeCodeSpawner {
       });
 
       const timer = setTimeout(() => {
+        logger.warn(`Claude Code timed out after ${effectiveTimeout / 1000}s — sending SIGTERM`);
         child.kill('SIGTERM');
-        if (smartOutput) smartOutput(`▸ Claude Code timed out after ${this.timeout / 1000}s`).catch(() => {});
-        reject(new Error(`Claude Code timed out after ${this.timeout / 1000}s`));
-      }, this.timeout);
+        if (smartOutput) smartOutput(`▸ Claude Code timed out after ${effectiveTimeout / 1000}s`).catch(() => {});
+
+        // Give it 10s to exit gracefully after SIGTERM, then force-kill
+        setTimeout(() => {
+          if (!child.killed) {
+            logger.warn('Claude Code did not exit after SIGTERM — sending SIGKILL');
+            child.kill('SIGKILL');
+          }
+        }, 10_000);
+
+        reject(new Error(`Claude Code timed out after ${effectiveTimeout / 1000}s`));
+      }, effectiveTimeout);
 
       child.on('close', async (code) => {
         clearTimeout(timer);

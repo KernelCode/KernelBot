@@ -19,7 +19,7 @@ brain:
 claude_code:
   # model: claude-opus-4-6           # switchable via /claudemodel
   max_turns: 50
-  timeout_seconds: 600
+  timeout_seconds: 1800              # 30 min — enough for complex tasks (blog posts, PRs)
   # auth_mode: system                # system | api_key | oauth_token — switchable via /claude
   # workspace_dir: /tmp/kernelbot-workspaces  # default: ~/.kernelbot/workspaces
 
