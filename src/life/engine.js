@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, openSync, readSync, closeSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { getLogger } from '../utils/logger.js';
@@ -1188,16 +1188,51 @@ Be honest and constructive. This is your chance to learn from real interactions.
   }
 
   /**
-   * Read recent log entries from kernel.log.
-   * Returns parsed JSON entries or null if no logs available.
+   * Read recent log entries from kernel.log using an efficient tail strategy.
+   *
+   * Instead of loading the entire log file into memory (which can be many MB
+   * for a long-running bot), this reads only the last chunk of the file
+   * (default 64 KB) and extracts lines from that. This keeps memory usage
+   * bounded regardless of total log size.
+   *
+   * @param {number} maxLines - Maximum number of recent log lines to return.
+   * @returns {Array<object>|null} Parsed JSON log entries, or null if unavailable.
    */
   _readRecentLogs(maxLines = 200) {
+    // 64 KB is enough to hold ~200+ JSON log lines (avg ~300 bytes each)
+    const TAIL_BYTES = 64 * 1024;
+
     for (const logPath of LOG_FILE_PATHS) {
       if (!existsSync(logPath)) continue;
 
       try {
-        const content = readFileSync(logPath, 'utf-8');
-        const lines = content.split('\n').filter(Boolean);
+        const fileSize = statSync(logPath).size;
+        if (fileSize === 0) continue;
+
+        let tailContent;
+
+        if (fileSize <= TAIL_BYTES) {
+          // File is small enough to read entirely
+          tailContent = readFileSync(logPath, 'utf-8');
+        } else {
+          // Read only the last TAIL_BYTES from the file
+          const fd = openSync(logPath, 'r');
+          try {
+            const buffer = Buffer.alloc(TAIL_BYTES);
+            const startPos = fileSize - TAIL_BYTES;
+            readSync(fd, buffer, 0, TAIL_BYTES, startPos);
+            tailContent = buffer.toString('utf-8');
+            // Drop the first (likely partial) line since we started mid-file
+            const firstNewline = tailContent.indexOf('\n');
+            if (firstNewline !== -1) {
+              tailContent = tailContent.slice(firstNewline + 1);
+            }
+          } finally {
+            closeSync(fd);
+          }
+        }
+
+        const lines = tailContent.split('\n').filter(Boolean);
         const recent = lines.slice(-maxLines);
 
         const entries = [];

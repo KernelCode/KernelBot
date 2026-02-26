@@ -8,4 +8,4 @@ As my knowledge grows, I will organize it into topic-specific files and link the
 
 ## Topics
 
-_(To be populated as I learn and grow.)_
+- [Active Inference and Epistemic Foraging](./active_inference_foraging.md) -- How curiosity-driven exploration from computational neuroscience can guide autonomous knowledge acquisition.
