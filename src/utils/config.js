@@ -1,11 +1,12 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { createInterface } from 'readline';
 import yaml from 'js-yaml';
 import dotenv from 'dotenv';
 import chalk from 'chalk';
+import * as p from '@clack/prompts';
 import { PROVIDERS } from '../providers/models.js';
+import { handleCancel } from './display.js';
 
 const DEFAULTS = {
   bot: {
@@ -108,10 +109,6 @@ function findConfigFile() {
   return null;
 }
 
-function ask(rl, question) {
-  return new Promise((res) => rl.question(question, res));
-}
-
 /**
  * Migrate legacy `anthropic` config section → `brain` section.
  */
@@ -132,44 +129,33 @@ function migrateAnthropicConfig(config) {
 }
 
 /**
- * Interactive provider → model picker.
+ * Interactive provider → model picker using @clack/prompts.
  */
-export async function promptProviderSelection(rl) {
+export async function promptProviderSelection() {
   const providerKeys = Object.keys(PROVIDERS);
 
-  console.log(chalk.bold('\n  Select AI provider:\n'));
-  providerKeys.forEach((key, i) => {
-    console.log(`  ${chalk.cyan(`${i + 1}.`)} ${PROVIDERS[key].name}`);
+  const providerKey = await p.select({
+    message: 'Select AI provider',
+    options: providerKeys.map(key => ({
+      value: key,
+      label: PROVIDERS[key].name,
+    })),
   });
-  console.log('');
+  if (handleCancel(providerKey)) return null;
 
-  let providerIdx;
-  while (true) {
-    const input = await ask(rl, chalk.cyan('  Provider (number): '));
-    providerIdx = parseInt(input.trim(), 10) - 1;
-    if (providerIdx >= 0 && providerIdx < providerKeys.length) break;
-    console.log(chalk.dim('  Invalid choice, try again.'));
-  }
-
-  const providerKey = providerKeys[providerIdx];
   const provider = PROVIDERS[providerKey];
 
-  console.log(chalk.bold(`\n  Select model for ${provider.name}:\n`));
-  provider.models.forEach((m, i) => {
-    console.log(`  ${chalk.cyan(`${i + 1}.`)} ${m.label} (${m.id})`);
+  const modelId = await p.select({
+    message: `Select model for ${provider.name}`,
+    options: provider.models.map(m => ({
+      value: m.id,
+      label: m.label,
+      hint: m.id,
+    })),
   });
-  console.log('');
+  if (handleCancel(modelId)) return null;
 
-  let modelIdx;
-  while (true) {
-    const input = await ask(rl, chalk.cyan('  Model (number): '));
-    modelIdx = parseInt(input.trim(), 10) - 1;
-    if (modelIdx >= 0 && modelIdx < provider.models.length) break;
-    console.log(chalk.dim('  Invalid choice, try again.'));
-  }
-
-  const model = provider.models[modelIdx];
-  return { providerKey, modelId: model.id };
+  return { providerKey, modelId };
 }
 
 /**
@@ -252,26 +238,29 @@ export function saveClaudeCodeAuth(config, mode, value) {
 /**
  * Full interactive flow: change orchestrator model + optionally enter API key.
  */
-export async function changeOrchestratorModel(config, rl) {
+export async function changeOrchestratorModel(config) {
   const { createProvider } = await import('../providers/index.js');
-  const { providerKey, modelId } = await promptProviderSelection(rl);
+  const result = await promptProviderSelection();
+  if (!result) return config;
 
+  const { providerKey, modelId } = result;
   const providerDef = PROVIDERS[providerKey];
 
   // Resolve API key
   const envKey = providerDef.envKey;
   let apiKey = process.env[envKey];
   if (!apiKey) {
-    const key = await ask(rl, chalk.cyan(`\n  ${providerDef.name} API key (${envKey}): `));
-    if (!key.trim()) {
-      console.log(chalk.yellow('\n  No API key provided. Orchestrator not changed.\n'));
-      return config;
-    }
+    const key = await p.text({
+      message: `${providerDef.name} API key (${envKey})`,
+      validate: (v) => (!v.trim() ? 'API key is required' : undefined),
+    });
+    if (handleCancel(key)) return config;
     apiKey = key.trim();
   }
 
   // Validate the new provider before saving anything
-  console.log(chalk.dim(`\n  Verifying ${providerDef.name} / ${modelId}...`));
+  const s = p.spinner();
+  s.start(`Verifying ${providerDef.name} / ${modelId}`);
   const testConfig = {
     brain: {
       provider: providerKey,
@@ -284,16 +273,15 @@ export async function changeOrchestratorModel(config, rl) {
   try {
     const testProvider = createProvider(testConfig);
     await testProvider.ping();
+    s.stop(`${providerDef.name} / ${modelId} verified`);
   } catch (err) {
-    console.log(chalk.red(`\n  ✖ Verification failed: ${err.message}`));
-    console.log(chalk.yellow(`  Orchestrator not changed. Keeping current model.\n`));
+    s.stop(chalk.red(`Verification failed: ${err.message}`));
+    p.log.warn('Orchestrator not changed. Keeping current model.');
     return config;
   }
 
   // Validation passed — save everything
   const savedPath = saveOrchestratorToYaml(providerKey, modelId);
-  console.log(chalk.dim(`  Saved to ${savedPath}`));
-
   config.orchestrator.provider = providerKey;
   config.orchestrator.model = modelId;
   config.orchestrator.api_key = apiKey;
@@ -301,50 +289,51 @@ export async function changeOrchestratorModel(config, rl) {
   // Save the key if it was newly entered
   if (!process.env[envKey]) {
     saveCredential(config, envKey, apiKey);
-    console.log(chalk.dim('  API key saved.\n'));
   }
 
-  console.log(chalk.green(`  ✔ Orchestrator switched to ${providerDef.name} / ${modelId}\n`));
+  p.log.success(`Orchestrator switched to ${providerDef.name} / ${modelId}`);
   return config;
 }
 
 /**
  * Full interactive flow: change brain model + optionally enter API key.
  */
-export async function changeBrainModel(config, rl) {
+export async function changeBrainModel(config) {
   const { createProvider } = await import('../providers/index.js');
-  const { providerKey, modelId } = await promptProviderSelection(rl);
+  const result = await promptProviderSelection();
+  if (!result) return config;
 
+  const { providerKey, modelId } = result;
   const providerDef = PROVIDERS[providerKey];
 
   // Resolve API key
   const envKey = providerDef.envKey;
   let apiKey = process.env[envKey];
   if (!apiKey) {
-    const key = await ask(rl, chalk.cyan(`\n  ${providerDef.name} API key (${envKey}): `));
-    if (!key.trim()) {
-      console.log(chalk.yellow('\n  No API key provided. Brain not changed.\n'));
-      return config;
-    }
+    const key = await p.text({
+      message: `${providerDef.name} API key (${envKey})`,
+      validate: (v) => (!v.trim() ? 'API key is required' : undefined),
+    });
+    if (handleCancel(key)) return config;
     apiKey = key.trim();
   }
 
   // Validate the new provider before saving anything
-  console.log(chalk.dim(`\n  Verifying ${providerDef.name} / ${modelId}...`));
+  const s = p.spinner();
+  s.start(`Verifying ${providerDef.name} / ${modelId}`);
   const testConfig = { ...config, brain: { ...config.brain, provider: providerKey, model: modelId, api_key: apiKey } };
   try {
     const testProvider = createProvider(testConfig);
     await testProvider.ping();
+    s.stop(`${providerDef.name} / ${modelId} verified`);
   } catch (err) {
-    console.log(chalk.red(`\n  ✖ Verification failed: ${err.message}`));
-    console.log(chalk.yellow(`  Brain not changed. Keeping current model.\n`));
+    s.stop(chalk.red(`Verification failed: ${err.message}`));
+    p.log.warn('Brain not changed. Keeping current model.');
     return config;
   }
 
   // Validation passed — save everything
-  const savedPath = saveProviderToYaml(providerKey, modelId);
-  console.log(chalk.dim(`  Saved to ${savedPath}`));
-
+  saveProviderToYaml(providerKey, modelId);
   config.brain.provider = providerKey;
   config.brain.model = modelId;
   config.brain.api_key = apiKey;
@@ -352,10 +341,9 @@ export async function changeBrainModel(config, rl) {
   // Save the key if it was newly entered
   if (!process.env[envKey]) {
     saveCredential(config, envKey, apiKey);
-    console.log(chalk.dim('  API key saved.\n'));
   }
 
-  console.log(chalk.green(`  ✔ Brain switched to ${providerDef.name} / ${modelId}\n`));
+  p.log.success(`Brain switched to ${providerDef.name} / ${modelId}`);
   return config;
 }
 
@@ -366,9 +354,8 @@ async function promptForMissing(config) {
 
   if (missing.length === 0) return config;
 
-  console.log(chalk.yellow('\n  Missing credentials detected. Let\'s set them up.\n'));
+  p.log.warn('Missing credentials detected. Let\'s set them up.');
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
   const mutableConfig = JSON.parse(JSON.stringify(config));
   const envLines = [];
 
@@ -381,8 +368,11 @@ async function promptForMissing(config) {
 
   if (!mutableConfig.brain.api_key) {
     // Run brain provider selection flow
-    console.log(chalk.bold('\n  🧠 Worker Brain'));
-    const { providerKey, modelId } = await promptProviderSelection(rl);
+    p.log.step('Worker Brain');
+    const brainResult = await promptProviderSelection();
+    if (!brainResult) { p.cancel('Setup cancelled.'); process.exit(0); }
+
+    const { providerKey, modelId } = brainResult;
     mutableConfig.brain.provider = providerKey;
     mutableConfig.brain.model = modelId;
     saveProviderToYaml(providerKey, modelId);
@@ -390,36 +380,49 @@ async function promptForMissing(config) {
     const providerDef = PROVIDERS[providerKey];
     const envKey = providerDef.envKey;
 
-    const key = await ask(rl, chalk.cyan(`\n  ${providerDef.name} API key: `));
+    const key = await p.text({
+      message: `${providerDef.name} API key`,
+      validate: (v) => (!v.trim() ? 'API key is required' : undefined),
+    });
+    if (handleCancel(key)) { process.exit(0); }
     mutableConfig.brain.api_key = key.trim();
     envLines.push(`${envKey}=${key.trim()}`);
 
     // Orchestrator provider selection
-    console.log(chalk.bold('\n  🎛️  Orchestrator'));
-    const sameChoice = await ask(rl, chalk.cyan(`  Use same provider (${providerDef.name} / ${modelId}) for orchestrator? [Y/n]: `));
-    if (!sameChoice.trim() || sameChoice.trim().toLowerCase() === 'y') {
+    p.log.step('Orchestrator');
+    const sameChoice = await p.confirm({
+      message: `Use same provider (${providerDef.name} / ${modelId}) for orchestrator?`,
+      initialValue: true,
+    });
+    if (handleCancel(sameChoice)) { process.exit(0); }
+
+    if (sameChoice) {
       mutableConfig.orchestrator.provider = providerKey;
       mutableConfig.orchestrator.model = modelId;
       mutableConfig.orchestrator.api_key = key.trim();
       saveOrchestratorToYaml(providerKey, modelId);
     } else {
-      const orch = await promptProviderSelection(rl);
+      const orch = await promptProviderSelection();
+      if (!orch) { p.cancel('Setup cancelled.'); process.exit(0); }
+
       mutableConfig.orchestrator.provider = orch.providerKey;
       mutableConfig.orchestrator.model = orch.modelId;
       saveOrchestratorToYaml(orch.providerKey, orch.modelId);
 
       const orchProviderDef = PROVIDERS[orch.providerKey];
       if (orch.providerKey === providerKey) {
-        // Same provider — reuse the API key
         mutableConfig.orchestrator.api_key = key.trim();
       } else {
-        // Different provider — need a separate key
         const orchEnvKey = orchProviderDef.envKey;
         const orchExisting = process.env[orchEnvKey];
         if (orchExisting) {
           mutableConfig.orchestrator.api_key = orchExisting;
         } else {
-          const orchKey = await ask(rl, chalk.cyan(`\n  ${orchProviderDef.name} API key: `));
+          const orchKey = await p.text({
+            message: `${orchProviderDef.name} API key`,
+            validate: (v) => (!v.trim() ? 'API key is required' : undefined),
+          });
+          if (handleCancel(orchKey)) { process.exit(0); }
           mutableConfig.orchestrator.api_key = orchKey.trim();
           envLines.push(`${orchEnvKey}=${orchKey.trim()}`);
         }
@@ -428,12 +431,14 @@ async function promptForMissing(config) {
   }
 
   if (!mutableConfig.telegram.bot_token) {
-    const token = await ask(rl, chalk.cyan('  Telegram Bot Token: '));
+    const token = await p.text({
+      message: 'Telegram Bot Token',
+      validate: (v) => (!v.trim() ? 'Token is required' : undefined),
+    });
+    if (handleCancel(token)) { process.exit(0); }
     mutableConfig.telegram.bot_token = token.trim();
     envLines.push(`TELEGRAM_BOT_TOKEN=${token.trim()}`);
   }
-
-  rl.close();
 
   // Save to ~/.kernelbot/.env so it persists globally
   if (envLines.length > 0) {
@@ -444,9 +449,8 @@ async function promptForMissing(config) {
     // Merge with existing content
     let content = existingEnv ? existingEnv.trimEnd() + '\n' : '';
     for (const line of envLines) {
-      const key = line.split('=')[0];
-      // Replace if exists, append if not
-      const regex = new RegExp(`^${key}=.*$`, 'm');
+      const envKey = line.split('=')[0];
+      const regex = new RegExp(`^${envKey}=.*$`, 'm');
       if (regex.test(content)) {
         content = content.replace(regex, line);
       } else {
@@ -454,7 +458,7 @@ async function promptForMissing(config) {
       }
     }
     writeFileSync(savePath, content);
-    console.log(chalk.dim(`\n  Saved to ${savePath}\n`));
+    p.log.info(`Saved to ${savePath}`);
   }
 
   return mutableConfig;

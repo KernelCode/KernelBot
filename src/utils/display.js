@@ -5,6 +5,10 @@ import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
 import gradient from 'gradient-string';
+import * as p from '@clack/prompts';
+import { PROVIDERS } from '../providers/models.js';
+
+export { p };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -143,10 +147,73 @@ export function showCharacterCard(character, isActive = false) {
 }
 
 /**
- * Display the full character gallery for CLI selection.
- * @param {object[]} characters — array of character profiles
- * @param {string|null} activeId — ID of the currently active character
+ * Format "Provider / model" label for a config section.
+ * @param {object} config — full config
+ * @param {'brain'|'orchestrator'} section
  */
+export function formatProviderLabel(config, section) {
+  const sec = config[section];
+  const providerDef = PROVIDERS[sec.provider];
+  const name = providerDef ? providerDef.name : sec.provider;
+  return `${name} / ${sec.model}`;
+}
+
+/**
+ * Centralized cancel handler for @clack/prompts.
+ * Call after every prompt — exits gracefully on Ctrl+C.
+ */
+export function handleCancel(value) {
+  if (p.isCancel(value)) {
+    p.cancel('Cancelled.');
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Claude Code-inspired info box shown after the logo.
+ */
+export function showWelcomeScreen(config, characterManager) {
+  const version = getVersion();
+
+  const orchLabel = formatProviderLabel(config, 'orchestrator');
+  const brainLabel = formatProviderLabel(config, 'brain');
+
+  let charLabel = 'None';
+  if (characterManager) {
+    const activeId = characterManager.getActiveCharacterId();
+    const active = characterManager.getCharacter(activeId);
+    if (active) charLabel = `${active.emoji} ${active.name}`;
+  }
+
+  const lifeEnabled = config.life?.enabled !== false;
+  const dashPort = config.dashboard?.port || 3000;
+  const dashEnabled = config.dashboard?.enabled;
+
+  const pad = (label, width = 18) => label.padEnd(width);
+
+  const lines = [
+    '',
+    `  ${chalk.dim(pad('Orchestrator'))}${orchLabel}`,
+    `  ${chalk.dim(pad('Brain'))}${brainLabel}`,
+    `  ${chalk.dim(pad('Character'))}${charLabel}`,
+    `  ${chalk.dim(pad('Life Engine'))}${lifeEnabled ? chalk.green('enabled') : chalk.yellow('disabled')}`,
+    `  ${chalk.dim(pad('Dashboard'))}${dashEnabled ? chalk.green(`:${dashPort}`) : chalk.yellow('off')}`,
+    '',
+    chalk.dim('  ↑↓ Navigate · Enter Select · Ctrl+C Cancel'),
+  ];
+
+  console.log(
+    boxen(lines.join('\n'), {
+      title: `KERNEL Bot v${version}`,
+      titleAlignment: 'left',
+      padding: { top: 0, bottom: 0, left: 0, right: 2 },
+      borderStyle: 'round',
+      borderColor: 'green',
+    }),
+  );
+}
+
 export function showCharacterGallery(characters, activeId = null) {
   console.log('');
   console.log(

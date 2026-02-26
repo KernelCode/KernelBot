@@ -4,11 +4,11 @@
 process.removeAllListeners('warning');
 process.on('warning', (w) => { if (w.name !== 'DeprecationWarning' || !w.message.includes('punycode')) console.warn(w); });
 
-import { createInterface } from 'readline';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import chalk from 'chalk';
+import * as p from '@clack/prompts';
 import { loadConfig, loadConfigInteractive, changeBrainModel, changeOrchestratorModel, saveDashboardToYaml } from '../src/utils/config.js';
 import { createLogger, getLogger } from '../src/utils/logger.js';
 import {
@@ -16,8 +16,10 @@ import {
   showStartupCheck,
   showStartupComplete,
   showError,
-  showCharacterGallery,
   showCharacterCard,
+  showWelcomeScreen,
+  handleCancel,
+  formatProviderLabel,
 } from '../src/utils/display.js';
 import { createAuditLogger } from '../src/security/audit.js';
 import { CharacterBuilder } from '../src/characters/builder.js';
@@ -38,112 +40,34 @@ import {
   deleteCustomSkill,
 } from '../src/skills/custom.js';
 
-function showMenu(config) {
-  const orchProviderDef = PROVIDERS[config.orchestrator.provider];
-  const orchProviderName = orchProviderDef ? orchProviderDef.name : config.orchestrator.provider;
-  const orchModelId = config.orchestrator.model;
-
-  const providerDef = PROVIDERS[config.brain.provider];
-  const providerName = providerDef ? providerDef.name : config.brain.provider;
-  const modelId = config.brain.model;
-
-  console.log('');
-  console.log(chalk.dim(`  Current orchestrator: ${orchProviderName} / ${orchModelId}`));
-  console.log(chalk.dim(`  Current brain: ${providerName} / ${modelId}`));
-  console.log('');
-  console.log(chalk.bold('  What would you like to do?\n'));
-  console.log(`  ${chalk.cyan('1.')} Start bot`);
-  console.log(`  ${chalk.cyan('2.')} Check connections`);
-  console.log(`  ${chalk.cyan('3.')} View logs`);
-  console.log(`  ${chalk.cyan('4.')} View audit logs`);
-  console.log(`  ${chalk.cyan('5.')} Change brain model`);
-  console.log(`  ${chalk.cyan('6.')} Change orchestrator model`);
-  console.log(`  ${chalk.cyan('7.')} Manage custom skills`);
-  console.log(`  ${chalk.cyan('8.')} Manage automations`);
-  console.log(`  ${chalk.cyan('9.')} Switch character`);
-  console.log(`  ${chalk.cyan('10.')} Link LinkedIn account`);
-  console.log(`  ${chalk.cyan('11.')} Dashboard`);
-  console.log(`  ${chalk.cyan('12.')} Exit`);
-  console.log('');
-}
-
-function ask(rl, question) {
-  return new Promise((res) => rl.question(question, res));
-}
-
 /**
  * Register SIGINT/SIGTERM handlers to shut down the bot cleanly.
- * Stops polling, cancels running jobs, persists conversations,
- * disarms automations, stops the life engine, and clears intervals.
  */
 function setupGracefulShutdown({ bot, lifeEngine, automationManager, jobManager, conversationManager, intervals, dashboardHandle }) {
   let shuttingDown = false;
 
   const shutdown = async (signal) => {
-    if (shuttingDown) return; // prevent double-shutdown
+    if (shuttingDown) return;
     shuttingDown = true;
 
     const logger = getLogger();
     logger.info(`[Shutdown] ${signal} received — shutting down gracefully...`);
 
-    // 1. Stop Telegram polling so no new messages arrive
-    try {
-      bot.stopPolling();
-      logger.info('[Shutdown] Telegram polling stopped');
-    } catch (err) {
-      logger.error(`[Shutdown] Failed to stop polling: ${err.message}`);
-    }
+    try { bot.stopPolling(); logger.info('[Shutdown] Telegram polling stopped'); } catch (err) { logger.error(`[Shutdown] Failed to stop polling: ${err.message}`); }
+    try { lifeEngine.stop(); logger.info('[Shutdown] Life engine stopped'); } catch (err) { logger.error(`[Shutdown] Failed to stop life engine: ${err.message}`); }
+    try { automationManager.shutdown(); logger.info('[Shutdown] Automation timers cancelled'); } catch (err) { logger.error(`[Shutdown] Failed to shutdown automations: ${err.message}`); }
 
-    // 2. Stop life engine heartbeat
-    try {
-      lifeEngine.stop();
-      logger.info('[Shutdown] Life engine stopped');
-    } catch (err) {
-      logger.error(`[Shutdown] Failed to stop life engine: ${err.message}`);
-    }
-
-    // 3. Disarm all automation timers
-    try {
-      automationManager.shutdown();
-      logger.info('[Shutdown] Automation timers cancelled');
-    } catch (err) {
-      logger.error(`[Shutdown] Failed to shutdown automations: ${err.message}`);
-    }
-
-    // 4. Cancel all running jobs
     try {
       const running = [...jobManager.jobs.values()].filter(j => !j.isTerminal);
-      for (const job of running) {
-        jobManager.cancelJob(job.id);
-      }
-      if (running.length > 0) {
-        logger.info(`[Shutdown] Cancelled ${running.length} running job(s)`);
-      }
-    } catch (err) {
-      logger.error(`[Shutdown] Failed to cancel jobs: ${err.message}`);
-    }
+      for (const job of running) jobManager.cancelJob(job.id);
+      if (running.length > 0) logger.info(`[Shutdown] Cancelled ${running.length} running job(s)`);
+    } catch (err) { logger.error(`[Shutdown] Failed to cancel jobs: ${err.message}`); }
 
-    // 5. Persist conversations to disk
-    try {
-      conversationManager.save();
-      logger.info('[Shutdown] Conversations saved');
-    } catch (err) {
-      logger.error(`[Shutdown] Failed to save conversations: ${err.message}`);
-    }
+    try { conversationManager.save(); logger.info('[Shutdown] Conversations saved'); } catch (err) { logger.error(`[Shutdown] Failed to save conversations: ${err.message}`); }
+    try { dashboardHandle?.stop(); } catch (err) { logger.error(`[Shutdown] Failed to stop dashboard: ${err.message}`); }
 
-    // 6. Stop dashboard
-    try {
-      dashboardHandle?.stop();
-    } catch (err) {
-      logger.error(`[Shutdown] Failed to stop dashboard: ${err.message}`);
-    }
-
-    // 7. Clear periodic intervals
-    for (const id of intervals) {
-      clearInterval(id);
-    }
+    for (const id of intervals) clearInterval(id);
     logger.info('[Shutdown] Periodic timers cleared');
-
     logger.info('[Shutdown] Graceful shutdown complete');
     process.exit(0);
   };
@@ -158,33 +82,33 @@ function viewLog(filename) {
     join(homedir(), '.kernelbot', filename),
   ];
 
-  for (const p of paths) {
-    if (existsSync(p)) {
-      const content = readFileSync(p, 'utf-8');
+  for (const logPath of paths) {
+    if (existsSync(logPath)) {
+      const content = readFileSync(logPath, 'utf-8');
       const lines = content.split('\n').filter(Boolean);
       const recent = lines.slice(-30);
-      console.log(chalk.dim(`\n  Showing last ${recent.length} entries from ${p}\n`));
-      for (const line of recent) {
+
+      const formatted = recent.map(line => {
         try {
           const entry = JSON.parse(line);
           const time = entry.timestamp || '';
           const level = entry.level || '';
           const msg = entry.message || '';
           const color = level === 'error' ? chalk.red : level === 'warn' ? chalk.yellow : chalk.dim;
-          console.log(`  ${chalk.dim(time)} ${color(level)} ${msg}`);
+          return `${chalk.dim(time)} ${color(level)} ${msg}`;
         } catch {
-          console.log(`  ${line}`);
+          return line;
         }
-      }
-      console.log('');
+      }).join('\n');
+
+      p.note(formatted, `Last ${recent.length} entries from ${logPath}`);
       return;
     }
   }
-  console.log(chalk.dim(`\n  No ${filename} found yet.\n`));
+  p.log.info(`No ${filename} found yet.`);
 }
 
 async function runCheck(config) {
-  // Orchestrator check
   const orchProviderKey = config.orchestrator.provider || 'anthropic';
   const orchProviderDef = PROVIDERS[orchProviderKey];
   const orchLabel = orchProviderDef ? orchProviderDef.name : orchProviderKey;
@@ -207,7 +131,6 @@ async function runCheck(config) {
     await provider.ping();
   });
 
-  // Worker brain check
   const providerDef = PROVIDERS[config.brain.provider];
   const providerLabel = providerDef ? providerDef.name : config.brain.provider;
   const envKeyLabel = providerDef ? providerDef.envKey : 'API_KEY';
@@ -226,14 +149,12 @@ async function runCheck(config) {
   });
 
   await showStartupCheck('Telegram Bot API', async () => {
-    const res = await fetch(
-      `https://api.telegram.org/bot${config.telegram.bot_token}/getMe`,
-    );
+    const res = await fetch(`https://api.telegram.org/bot${config.telegram.bot_token}/getMe`);
     const data = await res.json();
     if (!data.ok) throw new Error(data.description || 'Invalid token');
   });
 
-  console.log(chalk.green('\n  All checks passed.\n'));
+  p.log.success('All checks passed.');
 }
 
 async function startBotFlow(config) {
@@ -245,7 +166,6 @@ async function startBotFlow(config) {
 
   const checks = [];
 
-  // Orchestrator check — dynamic provider
   const orchProviderKey = config.orchestrator.provider || 'anthropic';
   const orchProviderDef = PROVIDERS[orchProviderKey];
   const orchLabel = orchProviderDef ? orchProviderDef.name : orchProviderKey;
@@ -267,7 +187,6 @@ async function startBotFlow(config) {
     }),
   );
 
-  // Worker brain check
   checks.push(
     await showStartupCheck(`Worker (${providerLabel}) API`, async () => {
       const provider = createProvider(config);
@@ -277,9 +196,7 @@ async function startBotFlow(config) {
 
   checks.push(
     await showStartupCheck('Telegram Bot API', async () => {
-      const res = await fetch(
-        `https://api.telegram.org/bot${config.telegram.bot_token}/getMe`,
-      );
+      const res = await fetch(`https://api.telegram.org/bot${config.telegram.bot_token}/getMe`);
       const data = await res.json();
       if (!data.ok) throw new Error(data.description || 'Invalid token');
     }),
@@ -290,11 +207,7 @@ async function startBotFlow(config) {
     return false;
   }
 
-  // Character system — manages multiple personas with isolated data
   const characterManager = new CharacterManager();
-
-  // Install built-in characters if needed (fresh install or missing builtins).
-  // Onboarding flag stays true until user picks a character via Telegram.
   if (characterManager.needsOnboarding) {
     characterManager.installAllBuiltins();
   }
@@ -310,8 +223,6 @@ async function startBotFlow(config) {
   });
 
   const automationManager = new AutomationManager();
-
-  // Life system managers — scoped to active character
   const codebaseKnowledge = new CodebaseKnowledge({ config });
 
   const agent = new Agent({
@@ -323,13 +234,9 @@ async function startBotFlow(config) {
     characterManager,
   });
 
-  // Load character context into agent (sets persona, name, etc.)
   agent.loadCharacter(activeCharacterId);
-
-  // Wire codebase knowledge to agent for LLM-powered scanning
   codebaseKnowledge.setAgent(agent);
 
-  // Life Engine — autonomous inner life (scoped to active character)
   const lifeEngine = new LifeEngine({
     config, agent,
     memoryManager: charCtx.memoryManager,
@@ -351,7 +258,6 @@ async function startBotFlow(config) {
     selfManager: charCtx.selfManager,
   };
 
-  // Optional cyberpunk terminal dashboard (must init before startBot so handle is available)
   let dashboardHandle = null;
   if (config.dashboard?.enabled) {
     const { startDashboard } = await import('../src/dashboard/server.js');
@@ -371,14 +277,12 @@ async function startBotFlow(config) {
     dashboardDeps,
   });
 
-  // Periodic job cleanup and timeout enforcement
   const cleanupMs = (config.swarm.cleanup_interval_minutes || 30) * 60 * 1000;
   const cleanupInterval = setInterval(() => {
     jobManager.cleanup();
     jobManager.enforceTimeouts();
-  }, Math.min(cleanupMs, 60_000)); // enforce timeouts every minute at most
+  }, Math.min(cleanupMs, 60_000));
 
-  // Periodic memory pruning (daily)
   const retentionDays = config.life?.memory_retention_days || 90;
   const pruneInterval = setInterval(() => {
     charCtx.memoryManager.pruneOld(retentionDays);
@@ -387,7 +291,6 @@ async function startBotFlow(config) {
 
   showStartupComplete();
 
-  // Start life engine if enabled
   const lifeEnabled = config.life?.enabled !== false;
   if (lifeEnabled) {
     logger.info('[Startup] Life engine enabled — waking up...');
@@ -396,10 +299,9 @@ async function startBotFlow(config) {
       logger.info('[Startup] Life engine running');
     }).catch(err => {
       logger.error(`[Startup] Life engine wake-up failed: ${err.message}`);
-      lifeEngine.start(); // still start heartbeat even if wake-up fails
+      lifeEngine.start();
     });
 
-    // Initial codebase scan (background, non-blocking)
     if (config.life?.self_coding?.enabled) {
       codebaseKnowledge.scanChanged().then(count => {
         if (count > 0) logger.info(`[Startup] Codebase scan: ${count} files indexed`);
@@ -411,7 +313,6 @@ async function startBotFlow(config) {
     logger.info('[Startup] Life engine disabled');
   }
 
-  // Register graceful shutdown handlers
   setupGracefulShutdown({
     bot, lifeEngine, automationManager, jobManager,
     conversationManager, intervals: [cleanupInterval, pruneInterval],
@@ -421,155 +322,134 @@ async function startBotFlow(config) {
   return true;
 }
 
-async function manageCustomSkills(rl) {
+async function manageCustomSkills() {
   loadCustomSkills();
 
   let managing = true;
   while (managing) {
     const customs = getCustomSkills();
-    console.log('');
-    console.log(chalk.bold('  Custom Skills\n'));
-    console.log(`  ${chalk.cyan('1.')} Create new skill`);
-    console.log(`  ${chalk.cyan('2.')} List skills (${customs.length})`);
-    console.log(`  ${chalk.cyan('3.')} Delete a skill`);
-    console.log(`  ${chalk.cyan('4.')} Back`);
-    console.log('');
 
-    const choice = await ask(rl, chalk.cyan('  > '));
-    switch (choice.trim()) {
-      case '1': {
-        const name = await ask(rl, chalk.cyan('  Skill name: '));
-        if (!name.trim()) {
-          console.log(chalk.dim('  Cancelled.\n'));
-          break;
-        }
-        console.log(chalk.dim('  Enter the system prompt (multi-line). Type END on a blank line to finish:\n'));
-        const lines = [];
-        while (true) {
-          const line = await ask(rl, '  ');
-          if (line.trim() === 'END') break;
-          lines.push(line);
-        }
-        const prompt = lines.join('\n').trim();
-        if (!prompt) {
-          console.log(chalk.dim('  Empty prompt — cancelled.\n'));
-          break;
-        }
-        const skill = addCustomSkill({ name: name.trim(), systemPrompt: prompt });
-        console.log(chalk.green(`\n  ✅ Created: ${skill.name} (${skill.id})\n`));
-        break;
-      }
-      case '2': {
-        const customs = getCustomSkills();
-        if (!customs.length) {
-          console.log(chalk.dim('\n  No custom skills yet.\n'));
-          break;
-        }
-        console.log('');
-        for (const s of customs) {
-          const preview = s.systemPrompt.slice(0, 60).replace(/\n/g, ' ');
-          console.log(`  🛠️  ${chalk.bold(s.name)} (${s.id})`);
-          console.log(chalk.dim(`     ${preview}${s.systemPrompt.length > 60 ? '...' : ''}`));
-        }
-        console.log('');
-        break;
-      }
-      case '3': {
-        const customs = getCustomSkills();
-        if (!customs.length) {
-          console.log(chalk.dim('\n  No custom skills to delete.\n'));
-          break;
-        }
-        console.log('');
-        customs.forEach((s, i) => {
-          console.log(`  ${chalk.cyan(`${i + 1}.`)} ${s.name} (${s.id})`);
+    const choice = await p.select({
+      message: `Custom Skills (${customs.length})`,
+      options: [
+        { value: 'create', label: 'Create new skill' },
+        { value: 'list', label: `List skills`, hint: `${customs.length} total` },
+        { value: 'delete', label: 'Delete a skill' },
+        { value: 'back', label: 'Back' },
+      ],
+    });
+    if (handleCancel(choice)) return;
+
+    switch (choice) {
+      case 'create': {
+        const name = await p.text({ message: 'Skill name' });
+        if (handleCancel(name) || !name.trim()) break;
+
+        const prompt = await p.text({
+          message: 'System prompt',
+          placeholder: 'Enter the system prompt for this skill...',
         });
-        console.log('');
-        const pick = await ask(rl, chalk.cyan('  Delete #: '));
-        const idx = parseInt(pick, 10) - 1;
-        if (idx >= 0 && idx < customs.length) {
-          const deleted = deleteCustomSkill(customs[idx].id);
-          if (deleted) console.log(chalk.green(`\n  🗑️  Deleted: ${customs[idx].name}\n`));
-          else console.log(chalk.dim('  Not found.\n'));
-        } else {
-          console.log(chalk.dim('  Cancelled.\n'));
-        }
+        if (handleCancel(prompt) || !prompt.trim()) break;
+
+        const skill = addCustomSkill({ name: name.trim(), systemPrompt: prompt.trim() });
+        p.log.success(`Created: ${skill.name} (${skill.id})`);
         break;
       }
-      case '4':
+      case 'list': {
+        if (!customs.length) {
+          p.log.info('No custom skills yet.');
+          break;
+        }
+        const formatted = customs.map(s => {
+          const preview = s.systemPrompt.slice(0, 60).replace(/\n/g, ' ');
+          return `${chalk.bold(s.name)} (${s.id})\n${chalk.dim(preview + (s.systemPrompt.length > 60 ? '...' : ''))}`;
+        }).join('\n\n');
+        p.note(formatted, 'Custom Skills');
+        break;
+      }
+      case 'delete': {
+        if (!customs.length) {
+          p.log.info('No custom skills to delete.');
+          break;
+        }
+        const toDelete = await p.select({
+          message: 'Select skill to delete',
+          options: [
+            ...customs.map(s => ({ value: s.id, label: s.name, hint: s.id })),
+            { value: '__back', label: 'Cancel' },
+          ],
+        });
+        if (handleCancel(toDelete) || toDelete === '__back') break;
+        const deleted = deleteCustomSkill(toDelete);
+        if (deleted) p.log.success(`Deleted: ${customs.find(s => s.id === toDelete)?.name}`);
+        break;
+      }
+      case 'back':
         managing = false;
         break;
-      default:
-        console.log(chalk.dim('  Invalid choice.\n'));
     }
   }
 }
 
-async function manageAutomations(rl) {
+async function manageAutomations() {
   const manager = new AutomationManager();
 
   let managing = true;
   while (managing) {
     const autos = manager.listAll();
-    console.log('');
-    console.log(chalk.bold('  Automations\n'));
-    console.log(`  ${chalk.cyan('1.')} List all automations (${autos.length})`);
-    console.log(`  ${chalk.cyan('2.')} Delete an automation`);
-    console.log(`  ${chalk.cyan('3.')} Back`);
-    console.log('');
 
-    const choice = await ask(rl, chalk.cyan('  > '));
-    switch (choice.trim()) {
-      case '1': {
+    const choice = await p.select({
+      message: `Automations (${autos.length})`,
+      options: [
+        { value: 'list', label: 'List all automations', hint: `${autos.length} total` },
+        { value: 'delete', label: 'Delete an automation' },
+        { value: 'back', label: 'Back' },
+      ],
+    });
+    if (handleCancel(choice)) return;
+
+    switch (choice) {
+      case 'list': {
         if (!autos.length) {
-          console.log(chalk.dim('\n  No automations found.\n'));
+          p.log.info('No automations found.');
           break;
         }
-        console.log('');
-        for (const a of autos) {
+        const formatted = autos.map(a => {
           const status = a.enabled ? chalk.green('enabled') : chalk.yellow('paused');
           const next = a.nextRun ? new Date(a.nextRun).toLocaleString() : 'not scheduled';
-          console.log(`  ${chalk.bold(a.name)} (${a.id}) — chat ${a.chatId}`);
-          console.log(chalk.dim(`     Status: ${status} | Runs: ${a.runCount} | Next: ${next}`));
-          console.log(chalk.dim(`     Task: ${a.description.slice(0, 80)}${a.description.length > 80 ? '...' : ''}`));
-        }
-        console.log('');
+          return `${chalk.bold(a.name)} (${a.id}) — chat ${a.chatId}\n` +
+            chalk.dim(`Status: ${status} | Runs: ${a.runCount} | Next: ${next}\n`) +
+            chalk.dim(`Task: ${a.description.slice(0, 80)}${a.description.length > 80 ? '...' : ''}`);
+        }).join('\n\n');
+        p.note(formatted, 'Automations');
         break;
       }
-      case '2': {
+      case 'delete': {
         if (!autos.length) {
-          console.log(chalk.dim('\n  No automations to delete.\n'));
+          p.log.info('No automations to delete.');
           break;
         }
-        console.log('');
-        autos.forEach((a, i) => {
-          console.log(`  ${chalk.cyan(`${i + 1}.`)} ${a.name} (${a.id}) — chat ${a.chatId}`);
+        const toDelete = await p.select({
+          message: 'Select automation to delete',
+          options: [
+            ...autos.map(a => ({ value: a.id, label: a.name, hint: `chat ${a.chatId}` })),
+            { value: '__back', label: 'Cancel' },
+          ],
         });
-        console.log('');
-        const pick = await ask(rl, chalk.cyan('  Delete #: '));
-        const idx = parseInt(pick, 10) - 1;
-        if (idx >= 0 && idx < autos.length) {
-          const deleted = manager.delete(autos[idx].id);
-          if (deleted) console.log(chalk.green(`\n  🗑️  Deleted: ${autos[idx].name}\n`));
-          else console.log(chalk.dim('  Not found.\n'));
-        } else {
-          console.log(chalk.dim('  Cancelled.\n'));
-        }
+        if (handleCancel(toDelete) || toDelete === '__back') break;
+        const deleted = manager.delete(toDelete);
+        if (deleted) p.log.success(`Deleted: ${autos.find(a => a.id === toDelete)?.name}`);
         break;
       }
-      case '3':
+      case 'back':
         managing = false;
         break;
-      default:
-        console.log(chalk.dim('  Invalid choice.\n'));
     }
   }
 }
 
-async function manageCharacters(rl, config) {
+async function manageCharacters(config) {
   const charManager = new CharacterManager();
-
-  // Ensure builtins installed
   charManager.installAllBuiltins();
 
   let managing = true;
@@ -578,49 +458,42 @@ async function manageCharacters(rl, config) {
     const activeId = charManager.getActiveCharacterId();
     const active = charManager.getCharacter(activeId);
 
-    console.log('');
-    console.log(chalk.bold('  Character Management'));
-    console.log(chalk.dim(`  Active: ${active?.emoji || ''} ${active?.name || 'None'}`));
-    console.log('');
-    console.log(`  ${chalk.cyan('1.')} Switch character`);
-    console.log(`  ${chalk.cyan('2.')} Create custom character`);
-    console.log(`  ${chalk.cyan('3.')} View character info`);
-    console.log(`  ${chalk.cyan('4.')} Delete a custom character`);
-    console.log(`  ${chalk.cyan('5.')} Back`);
-    console.log('');
+    const choice = await p.select({
+      message: `Characters — Active: ${active?.emoji || ''} ${active?.name || 'None'}`,
+      options: [
+        { value: 'switch', label: 'Switch character' },
+        { value: 'create', label: 'Create custom character' },
+        { value: 'view', label: 'View character info' },
+        { value: 'delete', label: 'Delete a custom character' },
+        { value: 'back', label: 'Back' },
+      ],
+    });
+    if (handleCancel(choice)) return;
 
-    const choice = await ask(rl, chalk.cyan('  > '));
-    switch (choice.trim()) {
-      case '1': {
-        showCharacterGallery(characters, activeId);
-        console.log('');
-        characters.forEach((c, i) => {
-          const marker = c.id === activeId ? chalk.green(' ✓') : '';
-          console.log(`  ${chalk.cyan(`${i + 1}.`)} ${c.emoji} ${c.name}${marker}`);
+    switch (choice) {
+      case 'switch': {
+        const picked = await p.select({
+          message: 'Select character',
+          options: characters.map(c => ({
+            value: c.id,
+            label: `${c.emoji} ${c.name}`,
+            hint: c.id === activeId ? 'active' : undefined,
+          })),
         });
-        console.log('');
-        const pick = await ask(rl, chalk.cyan('  Select #: '));
-        const idx = parseInt(pick, 10) - 1;
-        if (idx >= 0 && idx < characters.length) {
-          charManager.setActiveCharacter(characters[idx].id);
-          console.log(chalk.green(`\n  ${characters[idx].emoji} Switched to ${characters[idx].name}\n`));
-        } else {
-          console.log(chalk.dim('  Cancelled.\n'));
-        }
+        if (handleCancel(picked)) break;
+        charManager.setActiveCharacter(picked);
+        const char = characters.find(c => c.id === picked);
+        p.log.success(`${char.emoji} Switched to ${char.name}`);
         break;
       }
-      case '2': {
-        // Create custom character via Q&A
-        console.log('');
-        console.log(chalk.bold('  Custom Character Builder'));
-        console.log(chalk.dim('  Answer a few questions to create your character.\n'));
+      case 'create': {
+        p.log.step('Custom Character Builder');
 
-        // Need an LLM provider for generation
         const orchProviderKey = config.orchestrator.provider || 'anthropic';
         const orchProviderDef = PROVIDERS[orchProviderKey];
         const orchApiKey = config.orchestrator.api_key || (orchProviderDef && process.env[orchProviderDef.envKey]);
         if (!orchApiKey) {
-          console.log(chalk.red('  No API key configured for character generation.\n'));
+          p.log.error('No API key configured for character generation.');
           break;
         }
 
@@ -638,187 +511,207 @@ async function manageCharacters(rl, config) {
         const answers = {};
         let cancelled = false;
 
-        // Walk through all questions
         let q = builder.getNextQuestion(answers);
         while (q) {
           const progress = builder.getProgress(answers);
-          console.log(chalk.bold(`  Question ${progress.answered + 1}/${progress.total}`));
-          console.log(`  ${q.question}`);
-          console.log(chalk.dim(`  Examples: ${q.examples}`));
-          const answer = await ask(rl, chalk.cyan('  > '));
-          if (answer.trim().toLowerCase() === 'cancel') {
-            cancelled = true;
-            break;
-          }
+          const answer = await p.text({
+            message: `(${progress.answered + 1}/${progress.total}) ${q.question}`,
+            placeholder: q.examples,
+          });
+          if (handleCancel(answer)) { cancelled = true; break; }
           answers[q.id] = answer.trim();
           q = builder.getNextQuestion(answers);
-          console.log('');
         }
 
-        if (cancelled) {
-          console.log(chalk.dim('  Character creation cancelled.\n'));
-          break;
-        }
+        if (cancelled) break;
 
-        console.log(chalk.dim('  Generating character...'));
+        const s = p.spinner();
+        s.start('Generating character...');
         try {
           const result = await builder.generateCharacter(answers);
+          s.stop('Character generated');
           const id = result.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-          // Show preview
           console.log('');
-          showCharacterCard({
-            ...result,
-            id,
-            origin: 'Custom',
-          });
+          showCharacterCard({ ...result, id, origin: 'Custom' });
           console.log('');
 
-          const confirm = await ask(rl, chalk.cyan('  Install this character? (y/n): '));
-          if (confirm.trim().toLowerCase() === 'y') {
-            charManager.addCharacter(
-              { id, type: 'custom', name: result.name, origin: 'Custom', age: result.age, emoji: result.emoji, tagline: result.tagline },
-              result.personaMd,
-              result.selfDefaults,
-            );
-            console.log(chalk.green(`\n  ${result.emoji} ${result.name} created!\n`));
-          } else {
-            console.log(chalk.dim('  Discarded.\n'));
+          const install = await p.confirm({ message: 'Install this character?' });
+          if (handleCancel(install) || !install) {
+            p.log.info('Discarded.');
+            break;
           }
+
+          charManager.addCharacter(
+            { id, type: 'custom', name: result.name, origin: 'Custom', age: result.age, emoji: result.emoji, tagline: result.tagline },
+            result.personaMd,
+            result.selfDefaults,
+          );
+          p.log.success(`${result.emoji} ${result.name} created!`);
         } catch (err) {
-          console.log(chalk.red(`\n  Character generation failed: ${err.message}\n`));
+          s.stop(chalk.red(`Character generation failed: ${err.message}`));
         }
         break;
       }
-      case '3': {
-        console.log('');
-        characters.forEach((c, i) => {
-          console.log(`  ${chalk.cyan(`${i + 1}.`)} ${c.emoji} ${c.name}`);
+      case 'view': {
+        const picked = await p.select({
+          message: 'Select character to view',
+          options: characters.map(c => ({
+            value: c.id,
+            label: `${c.emoji} ${c.name}`,
+          })),
         });
-        console.log('');
-        const pick = await ask(rl, chalk.cyan('  View #: '));
-        const idx = parseInt(pick, 10) - 1;
-        if (idx >= 0 && idx < characters.length) {
-          showCharacterCard(characters[idx], characters[idx].id === activeId);
-          if (characters[idx].evolutionHistory?.length > 0) {
-            console.log(chalk.dim(`  Evolution events: ${characters[idx].evolutionHistory.length}`));
-          }
-          console.log('');
-        } else {
-          console.log(chalk.dim('  Cancelled.\n'));
+        if (handleCancel(picked)) break;
+        const char = characters.find(c => c.id === picked);
+        showCharacterCard(char, char.id === activeId);
+        if (char.evolutionHistory?.length > 0) {
+          p.log.info(`Evolution events: ${char.evolutionHistory.length}`);
         }
         break;
       }
-      case '4': {
+      case 'delete': {
         const customChars = characters.filter(c => c.type === 'custom');
         if (customChars.length === 0) {
-          console.log(chalk.dim('\n  No custom characters to delete.\n'));
+          p.log.info('No custom characters to delete.');
           break;
         }
-        console.log('');
-        customChars.forEach((c, i) => {
-          console.log(`  ${chalk.cyan(`${i + 1}.`)} ${c.emoji} ${c.name}`);
+        const picked = await p.select({
+          message: 'Select character to delete',
+          options: [
+            ...customChars.map(c => ({ value: c.id, label: `${c.emoji} ${c.name}` })),
+            { value: '__back', label: 'Cancel' },
+          ],
         });
-        console.log('');
-        const pick = await ask(rl, chalk.cyan('  Delete #: '));
-        const idx = parseInt(pick, 10) - 1;
-        if (idx >= 0 && idx < customChars.length) {
-          try {
-            charManager.removeCharacter(customChars[idx].id);
-            console.log(chalk.green(`\n  Deleted: ${customChars[idx].name}\n`));
-          } catch (err) {
-            console.log(chalk.red(`\n  ${err.message}\n`));
-          }
-        } else {
-          console.log(chalk.dim('  Cancelled.\n'));
+        if (handleCancel(picked) || picked === '__back') break;
+        try {
+          const char = customChars.find(c => c.id === picked);
+          charManager.removeCharacter(picked);
+          p.log.success(`Deleted: ${char.name}`);
+        } catch (err) {
+          p.log.error(err.message);
         }
         break;
       }
-      case '5':
+      case 'back':
         managing = false;
         break;
-      default:
-        console.log(chalk.dim('  Invalid choice.\n'));
     }
   }
 }
 
-async function linkLinkedInCli(config, rl) {
+async function linkLinkedInCli(config) {
   const { saveCredential } = await import('../src/utils/config.js');
 
-  // Show current status
   if (config.linkedin?.access_token) {
     const truncated = `${config.linkedin.access_token.slice(0, 8)}...${config.linkedin.access_token.slice(-4)}`;
-    console.log(chalk.dim(`\n  Currently connected — token: ${truncated}`));
-    if (config.linkedin.person_urn) console.log(chalk.dim(`  URN: ${config.linkedin.person_urn}`));
-    const relink = (await ask(rl, chalk.cyan('\n  Re-link? [y/N]: '))).trim().toLowerCase();
-    if (relink !== 'y') {
-      console.log(chalk.dim('  Cancelled.\n'));
-      return;
-    }
+    p.note(
+      `Token: ${truncated}${config.linkedin.person_urn ? `\nURN: ${config.linkedin.person_urn}` : ''}`,
+      'LinkedIn — Connected',
+    );
+    const relink = await p.confirm({ message: 'Re-link account?', initialValue: false });
+    if (handleCancel(relink) || !relink) return;
   }
 
-  console.log('');
-  console.log(chalk.bold('  Link LinkedIn Account\n'));
-  console.log(chalk.dim('  1. Go to https://www.linkedin.com/developers/tools/oauth/token-generator'));
-  console.log(chalk.dim('  2. Select your app, pick scopes: openid, profile, email, w_member_social'));
-  console.log(chalk.dim('  3. Authorize and copy the token'));
-  console.log('');
+  p.note(
+    '1. Go to https://www.linkedin.com/developers/tools/oauth/token-generator\n' +
+    '2. Select your app, pick scopes: openid, profile, email, w_member_social\n' +
+    '3. Authorize and copy the token',
+    'Link LinkedIn Account',
+  );
 
-  const token = (await ask(rl, chalk.cyan('  Paste token (or "cancel"): '))).trim();
-  if (!token || token.toLowerCase() === 'cancel') {
-    console.log(chalk.dim('  Cancelled.\n'));
-    return;
-  }
+  const token = await p.text({ message: 'Paste access token' });
+  if (handleCancel(token) || !token.trim()) return;
 
-  console.log(chalk.dim('\n  Validating token...'));
+  const s = p.spinner();
+  s.start('Validating token...');
 
   try {
-    // Try /v2/userinfo (requires "Sign in with LinkedIn" product → openid+profile scopes)
     const res = await fetch('https://api.linkedin.com/v2/userinfo', {
-      headers: { 'Authorization': `Bearer ${token}` },
+      headers: { 'Authorization': `Bearer ${token.trim()}` },
     });
 
     if (res.ok) {
       const profile = await res.json();
       const personUrn = `urn:li:person:${profile.sub}`;
 
-      saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
+      saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token.trim());
       saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
 
-      console.log(chalk.green(`\n  ✔ LinkedIn linked`));
-      console.log(chalk.dim(`    Name: ${profile.name}`));
-      if (profile.email) console.log(chalk.dim(`    Email: ${profile.email}`));
-      console.log(chalk.dim(`    URN: ${personUrn}`));
-      console.log('');
+      s.stop('LinkedIn linked');
+      p.log.info(`Name: ${profile.name}${profile.email ? ` | Email: ${profile.email}` : ''}\nURN: ${personUrn}`);
     } else if (res.status === 401) {
       throw new Error('Invalid or expired token.');
     } else {
-      // 403 = token works but no profile scopes → save token, ask for URN
-      console.log(chalk.yellow('\n  Token accepted but profile scopes missing (openid+profile).'));
-      console.log(chalk.dim('  To auto-detect your URN, add "Sign in with LinkedIn using OpenID Connect"'));
-      console.log(chalk.dim('  to your app at https://www.linkedin.com/developers/apps\n'));
-      console.log(chalk.dim('  For now, enter your person URN manually.'));
-      console.log(chalk.dim('  Find it: LinkedIn profile → URL contains /in/yourname'));
-      console.log(chalk.dim('  Or: Developer Portal → Your App → Auth → Your member sub value\n'));
+      s.stop('Token accepted (profile scopes missing)');
+      p.log.warn(
+        'To auto-detect your URN, add "Sign in with LinkedIn using OpenID Connect"\n' +
+        'to your app at https://www.linkedin.com/developers/apps',
+      );
 
-      const urn = (await ask(rl, chalk.cyan('  Person URN (urn:li:person:XXXXX): '))).trim();
-      if (!urn) {
-        console.log(chalk.yellow('  No URN provided. Token saved but LinkedIn posts will not work without a URN.\n'));
-        saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
+      const urn = await p.text({
+        message: 'Person URN (urn:li:person:XXXXX)',
+        placeholder: 'urn:li:person:...',
+      });
+      if (handleCancel(urn) || !urn.trim()) {
+        p.log.warn('No URN provided. Token saved but LinkedIn posts will not work without a URN.');
+        saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token.trim());
         return;
       }
 
-      const personUrn = urn.startsWith('urn:li:person:') ? urn : `urn:li:person:${urn}`;
-      saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token);
+      const personUrn = urn.trim().startsWith('urn:li:person:') ? urn.trim() : `urn:li:person:${urn.trim()}`;
+      saveCredential(config, 'LINKEDIN_ACCESS_TOKEN', token.trim());
       saveCredential(config, 'LINKEDIN_PERSON_URN', personUrn);
 
-      console.log(chalk.green(`\n  ✔ LinkedIn linked`));
-      console.log(chalk.dim(`    URN: ${personUrn}`));
-      console.log('');
+      p.log.success(`LinkedIn linked — URN: ${personUrn}`);
     }
   } catch (err) {
-    console.log(chalk.red(`\n  ✖ Token validation failed: ${err.message}\n`));
+    s.stop(chalk.red(`Token validation failed: ${err.message}`));
+  }
+}
+
+async function manageDashboard(config) {
+  const dashEnabled = config.dashboard?.enabled;
+  const dashPort = config.dashboard?.port || 3000;
+
+  p.note(
+    `Auto-start: ${dashEnabled ? chalk.green('yes') : chalk.yellow('no')}\n` +
+    `Port: ${dashPort}\n` +
+    `URL: http://localhost:${dashPort}`,
+    'Dashboard',
+  );
+
+  const choice = await p.select({
+    message: 'Dashboard settings',
+    options: [
+      { value: 'toggle', label: `${dashEnabled ? 'Disable' : 'Enable'} auto-start on boot` },
+      { value: 'port', label: 'Change port', hint: String(dashPort) },
+      { value: 'back', label: 'Back' },
+    ],
+  });
+  if (handleCancel(choice) || choice === 'back') return;
+
+  if (choice === 'toggle') {
+    const newEnabled = !dashEnabled;
+    saveDashboardToYaml({ enabled: newEnabled });
+    config.dashboard.enabled = newEnabled;
+    p.log.success(`Dashboard auto-start ${newEnabled ? 'enabled' : 'disabled'}`);
+    if (newEnabled) {
+      p.log.info(`Dashboard will start at http://localhost:${dashPort} on next bot launch.`);
+    }
+  } else if (choice === 'port') {
+    const portInput = await p.text({
+      message: 'New port',
+      placeholder: String(dashPort),
+      validate: (v) => {
+        const n = parseInt(v.trim(), 10);
+        if (!n || n < 1 || n > 65535) return 'Enter a valid port (1-65535)';
+      },
+    });
+    if (handleCancel(portInput)) return;
+    const newPort = parseInt(portInput.trim(), 10);
+    saveDashboardToYaml({ port: newPort });
+    config.dashboard.port = newPort;
+    p.log.success(`Dashboard port set to ${newPort}`);
   }
 }
 
@@ -828,100 +721,82 @@ async function main() {
   const config = await loadConfigInteractive();
   createLogger(config);
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // Show welcome screen with system info
+  const characterManager = new CharacterManager();
+  characterManager.installAllBuiltins();
+  showWelcomeScreen(config, characterManager);
 
   let running = true;
   while (running) {
-    showMenu(config);
-    const choice = await ask(rl, chalk.cyan('  > '));
+    const brainHint = formatProviderLabel(config, 'brain');
+    const orchHint = formatProviderLabel(config, 'orchestrator');
 
-    switch (choice.trim()) {
-      case '1': {
-        rl.close();
+    const choice = await p.select({
+      message: 'What would you like to do?',
+      options: [
+        { value: 'start', label: 'Start bot' },
+        { value: 'check', label: 'Check connections' },
+        { value: 'logs', label: 'View logs' },
+        { value: 'audit', label: 'View audit logs' },
+        { value: 'brain', label: 'Change brain model', hint: brainHint },
+        { value: 'orch', label: 'Change orchestrator model', hint: orchHint },
+        { value: 'skills', label: 'Manage custom skills' },
+        { value: 'automations', label: 'Manage automations' },
+        { value: 'characters', label: 'Switch character' },
+        { value: 'linkedin', label: 'Link LinkedIn account' },
+        { value: 'dashboard', label: 'Dashboard settings' },
+        { value: 'exit', label: 'Exit' },
+      ],
+    });
+
+    if (handleCancel(choice)) {
+      running = false;
+      break;
+    }
+
+    switch (choice) {
+      case 'start': {
         const started = await startBotFlow(config);
         if (!started) process.exit(1);
-        return; // bot is running, don't show menu again
+        return;
       }
-      case '2':
+      case 'check':
         await runCheck(config);
         break;
-      case '3':
+      case 'logs':
         viewLog('kernel.log');
         break;
-      case '4':
+      case 'audit':
         viewLog('kernel-audit.log');
         break;
-      case '5':
-        await changeBrainModel(config, rl);
+      case 'brain':
+        await changeBrainModel(config);
         break;
-      case '6':
-        await changeOrchestratorModel(config, rl);
+      case 'orch':
+        await changeOrchestratorModel(config);
         break;
-      case '7':
-        await manageCustomSkills(rl);
+      case 'skills':
+        await manageCustomSkills();
         break;
-      case '8':
-        await manageAutomations(rl);
+      case 'automations':
+        await manageAutomations();
         break;
-      case '9':
-        await manageCharacters(rl, config);
+      case 'characters':
+        await manageCharacters(config);
         break;
-      case '10':
-        await linkLinkedInCli(config, rl);
+      case 'linkedin':
+        await linkLinkedInCli(config);
         break;
-      case '11': {
-        const dashEnabled = config.dashboard?.enabled;
-        const dashPort = config.dashboard?.port || 3000;
-        console.log('');
-        console.log(chalk.bold('  Dashboard'));
-        console.log(`  Auto-start on boot: ${dashEnabled ? chalk.green('yes') : chalk.yellow('no')}`);
-        console.log(`  Port: ${chalk.cyan(dashPort)}`);
-        console.log(`  URL: ${chalk.cyan(`http://localhost:${dashPort}`)}`);
-        console.log('');
-        console.log(`  ${chalk.cyan('1.')} ${dashEnabled ? 'Disable' : 'Enable'} auto-start on boot`);
-        console.log(`  ${chalk.cyan('2.')} Change port`);
-        console.log(`  ${chalk.cyan('3.')} Back`);
-        console.log('');
-        const dashChoice = await ask(rl, chalk.cyan('  > '));
-        switch (dashChoice.trim()) {
-          case '1': {
-            const newEnabled = !dashEnabled;
-            saveDashboardToYaml({ enabled: newEnabled });
-            config.dashboard.enabled = newEnabled;
-            console.log(chalk.green(`\n  ✔ Dashboard auto-start ${newEnabled ? 'enabled' : 'disabled'}\n`));
-            if (newEnabled) {
-              console.log(chalk.dim(`  Dashboard will start at http://localhost:${dashPort} on next bot launch.`));
-              console.log(chalk.dim('  Or use /dashboard start in Telegram to start now.\n'));
-            }
-            break;
-          }
-          case '2': {
-            const portInput = await ask(rl, chalk.cyan('  New port: '));
-            const newPort = parseInt(portInput.trim(), 10);
-            if (!newPort || newPort < 1 || newPort > 65535) {
-              console.log(chalk.dim('  Invalid port.\n'));
-              break;
-            }
-            saveDashboardToYaml({ port: newPort });
-            config.dashboard.port = newPort;
-            console.log(chalk.green(`\n  ✔ Dashboard port set to ${newPort}\n`));
-            break;
-          }
-          default:
-            break;
-        }
+      case 'dashboard':
+        await manageDashboard(config);
         break;
-      }
-      case '12':
+      case 'exit':
         running = false;
         break;
-      default:
-        console.log(chalk.dim('  Invalid choice.\n'));
     }
   }
 
-  rl.close();
-  console.log(chalk.dim('  Goodbye.\n'));
+  p.outro('Goodbye.');
 }
 
 main().catch((err) => {
