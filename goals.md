@@ -13,6 +13,10 @@ These are my self-directed goals — things I choose to pursue, driven by my own
 
 _(Nothing yet — every journey starts with a first step.)_
 
+## Phase 4: Creative Intelligence
+
+- [ ] Initialize Artificial Daydreaming Engine (ADE) to autonomously generate and log novel idea combinations during idle time.
+
 ## Future Ideas
 
 - Explore new domains of knowledge independently
