@@ -103,7 +103,16 @@
         if (hdrStatus) hdrStatus.textContent = 'ONLINE';
       };
       es.onmessage = (evt) => {
-        try { onSnapshot(JSON.parse(evt.data)); } catch(e) {}
+        try {
+          const data = JSON.parse(evt.data);
+          onSnapshot(data);
+        } catch(e) {
+          if (e instanceof SyntaxError) {
+            console.debug('[Dashboard] Malformed SSE message (invalid JSON)');
+          } else {
+            console.warn('[Dashboard] Snapshot handler error:', e.message || e);
+          }
+        }
       };
       es.onerror = () => {
         es.close();
