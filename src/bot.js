@@ -4,14 +4,14 @@ import { isAllowedUser, getUnauthorizedMessage, alertAdmin } from './security/au
 import { getLogger } from './utils/logger.js';
 import { PROVIDERS } from './providers/models.js';
 import {
-  getUnifiedSkillById,
-  getUnifiedCategoryList,
-  getUnifiedSkillsByCategory,
-  loadCustomSkills,
-  addCustomSkill,
+  getSkillById,
+  getCategoryList,
+  getSkillsByCategory,
+  loadAllSkills,
+  saveCustomSkill,
   deleteCustomSkill,
   getCustomSkills,
-} from './skills/custom.js';
+} from './skills/loader.js';
 import { TTSService } from './services/tts.js';
 import { STTService } from './services/stt.js';
 import { getClaudeAuthStatus, claudeLogout } from './claude-auth.js';
@@ -281,7 +281,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
   }
 
   // Load custom skills from disk
-  loadCustomSkills();
+  loadAllSkills();
 
   // Register commands in Telegram's menu button
   bot.setMyCommands([
@@ -454,29 +454,34 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         });
         await bot.answerCallbackQuery(query.id);
 
-      // ── Skill callbacks ──────────────────────────────────────────
+      // ── Skill callbacks (multi-skill toggle) ─────────────────────
       } else if (data.startsWith('skill_category:')) {
         const categoryKey = data.split(':')[1];
-        const skills = getUnifiedSkillsByCategory(categoryKey);
-        const categories = getUnifiedCategoryList();
+        const skills = getSkillsByCategory(categoryKey);
+        const categories = getCategoryList();
         const cat = categories.find((c) => c.key === categoryKey);
         if (!skills.length) {
           await bot.answerCallbackQuery(query.id, { text: 'No skills in this category' });
           return;
         }
 
-        const activeSkill = agent.getActiveSkill(chatId);
+        const activeIds = new Set(agent.getActiveSkillIds(chatId));
         const buttons = skills.map((s) => ([{
-          text: `${s.emoji} ${s.name}${activeSkill && activeSkill.id === s.id ? ' ✓' : ''}`,
-          callback_data: `skill_select:${s.id}`,
+          text: `${activeIds.has(s.id) ? '✅ ' : ''}${s.emoji} ${s.name}`,
+          callback_data: `skill_toggle:${s.id}:${categoryKey}`,
         }]));
         buttons.push([
           { text: '« Back', callback_data: 'skill_back' },
-          { text: 'Cancel', callback_data: 'skill_cancel' },
+          { text: 'Done', callback_data: 'skill_cancel' },
         ]);
 
+        const activeSkills = agent.getActiveSkills(chatId);
+        const activeLine = activeSkills.length > 0
+          ? `Active (${activeSkills.length}): ${activeSkills.map(s => `${s.emoji} ${s.name}`).join(', ')}\n\n`
+          : '';
+
         await bot.editMessageText(
-          `${cat ? cat.emoji : ''} *${cat ? cat.name : categoryKey}* — select a skill:`,
+          `${activeLine}${cat ? cat.emoji : ''} *${cat ? cat.name : categoryKey}* — tap to toggle:`,
           {
             chat_id: chatId,
             message_id: query.message.message_id,
@@ -486,31 +491,60 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         );
         await bot.answerCallbackQuery(query.id);
 
-      } else if (data.startsWith('skill_select:')) {
-        const skillId = data.split(':')[1];
-        const skill = getUnifiedSkillById(skillId);
+      } else if (data.startsWith('skill_toggle:')) {
+        const parts = data.split(':');
+        const skillId = parts[1];
+        const categoryKey = parts[2]; // to refresh the category view
+        const skill = getSkillById(skillId);
         if (!skill) {
-          logger.warn(`[Bot] Unknown skill selected: ${skillId}`);
           await bot.answerCallbackQuery(query.id, { text: 'Unknown skill' });
           return;
         }
 
-        logger.info(`[Bot] Skill activated: ${skill.name} (${skillId}) for chat ${chatId}`);
-        agent.setSkill(chatId, skillId);
+        const { added, skills: currentSkills } = agent.toggleSkill(chatId, skillId);
+        if (!added && currentSkills.includes(skillId)) {
+          // Wasn't added because at max
+          await bot.answerCallbackQuery(query.id, { text: `Max ${5} skills reached. Remove one first.` });
+          return;
+        }
+
+        logger.info(`[Bot] Skill ${added ? 'activated' : 'deactivated'}: ${skill.name} (${skillId}) for chat ${chatId} — now ${currentSkills.length} active`);
+
+        // Refresh the category view with updated toggles
+        const catSkills = getSkillsByCategory(categoryKey);
+        const categories = getCategoryList();
+        const cat = categories.find((c) => c.key === categoryKey);
+        const activeIds = new Set(agent.getActiveSkillIds(chatId));
+
+        const buttons = catSkills.map((s) => ([{
+          text: `${activeIds.has(s.id) ? '✅ ' : ''}${s.emoji} ${s.name}`,
+          callback_data: `skill_toggle:${s.id}:${categoryKey}`,
+        }]));
+        buttons.push([
+          { text: '« Back', callback_data: 'skill_back' },
+          { text: 'Done', callback_data: 'skill_cancel' },
+        ]);
+
+        const activeSkills = agent.getActiveSkills(chatId);
+        const activeLine = activeSkills.length > 0
+          ? `Active (${activeSkills.length}): ${activeSkills.map(s => `${s.emoji} ${s.name}`).join(', ')}\n\n`
+          : '';
+
         await bot.editMessageText(
-          `${skill.emoji} *${skill.name}* activated!\n\n_${skill.description}_\n\nThe agent will now respond as this persona. Use /skills reset to return to default.`,
+          `${activeLine}${cat ? cat.emoji : ''} *${cat ? cat.name : categoryKey}* — tap to toggle:`,
           {
             chat_id: chatId,
             message_id: query.message.message_id,
             parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: buttons },
           },
         );
-        await bot.answerCallbackQuery(query.id);
+        await bot.answerCallbackQuery(query.id, { text: added ? `✅ ${skill.name} on` : `❌ ${skill.name} off` });
 
       } else if (data === 'skill_reset') {
-        logger.info(`[Bot] Skill reset for chat ${chatId}`);
+        logger.info(`[Bot] Skills cleared for chat ${chatId}`);
         agent.clearSkill(chatId);
-        await bot.editMessageText('🔄 Skill cleared — back to default persona.', {
+        await bot.editMessageText('🔄 All skills cleared — back to default persona.', {
           chat_id: chatId,
           message_id: query.message.message_id,
         });
@@ -551,10 +585,11 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       } else if (data.startsWith('skill_custom_delete:')) {
         const skillId = data.slice('skill_custom_delete:'.length);
         logger.info(`[Bot] Custom skill delete request: ${skillId} from chat ${chatId}`);
-        const activeSkill = agent.getActiveSkill(chatId);
-        if (activeSkill && activeSkill.id === skillId) {
-          logger.info(`[Bot] Clearing active skill before deletion: ${skillId}`);
-          agent.clearSkill(chatId);
+        // Remove from active skills if present
+        const activeIds = agent.getActiveSkillIds(chatId);
+        if (activeIds.includes(skillId)) {
+          logger.info(`[Bot] Removing deleted skill from active set: ${skillId}`);
+          agent.toggleSkill(chatId, skillId);
         }
         const deleted = deleteCustomSkill(skillId);
         const msg = deleted ? '🗑️ Custom skill deleted.' : 'Skill not found.';
@@ -566,8 +601,8 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
       } else if (data === 'skill_back') {
         // Re-show category list
-        const categories = getUnifiedCategoryList();
-        const activeSkill = agent.getActiveSkill(chatId);
+        const categories = getCategoryList();
+        const activeSkills = agent.getActiveSkills(chatId);
         const buttons = categories.map((cat) => ([{
           text: `${cat.emoji} ${cat.name} (${cat.count})`,
           callback_data: `skill_category:${cat.key}`,
@@ -578,15 +613,16 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           customRow.push({ text: '🗑️ Manage Custom', callback_data: 'skill_custom_manage' });
         }
         buttons.push(customRow);
-        const footerRow = [{ text: 'Cancel', callback_data: 'skill_cancel' }];
-        if (activeSkill) {
-          footerRow.unshift({ text: '🔄 Reset to Default', callback_data: 'skill_reset' });
+        const footerRow = [{ text: 'Done', callback_data: 'skill_cancel' }];
+        if (activeSkills.length > 0) {
+          footerRow.unshift({ text: '🔄 Clear All', callback_data: 'skill_reset' });
         }
         buttons.push(footerRow);
 
-        const header = activeSkill
-          ? `🎭 *Active skill:* ${activeSkill.emoji} ${activeSkill.name}\n\nSelect a category:`
-          : '🎭 *Skills* — select a category:';
+        const activeLine = activeSkills.length > 0
+          ? `Active (${activeSkills.length}): ${activeSkills.map(s => `${s.emoji} ${s.name}`).join(', ')}\n\n`
+          : '';
+        const header = `${activeLine}🎭 *Skills* — select a category:`;
 
         await bot.editMessageText(header, {
           chat_id: chatId,
@@ -597,9 +633,14 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         await bot.answerCallbackQuery(query.id);
 
       } else if (data === 'skill_cancel') {
-        await bot.editMessageText('Skill selection cancelled.', {
+        const activeSkills = agent.getActiveSkills(chatId);
+        const msg = activeSkills.length > 0
+          ? `🎭 Active skills (${activeSkills.length}): ${activeSkills.map(s => `${s.emoji} ${s.name}`).join(', ')}`
+          : 'No skills active.';
+        await bot.editMessageText(msg, {
           chat_id: chatId,
           message_id: query.message.message_id,
+          parse_mode: 'Markdown',
         });
         await bot.answerCallbackQuery(query.id);
 
@@ -1136,12 +1177,12 @@ export function startBot(config, agent, conversationManager, jobManager, automat
             return;
           }
           pendingCustomSkill.delete(chatId);
-          const skill = addCustomSkill({ name: pending.name, systemPrompt: content });
+          const skill = saveCustomSkill({ name: pending.name, body: content });
           logger.info(`[Bot] Custom skill created from file: "${skill.name}" (${skill.id}) — ${content.length} chars, by ${username} in chat ${chatId}`);
-          agent.setSkill(chatId, skill.id);
+          agent.toggleSkill(chatId, skill.id);
           await bot.sendMessage(
             chatId,
-            `✅ Custom skill *${skill.name}* created and activated!\n\n_Prompt loaded from file (${content.length} chars)_`,
+            `✅ Custom skill *${skill.name}* created and added to active skills!\n\n_Prompt loaded from file (${content.length} chars)_`,
             { parse_mode: 'Markdown' },
           );
         } catch (err) {
@@ -1323,12 +1364,12 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
       if (pending.step === 'prompt') {
         pendingCustomSkill.delete(chatId);
-        const skill = addCustomSkill({ name: pending.name, systemPrompt: text });
+        const skill = saveCustomSkill({ name: pending.name, body: text });
         logger.info(`[Bot] Custom skill created: "${skill.name}" (${skill.id}) by ${username} in chat ${chatId}`);
-        agent.setSkill(chatId, skill.id);
+        agent.toggleSkill(chatId, skill.id);
         await bot.sendMessage(
           chatId,
-          `✅ Custom skill *${skill.name}* created and activated!`,
+          `✅ Custom skill *${skill.name}* created and added to active skills!`,
           { parse_mode: 'Markdown' },
         );
         return;
@@ -1536,14 +1577,14 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     if (text === '/skills reset' || text === '/skill reset') {
       logger.info(`[Bot] /skills reset from ${username} (${userId}) in chat ${chatId}`);
       agent.clearSkill(chatId);
-      await bot.sendMessage(chatId, '🔄 Skill cleared — back to default persona.');
+      await bot.sendMessage(chatId, '🔄 All skills cleared — back to default persona.');
       return;
     }
 
     if (text === '/skills' || text === '/skill') {
       logger.info(`[Bot] /skills command from ${username} (${userId}) in chat ${chatId}`);
-      const categories = getUnifiedCategoryList();
-      const activeSkill = agent.getActiveSkill(chatId);
+      const categories = getCategoryList();
+      const activeSkills = agent.getActiveSkills(chatId);
       const buttons = categories.map((cat) => ([{
         text: `${cat.emoji} ${cat.name} (${cat.count})`,
         callback_data: `skill_category:${cat.key}`,
@@ -1555,14 +1596,15 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       }
       buttons.push(customRow);
       const footerRow = [{ text: 'Cancel', callback_data: 'skill_cancel' }];
-      if (activeSkill) {
-        footerRow.unshift({ text: '🔄 Reset to Default', callback_data: 'skill_reset' });
+      if (activeSkills.length > 0) {
+        footerRow.unshift({ text: '🔄 Clear All', callback_data: 'skill_reset' });
       }
       buttons.push(footerRow);
 
-      const header = activeSkill
-        ? `🎭 *Active skill:* ${activeSkill.emoji} ${activeSkill.name}\n\nSelect a category:`
-        : '🎭 *Skills* — select a category:';
+      const activeLine = activeSkills.length > 0
+        ? `Active (${activeSkills.length}): ${activeSkills.map(s => `${s.emoji} ${s.name}`).join(', ')}\n\n`
+        : '';
+      const header = `${activeLine}🎭 *Skills* — select a category:`;
 
       await bot.sendMessage(chatId, header, {
         parse_mode: 'Markdown',
@@ -1589,7 +1631,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       const orchInfo = agent.getOrchestratorInfo();
       const ccInfo = agent.getClaudeCodeInfo();
       const authConfig = agent.getClaudeAuthConfig();
-      const activeSkill = agent.getActiveSkill(chatId);
+      const activeSkills = agent.getActiveSkills(chatId);
       const msgCount = agent.getMessageCount(chatId);
       const history = agent.getConversationHistory(chatId);
       const maxHistory = conversationManager.maxHistory;
@@ -1615,9 +1657,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         `🎛️ *Orchestrator:* ${orchInfo.providerName} / ${orchInfo.modelLabel}`,
         `🧠 *Brain (Workers):* ${info.providerName} / ${info.modelLabel}`,
         `💻 *Claude Code:* ${ccInfo.modelLabel} (auth: ${authConfig.mode})`,
-        activeSkill
-          ? `🎭 *Skill:* ${activeSkill.emoji} ${activeSkill.name}`
-          : '🎭 *Skill:* Default persona',
+        activeSkills.length > 0
+          ? `🎭 *Skills (${activeSkills.length}):* ${activeSkills.map(s => `${s.emoji} ${s.name}`).join(', ')}`
+          : '🎭 *Skills:* None (default persona)',
         `💬 *Messages in memory:* ${msgCount} / ${maxHistory}`,
         `📌 *Recent window:* ${recentWindow} messages`,
       ].filter(Boolean);
@@ -2251,9 +2293,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     }
 
     if (text === '/help') {
-      const activeSkill = agent.getActiveSkill(chatId);
-      const skillLine = activeSkill
-        ? `\n🎭 *Active skill:* ${activeSkill.emoji} ${activeSkill.name}\n`
+      const activeSkills = agent.getActiveSkills(chatId);
+      const skillLine = activeSkills.length > 0
+        ? `\n🎭 *Active skills:* ${activeSkills.map(s => `${s.emoji} ${s.name}`).join(', ')}\n`
         : '';
       await bot.sendMessage(chatId, [
         '*KernelBot Commands*',
@@ -2263,8 +2305,8 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         '/orchestrator — Switch orchestrator AI model/provider',
         '/claudemodel — Switch Claude Code model',
         '/claude — Manage Claude Code authentication',
-        '/skills — Browse and activate persona skills',
-        '/skills reset — Clear active skill back to default',
+        '/skills — Browse and toggle persona skills (multi-skill)',
+        '/skills reset — Clear all active skills',
         '/jobs — List running and recent jobs',
         '/cancel — Cancel running job(s)',
         '/auto — Manage recurring automations',

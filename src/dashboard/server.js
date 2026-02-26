@@ -13,6 +13,7 @@ import { loadavg, totalmem, freemem, cpus } from 'os';
 import { getLogger } from '../utils/logger.js';
 import { WORKER_TYPES } from '../swarm/worker-registry.js';
 import { TOOL_CATEGORIES } from '../tools/categories.js';
+import { loadAllSkills, getCategoryList, SKILL_CATEGORIES } from '../skills/loader.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -283,7 +284,8 @@ export function startDashboard(deps) {
       const summaries = [];
       for (const [chatId, messages] of conversationManager.conversations) {
         const last = messages.length > 0 ? messages[messages.length - 1] : null;
-        const skill = conversationManager.activeSkills?.get(chatId) || null;
+        const skills = conversationManager.activeSkills?.get(chatId) || [];
+        const skillList = Array.isArray(skills) ? skills : (typeof skills === 'string' ? [skills] : []);
         const userMsgs = messages.filter(m => m.role === 'user').length;
         const assistantMsgs = messages.filter(m => m.role === 'assistant').length;
         summaries.push({
@@ -292,7 +294,7 @@ export function startDashboard(deps) {
           userMessages: userMsgs,
           assistantMessages: assistantMsgs,
           lastTimestamp: last?.timestamp || null,
-          activeSkill: skill,
+          activeSkills: skillList,
         });
       }
       return summaries.sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
@@ -355,6 +357,24 @@ export function startDashboard(deps) {
     return { workers, categories: Object.keys(TOOL_CATEGORIES), totalTools };
   }
 
+  function getSkillsData() {
+    try {
+      const allSkills = loadAllSkills();
+      const categories = getCategoryList();
+      const skills = [...allSkills.values()].map(s => ({
+        id: s.id,
+        name: s.name,
+        emoji: s.emoji,
+        category: s.category,
+        description: s.description,
+        isCustom: s.isCustom,
+        tags: s.tags || [],
+        workerAffinity: s.worker_affinity || null,
+      }));
+      return { skills, categories, total: skills.length };
+    } catch { return { skills: [], categories: [], total: 0 }; }
+  }
+
   function getKnowledgeData() {
     try {
       const data = memoryManager._loadSemantic();
@@ -383,6 +403,7 @@ export function startDashboard(deps) {
       character: getCharacterData(),
       shares: getSharesData(),
       logs: parseLogs(tailLog(100)),
+      skills: getSkillsData(),
       capabilities: getCapabilitiesData(),
       knowledge: getKnowledgeData(),
     };
@@ -474,6 +495,7 @@ export function startDashboard(deps) {
       '/api/logs': () => parseLogs(tailLog(100)),
       '/api/shares': getSharesData,
       '/api/self': getSelfData,
+      '/api/skills': getSkillsData,
       '/api/capabilities': getCapabilitiesData,
       '/api/knowledge': getKnowledgeData,
     };

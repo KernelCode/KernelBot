@@ -34,11 +34,11 @@ import { CodebaseKnowledge } from '../src/life/codebase.js';
 import { LifeEngine } from '../src/life/engine.js';
 import { CharacterManager } from '../src/character.js';
 import {
-  loadCustomSkills,
+  loadAllSkills,
   getCustomSkills,
-  addCustomSkill,
+  saveCustomSkill,
   deleteCustomSkill,
-} from '../src/skills/custom.js';
+} from '../src/skills/loader.js';
 
 /**
  * Register SIGINT/SIGTERM handlers to shut down the bot cleanly.
@@ -323,7 +323,7 @@ async function startBotFlow(config) {
 }
 
 async function manageCustomSkills() {
-  loadCustomSkills();
+  loadAllSkills();
 
   let managing = true;
   while (managing) {
@@ -351,7 +351,7 @@ async function manageCustomSkills() {
         });
         if (handleCancel(prompt) || !prompt.trim()) break;
 
-        const skill = addCustomSkill({ name: name.trim(), systemPrompt: prompt.trim() });
+        const skill = saveCustomSkill({ name: name.trim(), body: prompt.trim() });
         p.log.success(`Created: ${skill.name} (${skill.id})`);
         break;
       }

@@ -43,10 +43,14 @@ export class ConversationManager {
       const raw = readFileSync(this.filePath, 'utf-8');
       const data = JSON.parse(raw);
 
-      // Restore per-chat skills
+      // Restore per-chat skills (backward compat: string → string[])
       if (data._skills && typeof data._skills === 'object') {
-        for (const [chatId, skillId] of Object.entries(data._skills)) {
-          this.activeSkills.set(String(chatId), skillId);
+        for (const [chatId, value] of Object.entries(data._skills)) {
+          // Old format stored a single string; new format stores an array
+          const skills = Array.isArray(value) ? value : (typeof value === 'string' ? [value] : []);
+          if (skills.length > 0) {
+            this.activeSkills.set(String(chatId), skills);
+          }
         }
       }
 
@@ -72,11 +76,11 @@ export class ConversationManager {
       for (const [chatId, messages] of this.conversations) {
         data[chatId] = messages;
       }
-      // Persist active skills under a reserved key
+      // Persist active skills under a reserved key (stored as arrays)
       if (this.activeSkills.size > 0) {
         const skills = {};
-        for (const [chatId, skillId] of this.activeSkills) {
-          skills[chatId] = skillId;
+        for (const [chatId, skillIds] of this.activeSkills) {
+          skills[chatId] = skillIds;
         }
         data._skills = skills;
       }
@@ -235,32 +239,105 @@ export class ConversationManager {
     return history.length;
   }
 
+  // ── Multi-skill methods ─────────────────────────────────────────────
+
+  /** Max active skills per chat. */
+  static MAX_SKILLS = 5;
+
   /**
-   * Activate a skill for a specific chat, persisted across restarts.
-   * @param {string|number} chatId - Telegram chat identifier.
-   * @param {string} skillId - Skill identifier to activate.
+   * Replace all active skills for a chat.
+   * @param {string|number} chatId
+   * @param {string[]} skillIds
    */
-  setSkill(chatId, skillId) {
-    this.activeSkills.set(String(chatId), skillId);
+  setSkills(chatId, skillIds) {
+    const ids = skillIds.slice(0, ConversationManager.MAX_SKILLS);
+    this.activeSkills.set(String(chatId), ids);
     this.save();
   }
 
   /**
-   * Get the currently active skill for a chat.
-   * @param {string|number} chatId - Telegram chat identifier.
-   * @returns {string|null} Active skill identifier, or null if none.
+   * Add a skill to a chat's active set. No-op if already active or at max.
+   * @param {string|number} chatId
+   * @param {string} skillId
+   * @returns {boolean} true if added, false if already active or at max
    */
-  getSkill(chatId) {
-    return this.activeSkills.get(String(chatId)) || null;
+  addSkill(chatId, skillId) {
+    const key = String(chatId);
+    const current = this.activeSkills.get(key) || [];
+    if (current.includes(skillId)) return false;
+    if (current.length >= ConversationManager.MAX_SKILLS) return false;
+    current.push(skillId);
+    this.activeSkills.set(key, current);
+    this.save();
+    return true;
   }
 
   /**
-   * Deactivate the active skill for a chat.
-   * @param {string|number} chatId - Telegram chat identifier.
+   * Remove a skill from a chat's active set.
+   * @param {string|number} chatId
+   * @param {string} skillId
+   * @returns {boolean} true if removed
    */
-  clearSkill(chatId) {
+  removeSkill(chatId, skillId) {
+    const key = String(chatId);
+    const current = this.activeSkills.get(key) || [];
+    const idx = current.indexOf(skillId);
+    if (idx === -1) return false;
+    current.splice(idx, 1);
+    if (current.length === 0) {
+      this.activeSkills.delete(key);
+    } else {
+      this.activeSkills.set(key, current);
+    }
+    this.save();
+    return true;
+  }
+
+  /**
+   * Get all active skill IDs for a chat.
+   * @param {string|number} chatId
+   * @returns {string[]} Array of active skill IDs (empty if none).
+   */
+  getSkills(chatId) {
+    return this.activeSkills.get(String(chatId)) || [];
+  }
+
+  /**
+   * Clear all active skills for a chat.
+   * @param {string|number} chatId
+   */
+  clearSkills(chatId) {
     this.activeSkills.delete(String(chatId));
     this.save();
+  }
+
+  // ── Backward-compatible single-skill aliases ───────────────────────
+
+  /**
+   * Activate a single skill (replaces all). Backward compat.
+   * @param {string|number} chatId
+   * @param {string} skillId
+   */
+  setSkill(chatId, skillId) {
+    this.setSkills(chatId, [skillId]);
+  }
+
+  /**
+   * Get the first active skill ID (or null). Backward compat.
+   * @param {string|number} chatId
+   * @returns {string|null}
+   */
+  getSkill(chatId) {
+    const skills = this.getSkills(chatId);
+    return skills.length > 0 ? skills[0] : null;
+  }
+
+  /**
+   * Deactivate all skills. Backward compat alias for clearSkills.
+   * @param {string|number} chatId
+   */
+  clearSkill(chatId) {
+    this.clearSkills(chatId);
   }
 
   /**

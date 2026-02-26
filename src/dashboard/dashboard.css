@@ -156,6 +156,12 @@
 .auto-name { color: var(--accent); font-weight: 600; font-family: var(--font-hud); font-size: 9px; letter-spacing: 1px; }
 .auto-detail { color: var(--dim); font-size: 10px; }
 
+/* ═══════ SKILLS ═══════ */
+.skill-item { padding: 2px 0; border-bottom: 1px solid rgba(57,255,20,0.03); }
+.skill-emoji { margin-right: 4px; }
+.skill-name { color: var(--accent); font-family: var(--font-hud); font-size: 10px; letter-spacing: 0.5px; }
+.skill-desc { color: var(--dim); font-size: 9px; margin-top: 1px; }
+
 /* ═══════ MARKDOWN CONTENT ═══════ */
 .md-content { white-space: pre-wrap; word-wrap: break-word; color: var(--text); font-size: 11px; }
 .md-content .ts-line { color: var(--accent); }

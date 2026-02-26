@@ -3,7 +3,7 @@ import { executeTool } from './tools/index.js';
 import { closeSession } from './tools/browser.js';
 import { getMissingCredential } from './utils/config.js';
 import { getWorkerPrompt } from './prompts/workers.js';
-import { getUnifiedSkillById } from './skills/custom.js';
+import { buildSkillPrompt } from './skills/loader.js';
 import { getLogger } from './utils/logger.js';
 import { truncateToolResult } from './utils/truncate.js';
 
@@ -23,17 +23,17 @@ export class WorkerAgent {
    * @param {string} opts.workerType - coding, browser, system, devops, research
    * @param {string} opts.jobId - Job ID for logging
    * @param {Array} opts.tools - Scoped tool definitions
-   * @param {string|null} opts.skillId - Active skill ID (for worker prompt)
+   * @param {string[]|null} opts.skillIds - Active skill IDs (for worker prompt)
    * @param {string|null} opts.workerContext - Structured context (conversation history, persona, dependency results)
    * @param {object} opts.callbacks - { onProgress, onComplete, onError }
    * @param {AbortController} opts.abortController - For cancellation
    */
-  constructor({ config, workerType, jobId, tools, skillId, workerContext, callbacks, abortController }) {
+  constructor({ config, workerType, jobId, tools, skillIds, workerContext, callbacks, abortController }) {
     this.config = config;
     this.workerType = workerType;
     this.jobId = jobId;
     this.tools = tools;
-    this.skillId = skillId;
+    this.skillIds = skillIds || [];
     this.workerContext = workerContext || null;
     this.callbacks = callbacks || {};
     this.abortController = abortController || new AbortController();
@@ -45,8 +45,8 @@ export class WorkerAgent {
     // Create provider from worker brain config
     this.provider = createProvider(config);
 
-    // Build system prompt
-    const skillPrompt = skillId ? getUnifiedSkillById(skillId)?.systemPrompt : null;
+    // Build system prompt with combined skill expertise
+    const skillPrompt = buildSkillPrompt(this.skillIds);
     this.systemPrompt = getWorkerPrompt(workerType, config, skillPrompt);
 
     // Safety ceiling — not a real limit, just prevents infinite loops
@@ -54,7 +54,7 @@ export class WorkerAgent {
     this.maxIterations = 200;
 
     const logger = getLogger();
-    logger.info(`[Worker ${jobId}] Created: type=${workerType}, provider=${config.brain.provider}/${config.brain.model}, tools=${tools.length}, skill=${skillId || 'none'}, context=${workerContext ? 'yes' : 'none'}`);
+    logger.info(`[Worker ${jobId}] Created: type=${workerType}, provider=${config.brain.provider}/${config.brain.model}, tools=${tools.length}, skills=${this.skillIds.length > 0 ? this.skillIds.join(',') : 'none'}, context=${workerContext ? 'yes' : 'none'}`);
   }
 
   /** Cancel this worker. */

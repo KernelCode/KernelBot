@@ -41,6 +41,7 @@
     renderCharacter(snap.character);
     lastSharesData = snap.shares || { pending: [], shared: [], todayCount: 0 };
     renderShares(lastSharesData);
+    renderSkills(snap.skills);
     renderCapabilities(snap.capabilities);
     renderIdeas(snap.life?.ideas || []);
     renderLogs(snap.logs);
@@ -102,6 +103,9 @@
 
     const rbConvs = $('rb-convs');
     if (rbConvs) { const c = (snap.conversations || []).length; rbConvs.textContent = c; rbConvs.className = 'r-val' + (c > 0 ? '' : ' zero'); }
+
+    const rbSkills = $('rb-skills');
+    if (rbSkills) { const c = snap.skills?.total || 0; rbSkills.textContent = c; rbSkills.className = 'r-val' + (c > 0 ? '' : ' zero'); }
   }
 
   function renderSystem(sys) {
@@ -395,7 +399,7 @@
       h += `<div class="conv-item"><span class="chat-id ${c.chatId==='__life__'?'life':''}">${esc(c.chatId)}</span><span style="color:var(--dim)">${c.messageCount} msgs · ${timeAgo(c.lastTimestamp)}</span></div>`;
       if (c.userMessages || c.assistantMessages) {
         h += `<div style="font-size:9px;color:var(--dim);padding-left:4px">USR:${c.userMessages||0} BOT:${c.assistantMessages||0}`;
-        if (c.activeSkill) h += ` <span style="color:var(--magenta)">SKILL:${esc(c.activeSkill)}</span>`;
+        if (c.activeSkills?.length) h += ` <span style="color:var(--magenta)">SKILLS:${c.activeSkills.map(s => esc(s)).join(',')}</span>`;
         h += '</div>';
       }
     }
@@ -440,6 +444,29 @@
     }
     h += '</div>';
     $('caps-body').innerHTML = h;
+  }
+
+  function renderSkills(data) {
+    const el = $('skills-body');
+    if (!el) return;
+    if (!data || !data.skills?.length) { el.innerHTML = '<div class="empty-msg">NO SKILLS</div>'; return; }
+    const tag = $('skills-tag');
+    if (tag) tag.textContent = `SKILLS // ${data.total} LOADED`;
+    let h = '';
+    if (data.categories?.length) {
+      for (const cat of data.categories) {
+        const catSkills = data.skills.filter(s => s.category === cat.key);
+        h += `<div style="margin-bottom:6px"><div style="font-family:var(--font-hud);font-size:8px;letter-spacing:1.5px;color:var(--dim);margin-bottom:2px">${esc(cat.emoji)} ${esc(cat.name.toUpperCase())} (${cat.count})</div>`;
+        for (const s of catSkills) {
+          h += `<div class="skill-item"><span class="skill-emoji">${esc(s.emoji)}</span><span class="skill-name">${esc(s.name)}</span>`;
+          if (s.isCustom) h += '<span style="color:var(--amber);font-size:8px;margin-left:4px">CUSTOM</span>';
+          if (s.description) h += `<div class="skill-desc">${esc(s.description.slice(0, 80))}</div>`;
+          h += '</div>';
+        }
+        h += '</div>';
+      }
+    }
+    el.innerHTML = h;
   }
 
   function renderKnowledge(topics) {

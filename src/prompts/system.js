@@ -72,7 +72,7 @@ export function getSystemPrompt(config, skillPrompt = null, userPersona = null) 
   let prompt = getDefaultPersona(config);
 
   if (skillPrompt) {
-    prompt += `\n\n## Active Skill\nYou are currently operating with the following specialized skill. Use this expertise while maintaining your personality.\n\n${skillPrompt}`;
+    prompt += `\n\n## Active Skills\nYou are currently operating with the following specialized skills. Use this expertise while maintaining your personality.\n\n${skillPrompt}`;
   }
 
   prompt += `\n\n${getCoreToolInstructions(config)}`;

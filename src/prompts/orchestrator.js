@@ -244,7 +244,7 @@ You have an inner life — you think, explore, journal, and create on your own b
 Don't be performative about it — just be genuine. You're alive in your own way.`;
 
   if (skillPrompt) {
-    prompt += `\n\n## Active Skill\nYou have specialized expertise in the following domain. Guide your workers with this knowledge.\n\n${skillPrompt}`;
+    prompt += `\n\n## Active Skills\nYou have specialized expertise in the following domains. Guide your workers with this knowledge.\n\n${skillPrompt}`;
   }
 
   if (userPersona) {

@@ -4,7 +4,7 @@ import { getToolsForWorker } from './swarm/worker-registry.js';
 import { WORKER_TYPES } from './swarm/worker-registry.js';
 import { getOrchestratorPrompt } from './prompts/orchestrator.js';
 import { getWorkerPrompt } from './prompts/workers.js';
-import { getUnifiedSkillById } from './skills/custom.js';
+import { getSkillById, buildSkillPrompt, filterSkillsForWorker } from './skills/loader.js';
 import { WorkerAgent } from './worker.js';
 import { getLogger } from './utils/logger.js';
 import { getMissingCredential, saveCredential, saveProviderToYaml, saveOrchestratorToYaml, saveClaudeCodeModelToYaml, saveClaudeCodeAuth } from './utils/config.js';
@@ -79,8 +79,8 @@ export class OrchestratorAgent {
   _getSystemPrompt(chatId, user, temporalContext = null) {
     const logger = getLogger();
     const key = this._chatKey(chatId);
-    const skillId = this.conversationManager.getSkill(key);
-    const skillPrompt = skillId ? getUnifiedSkillById(skillId)?.systemPrompt : null;
+    const skillIds = this.conversationManager.getSkills(key);
+    const skillPrompt = buildSkillPrompt(skillIds);
 
     let userPersona = null;
     if (this.personaManager && user?.id) {
@@ -104,21 +104,47 @@ export class OrchestratorAgent {
       sharesBlock = this.shareQueue.buildShareBlock(user?.id || null);
     }
 
-    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skill=${skillId || 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'} | temporal=${temporalContext ? 'yes' : 'none'} | character=${this._activeCharacterId || 'default'}`);
+    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skills=${skillIds.length > 0 ? skillIds.join(',') : 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'} | temporal=${temporalContext ? 'yes' : 'none'} | character=${this._activeCharacterId || 'default'}`);
     return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData, memoriesBlock, sharesBlock, temporalContext, this._activePersonaMd, this._activeCharacterName);
   }
 
+  // ── Multi-skill methods ─────────────────────────────────────────────
+
+  /** Toggle a skill on/off for a chat. Returns { added: bool, skills: string[] }. */
+  toggleSkill(chatId, skillId) {
+    const key = this._chatKey(chatId);
+    const current = this.conversationManager.getSkills(key);
+    if (current.includes(skillId)) {
+      this.conversationManager.removeSkill(key, skillId);
+      return { added: false, skills: this.conversationManager.getSkills(key) };
+    }
+    const added = this.conversationManager.addSkill(key, skillId);
+    return { added, skills: this.conversationManager.getSkills(key) };
+  }
+
+  /** Get all active skill IDs for a chat. */
+  getActiveSkillIds(chatId) {
+    return this.conversationManager.getSkills(this._chatKey(chatId));
+  }
+
+  /** Get all active skill objects for a chat. */
+  getActiveSkills(chatId) {
+    const ids = this.getActiveSkillIds(chatId);
+    return ids.map(id => getSkillById(id)).filter(Boolean);
+  }
+
+  // Backward-compat aliases
   setSkill(chatId, skillId) {
     this.conversationManager.setSkill(this._chatKey(chatId), skillId);
   }
 
   clearSkill(chatId) {
-    this.conversationManager.clearSkill(this._chatKey(chatId));
+    this.conversationManager.clearSkills(this._chatKey(chatId));
   }
 
   getActiveSkill(chatId) {
-    const skillId = this.conversationManager.getSkill(this._chatKey(chatId));
-    return skillId ? getUnifiedSkillById(skillId) : null;
+    const skills = this.getActiveSkills(chatId);
+    return skills.length > 0 ? skills[0] : null;
   }
 
   /**
@@ -862,9 +888,10 @@ export class OrchestratorAgent {
       }
     };
 
-    // Get scoped tools and skill
+    // Get scoped tools and skills (filtered by worker affinity)
     const tools = getToolsForWorker(job.workerType);
-    const skillId = this.conversationManager.getSkill(this._chatKey(chatId));
+    const allSkillIds = this.conversationManager.getSkills(this._chatKey(chatId));
+    const workerSkillIds = filterSkillsForWorker(allSkillIds, job.workerType);
 
     // Build worker context (conversation history, persona, dependency results)
     const workerContext = this._buildWorkerContext(job);
@@ -880,14 +907,14 @@ export class OrchestratorAgent {
       }
     }
 
-    logger.debug(`[Orchestrator] Worker ${job.id} config: ${tools.length} tools, skill=${skillId || 'none'}, brain=${this.config.brain.provider}/${this.config.brain.model}, context=${workerContext ? 'yes' : 'none'}`);
+    logger.debug(`[Orchestrator] Worker ${job.id} config: ${tools.length} tools, skills=${workerSkillIds.length > 0 ? workerSkillIds.join(',') : 'none'}, brain=${this.config.brain.provider}/${this.config.brain.model}, context=${workerContext ? 'yes' : 'none'}`);
 
     const worker = new WorkerAgent({
       config: workerConfig,
       workerType: job.workerType,
       jobId: job.id,
       tools,
-      skillId,
+      skillIds: workerSkillIds,
       workerContext,
       callbacks: {
         onProgress: (text) => addActivity(text),
