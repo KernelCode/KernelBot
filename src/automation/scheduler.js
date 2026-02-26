@@ -108,7 +108,13 @@ function nextCronTime(expression, after) {
 }
 
 /**
- * Parse a single cron field into a Set of valid values.
+ * Parse a single cron field into a Set of valid integer values.
+ *
+ * @param {string} field - Cron field expression (e.g. '*', '1-5', '*/10', '1,3,5')
+ * @param {number} min   - Minimum allowed value for this field (inclusive)
+ * @param {number} max   - Maximum allowed value for this field (inclusive)
+ * @returns {Set<number>} Set of matching integer values clamped to [min, max]
+ * @throws {Error} If the field contains invalid syntax or out-of-range values
  */
 function parseField(field, min, max) {
   const values = new Set();
@@ -119,21 +125,48 @@ function parseField(field, min, max) {
     } else if (part.includes('/')) {
       const [range, stepStr] = part.split('/');
       const step = parseInt(stepStr, 10);
+      if (isNaN(step) || step <= 0) {
+        throw new Error(`Invalid cron step value "${stepStr}" in field "${field}"`);
+      }
       let start = min;
       let end = max;
       if (range !== '*') {
         if (range.includes('-')) {
-          [start, end] = range.split('-').map(Number);
+          const parts = range.split('-').map(Number);
+          start = parts[0];
+          end = parts[1];
+          if (isNaN(start) || isNaN(end)) {
+            throw new Error(`Invalid cron range "${range}" in field "${field}"`);
+          }
         } else {
           start = parseInt(range, 10);
+          if (isNaN(start)) {
+            throw new Error(`Invalid cron value "${range}" in field "${field}"`);
+          }
         }
+      }
+      if (start < min || end > max) {
+        throw new Error(`Cron field value out of range [${min}-${max}] in "${field}"`);
       }
       for (let i = start; i <= end; i += step) values.add(i);
     } else if (part.includes('-')) {
       const [s, e] = part.split('-').map(Number);
+      if (isNaN(s) || isNaN(e)) {
+        throw new Error(`Invalid cron range "${part}" in field "${field}"`);
+      }
+      if (s < min || e > max) {
+        throw new Error(`Cron field value out of range [${min}-${max}] in "${field}"`);
+      }
       for (let i = s; i <= e; i++) values.add(i);
     } else {
-      values.add(parseInt(part, 10));
+      const val = parseInt(part, 10);
+      if (isNaN(val)) {
+        throw new Error(`Invalid cron value "${part}" in field "${field}"`);
+      }
+      if (val < min || val > max) {
+        throw new Error(`Cron field value ${val} out of range [${min}-${max}] in "${field}"`);
+      }
+      values.add(val);
     }
   }
 
