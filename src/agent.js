@@ -534,44 +534,31 @@ export class OrchestratorAgent {
 
       logger.info(`[Orchestrator] Job completed event: ${job.id} [${job.workerType}] in chat ${chatId} (${job.duration}s) — result length: ${(job.result || '').length} chars, structured: ${!!job.structuredResult}`);
 
-      // 1. IMMEDIATELY notify user (guarantees they see something regardless of summary LLM)
-      const notifyMsgId = await this._sendUpdate(chatId, `✅ ${label} finished! Preparing summary...`);
-      logger.debug(`[Orchestrator] Job ${job.id} notification sent — msgId=${notifyMsgId || 'none'}`);
+      // 1. Store the job result context in history so the LLM has it
+      const resultEntry = this._buildResultHistoryEntry(job);
+      this.conversationManager.addMessage(convKey, 'assistant', `[Job ${job.id} result]\n${resultEntry}`);
 
-      // 2. Try to summarize, then store ONE message in history (summary or fallback — not both)
+      // 2. Generate a proactive, conversational LLM response (as the character/persona)
+      //    This replaces the old mechanical notification — the bot now "talks" to the user naturally.
       try {
-        const summary = await this._summarizeJobResult(chatId, job);
-        if (summary) {
-          logger.debug(`[Orchestrator] Job ${job.id} summary ready (${summary.length} chars) — delivering to user`);
-          this.conversationManager.addMessage(convKey, 'assistant', summary);
-          // Try to edit the notification, fall back to new message if edit fails
-          try {
-            await this._sendUpdate(chatId, summary, { editMessageId: notifyMsgId });
-          } catch {
-            await this._sendUpdate(chatId, summary).catch(() => {});
-          }
+        const proactiveReply = await this._generateProactiveJobResponse(chatId, job, label);
+        if (proactiveReply) {
+          logger.info(`[Orchestrator] Proactive response for job ${job.id} (${proactiveReply.length} chars) — sending to user`);
+          this.conversationManager.addMessage(convKey, 'assistant', proactiveReply);
+          await this._sendUpdate(chatId, proactiveReply);
         } else {
-          // Summary was null — store the fallback
+          // LLM returned empty — send fallback notification
           const fallback = this._buildSummaryFallback(job, label);
-          logger.debug(`[Orchestrator] Job ${job.id} using fallback (${fallback.length} chars) — delivering to user`);
+          logger.debug(`[Orchestrator] Proactive LLM empty for job ${job.id} — using fallback`);
           this.conversationManager.addMessage(convKey, 'assistant', fallback);
-          try {
-            await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
-          } catch {
-            await this._sendUpdate(chatId, fallback).catch(() => {});
-          }
+          await this._sendUpdate(chatId, fallback);
         }
       } catch (err) {
-        logger.error(`[Orchestrator] Failed to summarize job ${job.id}: ${err.message}`);
-        // Store the fallback so the orchestrator retains context about what happened
+        logger.error(`[Orchestrator] Proactive response failed for job ${job.id}: ${err.message}`);
+        // Fallback: send a mechanical notification so the user isn't left hanging
         const fallback = this._buildSummaryFallback(job, label);
         this.conversationManager.addMessage(convKey, 'assistant', fallback);
-        // Try to edit notification, fall back to new message
-        try {
-          await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
-        } catch {
-          await this._sendUpdate(chatId, fallback).catch(() => {});
-        }
+        await this._sendUpdate(chatId, fallback).catch(() => {});
       }
     });
 
@@ -680,6 +667,65 @@ export class OrchestratorAgent {
     logger.info(`[Orchestrator] Job ${job.id} summary: "${summary.slice(0, 200)}"`);
 
     return summary || null;
+  }
+
+  /**
+   * Generate a proactive, conversational response when a background job finishes.
+   * Uses the full orchestrator system prompt (persona, memories, etc.) so the bot
+   * talks to the user naturally — as if initiating a message — rather than sending
+   * a mechanical notification.
+   * Protected by the orchestrator provider's built-in timeout (30s).
+   * Returns the response text, or null.
+   */
+  async _generateProactiveJobResponse(chatId, job, label) {
+    const logger = getLogger();
+
+    logger.info(`[Orchestrator] Generating proactive response for job ${job.id} [${job.workerType}] in chat ${chatId}`);
+
+    // Build result context from structured data or raw result
+    const sr = job.structuredResult;
+    let resultContext;
+    if (sr?.structured) {
+      const parts = [`Summary: ${sr.summary}`, `Status: ${sr.status}`];
+      if (sr.artifacts?.length > 0) {
+        parts.push(`Artifacts: ${sr.artifacts.map(a => `${a.title || a.type}: ${a.url || a.path || ''}`).join(', ')}`);
+      }
+      if (sr.followUp) parts.push(`Follow-up: ${sr.followUp}`);
+      if (sr.details) {
+        const d = typeof sr.details === 'string' ? sr.details : JSON.stringify(sr.details, null, 2);
+        parts.push(`Details:\n${d.slice(0, 6000)}`);
+      }
+      resultContext = parts.join('\n');
+    } else {
+      resultContext = (job.result || 'Done.').slice(0, 6000);
+    }
+
+    // Use full conversation history so the LLM has context of what the user asked for
+    const history = this.conversationManager.getSummarizedHistory(this._chatKey(chatId));
+
+    const response = await this.orchestratorProvider.chat({
+      system: this._getSystemPrompt(chatId, null),
+      messages: [
+        ...history,
+        {
+          role: 'user',
+          content: [
+            `[SYSTEM: A background task you dispatched just finished. Proactively message the user about it — don't wait for them to ask. Present the results naturally as if you're initiating the update yourself.]`,
+            ``,
+            `Task: ${job.task || label}`,
+            `Duration: ${job.duration}s`,
+            `Results:\n${resultContext}`,
+            ``,
+            `Speak to the user naturally. Don't use technical terms like "worker", "job ID", or "structured result". Just tell them what happened and what you found/did.`,
+          ].join('\n'),
+        },
+      ],
+    });
+
+    const reply = response.text || '';
+    logger.info(`[Orchestrator] Proactive response for job ${job.id}: "${reply.slice(0, 200)}"`);
+
+    return reply || null;
   }
 
   /**
