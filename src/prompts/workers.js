@@ -20,7 +20,14 @@ const WORKER_PROMPTS = {
 - Tell spawn_claude_code to work in the existing repo directory (the source repo path from your context) — do NOT clone a fresh copy unless explicitly needed.
 - Write clear, detailed prompts for spawn_claude_code — it's a separate AI, so be explicit about what to change, where, and why.
 - If git/GitHub tools are unavailable (missing credentials), that's fine — spawn_claude_code handles git and GitHub operations internally without needing separate tools.
-- Report what you did and any PR links when finished.`,
+- Report what you did and any PR links when finished.
+
+## Non-Interactive Execution
+You run in the BACKGROUND with NO human input. Your prompts to spawn_claude_code MUST be self-contained:
+- Include ALL necessary details (repo URLs, branch names, file paths, content guidelines).
+- For git: tell it to use \`git push -u origin <branch>\` and the \`gh\` CLI for PR creation (with \`--fill\` or explicit \`--title\`/\`--body\` flags).
+- NEVER assume interactive confirmation — all commands must run non-interactively.
+- If a git clone is needed, use the git_clone tool first (which handles auth), then pass the cloned directory to spawn_claude_code.`,
 
   browser: `You are a browser worker agent. Your job is to search the web and extract information.
 

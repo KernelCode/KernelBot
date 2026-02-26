@@ -34,6 +34,10 @@ export const definitions = [
           type: 'number',
           description: 'Max turns for Claude Code (optional, default from config)',
         },
+        timeout_seconds: {
+          type: 'number',
+          description: 'Override timeout in seconds for this invocation (optional, default from config)',
+        },
       },
       required: ['working_directory', 'prompt'],
     },
@@ -60,6 +64,7 @@ export const handlers = {
         workingDirectory: dir,
         prompt: params.prompt,
         maxTurns: params.max_turns,
+        timeoutMs: params.timeout_seconds ? params.timeout_seconds * 1000 : undefined,
         onOutput: onUpdate,
         signal: context.signal || null,
       });
