@@ -1,23 +1,34 @@
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import chalk from 'chalk';
-import ora from 'ora';
-import boxen from 'boxen';
-import gradient from 'gradient-string';
-import * as p from '@clack/prompts';
-import { PROVIDERS } from '../providers/models.js';
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { networkInterfaces } from "os";
+import chalk from "chalk";
+import ora from "ora";
+import boxen from "boxen";
+import gradient from "gradient-string";
+import * as p from "@clack/prompts";
+import { PROVIDERS } from "../providers/models.js";
 
 export { p };
+
+function getLocalIp() {
+  const nets = networkInterfaces();
+  for (const iface of Object.values(nets)) {
+    for (const info of iface) {
+      if (info.family === "IPv4" && !info.internal) return info.address;
+    }
+  }
+  return "localhost";
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function getVersion() {
   try {
-    const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8'));
+    const pkg = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf-8"));
     return pkg.version;
   } catch {
-    return 'unknown';
+    return "unknown";
   }
 }
 
@@ -35,45 +46,17 @@ const LOGO = `
      ▀█▄   ▀██████▀   ▄█▀
        ▀██▄▄      ▄▄██▀
           ▀▀████████▀▀
-
- █▄▀ █▀▀ █▀█ █▄ █ █▀▀ █   █▀▄ █▀█ ▀█▀
- █▀▄ █▀▀ █▄▀ █ ██ █▀▀ █   ██▀ █ █  █
- █ █ █▄▄ █ █ █ ▀█ █▄▄ █▄▄ █▄▀ █▄█  █
 `;
 
 // Green terminal gradient
-const monoGradient = gradient([
-  '#00ff41',
-  '#00cc33',
-  '#009926',
-  '#006619',
-]);
+const monoGradient = gradient(["#00ff41", "#00cc33", "#009926", "#006619"]);
 
 export function showLogo() {
   console.log(monoGradient.multiline(LOGO));
-  console.log(chalk.dim(`  AI Engineering Agent — v${getVersion()}\n`));
-  console.log(
-    boxen(
-      chalk.yellow.bold('WARNING') +
-        chalk.yellow(
-          '\n\nKernelBot has full access to your operating system.\n' +
-            'It can execute commands, read/write files, manage processes,\n' +
-            'and interact with external services on your behalf.\n\n' +
-            'Only run this on machines you control.\n' +
-            'Set OWNER_TELEGRAM_ID in .env or allowed_users in config.yaml.',
-        ),
-      {
-        padding: 1,
-        borderStyle: 'round',
-        borderColor: 'yellow',
-      },
-    ),
-  );
-  console.log('');
 }
 
 export async function showStartupCheck(label, checkFn) {
-  const spinner = ora({ text: label, color: 'cyan' }).start();
+  const spinner = ora({ text: label, color: "cyan" }).start();
   try {
     await checkFn();
     spinner.succeed(chalk.green(label));
@@ -86,11 +69,11 @@ export async function showStartupCheck(label, checkFn) {
 
 export function showStartupComplete() {
   console.log(
-    boxen(chalk.green.bold('KernelBot is live'), {
+    boxen(chalk.green.bold("KernelBot is live"), {
       padding: 1,
       margin: { top: 1 },
-      borderStyle: 'round',
-      borderColor: 'green',
+      borderStyle: "round",
+      borderColor: "green",
     }),
   );
 }
@@ -99,8 +82,8 @@ export function showSuccess(msg) {
   console.log(
     boxen(chalk.green(msg), {
       padding: 1,
-      borderStyle: 'round',
-      borderColor: 'green',
+      borderStyle: "round",
+      borderColor: "green",
     }),
   );
 }
@@ -109,14 +92,14 @@ export function showError(msg) {
   console.log(
     boxen(chalk.red(msg), {
       padding: 1,
-      borderStyle: 'round',
-      borderColor: 'red',
+      borderStyle: "round",
+      borderColor: "red",
     }),
   );
 }
 
 export function createSpinner(text) {
-  return ora({ text, color: 'cyan' });
+  return ora({ text, color: "cyan" });
 }
 
 /**
@@ -125,23 +108,23 @@ export function createSpinner(text) {
  * @param {boolean} isActive — whether this is the currently active character
  */
 export function showCharacterCard(character, isActive = false) {
-  const art = character.asciiArt || '';
-  const activeTag = isActive ? chalk.green(' (active)') : '';
+  const art = character.asciiArt || "";
+  const activeTag = isActive ? chalk.green(" (active)") : "";
   const content = [
     `${character.emoji}  ${chalk.bold(character.name)}${activeTag}`,
     chalk.dim(`"${character.tagline}"`),
-    '',
-    ...(art ? art.split('\n').map(line => chalk.cyan(line)) : []),
-    '',
-    chalk.dim(`Origin: ${character.origin || 'Unknown'}`),
-    chalk.dim(`Style: ${character.age || 'Unknown'}`),
-  ].join('\n');
+    "",
+    ...(art ? art.split("\n").map((line) => chalk.cyan(line)) : []),
+    "",
+    chalk.dim(`Origin: ${character.origin || "Unknown"}`),
+    chalk.dim(`Style: ${character.age || "Unknown"}`),
+  ].join("\n");
 
   console.log(
     boxen(content, {
       padding: 1,
-      borderStyle: 'round',
-      borderColor: isActive ? 'green' : 'cyan',
+      borderStyle: "round",
+      borderColor: isActive ? "green" : "cyan",
     }),
   );
 }
@@ -164,7 +147,7 @@ export function formatProviderLabel(config, section) {
  */
 export function handleCancel(value) {
   if (p.isCancel(value)) {
-    p.cancel('Cancelled.');
+    p.cancel("Cancelled.");
     return true;
   }
   return false;
@@ -176,10 +159,10 @@ export function handleCancel(value) {
 export function showWelcomeScreen(config, characterManager) {
   const version = getVersion();
 
-  const orchLabel = formatProviderLabel(config, 'orchestrator');
-  const brainLabel = formatProviderLabel(config, 'brain');
+  const orchLabel = formatProviderLabel(config, "orchestrator");
+  const brainLabel = formatProviderLabel(config, "brain");
 
-  let charLabel = 'None';
+  let charLabel = "None";
   if (characterManager) {
     const activeId = characterManager.getActiveCharacterId();
     const active = characterManager.getCharacter(activeId);
@@ -193,40 +176,38 @@ export function showWelcomeScreen(config, characterManager) {
   const pad = (label, width = 18) => label.padEnd(width);
 
   const lines = [
-    '',
-    `  ${chalk.dim(pad('Orchestrator'))}${orchLabel}`,
-    `  ${chalk.dim(pad('Brain'))}${brainLabel}`,
-    `  ${chalk.dim(pad('Character'))}${charLabel}`,
-    `  ${chalk.dim(pad('Life Engine'))}${lifeEnabled ? chalk.green('enabled') : chalk.yellow('disabled')}`,
-    `  ${chalk.dim(pad('Dashboard'))}${dashEnabled ? chalk.green(`:${dashPort}`) : chalk.yellow('off')}`,
-    '',
-    chalk.dim('  ↑↓ Navigate · Enter Select · Ctrl+C Cancel'),
+    "",
+    `  ${chalk.dim(pad("Orchestrator"))}${orchLabel}`,
+    `  ${chalk.dim(pad("Brain"))}${brainLabel}`,
+    `  ${chalk.dim(pad("Character"))}${charLabel}`,
+    `  ${chalk.dim(pad("Life Engine"))}${lifeEnabled ? chalk.green("enabled") : chalk.yellow("disabled")}`,
+    `  ${chalk.dim(pad("Dashboard"))}${dashEnabled ? chalk.green(`http://${getLocalIp()}:${dashPort}/`) : chalk.yellow("off")}`,
+    "",
+    chalk.dim("  ↑↓ Navigate · Enter Select · Ctrl+C Cancel"),
   ];
 
   console.log(
-    boxen(lines.join('\n'), {
+    boxen(lines.join("\n"), {
       title: `KERNEL Bot v${version}`,
-      titleAlignment: 'left',
+      titleAlignment: "left",
       padding: { top: 0, bottom: 0, left: 0, right: 2 },
-      borderStyle: 'round',
-      borderColor: 'green',
+      borderStyle: "round",
+      borderColor: "green",
     }),
   );
 }
 
 export function showCharacterGallery(characters, activeId = null) {
-  console.log('');
+  console.log("");
   console.log(
-    gradient(['#ff6b6b', '#feca57', '#48dbfb', '#ff9ff3']).multiline(
-      '  ═══════════════════════════════\n' +
-      '     CHOOSE YOUR CHARACTER\n' +
-      '  ═══════════════════════════════',
+    gradient(["#ff6b6b", "#feca57", "#48dbfb", "#ff9ff3"]).multiline(
+      "  ═══════════════════════════════\n" + "     CHOOSE YOUR CHARACTER\n" + "  ═══════════════════════════════",
     ),
   );
-  console.log('');
-  console.log(chalk.dim('  Each character has their own personality,'));
-  console.log(chalk.dim('  memories, and story that evolves with you.'));
-  console.log('');
+  console.log("");
+  console.log(chalk.dim("  Each character has their own personality,"));
+  console.log(chalk.dim("  memories, and story that evolves with you."));
+  console.log("");
 
   for (const c of characters) {
     showCharacterCard(c, c.id === activeId);
