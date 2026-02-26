@@ -22,6 +22,8 @@ const DEFAULT_STATE = {
   activityCounts: { think: 0, browse: 0, journal: 0, create: 0, self_code: 0, code_review: 0, reflect: 0 },
   paused: false,
   lastWakeUp: null,
+  // Failure tracking: consecutive failures per activity type
+  activityFailures: {},
 };
 
 const LOG_FILE_PATHS = [
@@ -173,6 +175,12 @@ export class LifeEngine {
       ? Math.round((Date.now() - this._state.lastWakeUp) / 60000)
       : null;
 
+    // Summarise suppressed activities (3+ consecutive failures)
+    const failures = this._state.activityFailures || {};
+    const suppressedActivities = Object.entries(failures)
+      .filter(([, info]) => info.count >= 3)
+      .map(([type, info]) => type);
+
     return {
       status: this._status,
       paused: this._state.paused,
@@ -182,6 +190,7 @@ export class LifeEngine {
       lastActivity: this._state.lastActivity,
       lastActivityAgo: lastAgo !== null ? `${lastAgo}m` : 'never',
       lastWakeUpAgo: wakeAgo !== null ? `${wakeAgo}m` : 'never',
+      suppressedActivities,
     };
   }
 
@@ -213,10 +222,32 @@ export class LifeEngine {
     const activityType = this._selectActivity();
     logger.info(`[LifeEngine] Heartbeat tick — selected: ${activityType}`);
 
+    const startTime = Date.now();
     try {
       await this._executeActivity(activityType);
+      const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
+      logger.info(`[LifeEngine] Activity "${activityType}" completed in ${durationSec}s`);
+      // Clear failure streak on success
+      if (this._state.activityFailures?.[activityType]) {
+        delete this._state.activityFailures[activityType];
+        this._saveState();
+      }
     } catch (err) {
-      logger.error(`[LifeEngine] Activity "${activityType}" failed: ${err.message}`);
+      const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
+      // Track consecutive failures per activity type
+      if (!this._state.activityFailures) this._state.activityFailures = {};
+      const prev = this._state.activityFailures[activityType] || { count: 0 };
+      this._state.activityFailures[activityType] = {
+        count: prev.count + 1,
+        lastFailure: Date.now(),
+        lastError: err.message?.slice(0, 200),
+      };
+      this._saveState();
+      const failCount = this._state.activityFailures[activityType].count;
+      logger.error(`[LifeEngine] Activity "${activityType}" failed after ${durationSec}s (streak: ${failCount}): ${err.message}`);
+      if (failCount >= 3) {
+        logger.warn(`[LifeEngine] Activity "${activityType}" suppressed after ${failCount} consecutive failures — will auto-recover in 1h`);
+      }
     }
 
     // Re-arm for next tick
@@ -228,6 +259,7 @@ export class LifeEngine {
   // ── Activity Selection ─────────────────────────────────────────
 
   _selectActivity() {
+    const logger = getLogger();
     const lifeConfig = this.config.life || {};
     const selfCodingConfig = lifeConfig.self_coding || {};
     const weights = {
@@ -267,6 +299,20 @@ export class LifeEngine {
 
     if (this._state.lastReflectTime && now - this._state.lastReflectTime < reflectCooldownMs) {
       weights.reflect = 0;
+    }
+
+    // Suppress activity types that have failed repeatedly (3+ consecutive failures)
+    const failures = this._state.activityFailures || {};
+    for (const [type, info] of Object.entries(failures)) {
+      if (weights[type] !== undefined && info.count >= 3) {
+        // Auto-recover after 1 hour since last failure
+        if (info.lastFailure && now - info.lastFailure > 3600_000) {
+          delete failures[type];
+        } else {
+          weights[type] = 0;
+          logger.debug(`[LifeEngine] Suppressing "${type}" due to ${info.count} consecutive failures`);
+        }
+      }
     }
 
     // Remove last activity from options (no repeats)
