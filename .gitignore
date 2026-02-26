@@ -5,5 +5,5 @@ config.yaml
 initplan.md
 self/
 local_context.json
-# Local Knowledge Base
-knowledge_base/
+# Local Knowledge Base (now tracked)
+# knowledge_base/
