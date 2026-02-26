@@ -716,10 +716,19 @@ async function manageDashboard(config) {
 }
 
 async function main() {
+  const headless = process.argv.includes('--start');
+
   showLogo();
 
-  const config = await loadConfigInteractive();
+  const config = headless ? loadConfig() : await loadConfigInteractive();
   createLogger(config);
+
+  // --start flag: skip menu, launch bot directly (for systemd / headless)
+  if (headless) {
+    const started = await startBotFlow(config);
+    if (!started) process.exit(1);
+    return;
+  }
 
   // Show welcome screen with system info
   const characterManager = new CharacterManager();
