@@ -297,41 +297,34 @@ export class WorkerAgent {
 
     const _str = (v) => typeof v === 'string' ? v : (v ? JSON.stringify(v, null, 2) : '');
 
+    /** Try to build a structured result from a parsed JSON object. */
+    const _fromParsed = (parsed) => {
+      if (!parsed?.summary || !parsed?.status) return null;
+      return {
+        structured: true,
+        summary: String(parsed.summary || ''),
+        status: String(parsed.status || 'success'),
+        details: _str(parsed.details),
+        artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
+        followUp: parsed.followUp ? String(parsed.followUp) : null,
+        toolsUsed: this._toolCallCount,
+        errors: this._errors,
+      };
+    };
+
     // Try to extract JSON from ```json ... ``` fences
     const fenceMatch = text.match(/```json\s*\n?([\s\S]*?)\n?\s*```/);
     if (fenceMatch) {
       try {
-        const parsed = JSON.parse(fenceMatch[1]);
-        if (parsed.summary && parsed.status) {
-          return {
-            structured: true,
-            summary: String(parsed.summary || ''),
-            status: String(parsed.status || 'success'),
-            details: _str(parsed.details),
-            artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
-            followUp: parsed.followUp ? String(parsed.followUp) : null,
-            toolsUsed: this._toolCallCount,
-            errors: this._errors,
-          };
-        }
+        const result = _fromParsed(JSON.parse(fenceMatch[1]));
+        if (result) return result;
       } catch { /* fall through */ }
     }
 
     // Try raw JSON parse (no fences)
     try {
-      const parsed = JSON.parse(text);
-      if (parsed.summary && parsed.status) {
-        return {
-          structured: true,
-          summary: String(parsed.summary || ''),
-          status: String(parsed.status || 'success'),
-          details: _str(parsed.details),
-          artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
-          followUp: parsed.followUp ? String(parsed.followUp) : null,
-          toolsUsed: this._toolCallCount,
-          errors: this._errors,
-        };
-      }
+      const result = _fromParsed(JSON.parse(text));
+      if (result) return result;
     } catch { /* fall through */ }
 
     // Fallback: wrap raw text
