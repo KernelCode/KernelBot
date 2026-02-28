@@ -534,44 +534,52 @@ export class OrchestratorAgent {
 
       logger.info(`[Orchestrator] Job completed event: ${job.id} [${job.workerType}] in chat ${chatId} (${job.duration}s) — result length: ${(job.result || '').length} chars, structured: ${!!job.structuredResult}`);
 
-      // 1. IMMEDIATELY notify user (guarantees they see something regardless of summary LLM)
-      const notifyMsgId = await this._sendUpdate(chatId, `✅ ${label} finished! Preparing summary...`);
-      logger.debug(`[Orchestrator] Job ${job.id} notification sent — msgId=${notifyMsgId || 'none'}`);
+      // 1. Store the job result in conversation history so the Orchestrator has full context
+      const resultEntry = this._buildResultHistoryEntry(job);
+      this.conversationManager.addMessage(convKey, 'assistant', resultEntry);
 
-      // 2. Try to summarize, then store ONE message in history (summary or fallback — not both)
+      // 2. Trigger a proactive Orchestrator generation — inject the job result as context
+      //    and let the Orchestrator speak naturally (present results, suggest next steps, etc.)
       try {
-        const summary = await this._summarizeJobResult(chatId, job);
-        if (summary) {
-          logger.debug(`[Orchestrator] Job ${job.id} summary ready (${summary.length} chars) — delivering to user`);
-          this.conversationManager.addMessage(convKey, 'assistant', summary);
-          // Try to edit the notification, fall back to new message if edit fails
-          try {
-            await this._sendUpdate(chatId, summary, { editMessageId: notifyMsgId });
-          } catch {
-            await this._sendUpdate(chatId, summary).catch(() => {});
+        const sr = job.structuredResult;
+        let resultContext;
+        if (sr?.structured) {
+          const parts = [`Summary: ${sr.summary}`, `Status: ${sr.status}`];
+          if (sr.artifacts?.length > 0) {
+            parts.push(`Artifacts: ${sr.artifacts.map(a => `${a.title || a.type}: ${a.url || a.path || ''}`).join(', ')}`);
           }
+          if (sr.followUp) parts.push(`Follow-up: ${sr.followUp}`);
+          if (sr.details) {
+            const d = typeof sr.details === 'string' ? sr.details : JSON.stringify(sr.details, null, 2);
+            parts.push(`Details:\n${d.slice(0, 4000)}`);
+          }
+          resultContext = parts.join('\n');
         } else {
-          // Summary was null — store the fallback
-          const fallback = this._buildSummaryFallback(job, label);
-          logger.debug(`[Orchestrator] Job ${job.id} using fallback (${fallback.length} chars) — delivering to user`);
-          this.conversationManager.addMessage(convKey, 'assistant', fallback);
-          try {
-            await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
-          } catch {
-            await this._sendUpdate(chatId, fallback).catch(() => {});
-          }
+          resultContext = (job.result || 'Done.').slice(0, 4000);
+        }
+
+        const triggerMessage = `[System: The ${label} worker just finished job \`${job.id}\` (took ${job.duration}s). Results:\n\n${resultContext}\n\nProactively notify the user about the completed task. Present the results naturally, celebrate if appropriate, and suggest next steps. Do NOT mention "worker" or internal job details — speak as if you did the work yourself.]`;
+
+        // Add trigger as a transient user message (not stored in persistent history)
+        const messages = [...this.conversationManager.getSummarizedHistory(convKey)];
+        messages.push({ role: 'user', content: triggerMessage });
+
+        logger.info(`[Orchestrator] Triggering proactive follow-up for job ${job.id} in chat ${chatId}`);
+
+        const { max_tool_depth } = this.config.orchestrator;
+        const reply = await this._runLoop(chatId, messages, null, 0, max_tool_depth);
+
+        if (reply) {
+          logger.info(`[Orchestrator] Proactive reply for job ${job.id}: "${reply.slice(0, 200)}"`);
+          // _runLoop already stores the reply in conversation history
+          await this._sendUpdate(chatId, reply);
         }
       } catch (err) {
-        logger.error(`[Orchestrator] Failed to summarize job ${job.id}: ${err.message}`);
-        // Store the fallback so the orchestrator retains context about what happened
+        logger.error(`[Orchestrator] Proactive follow-up failed for job ${job.id}: ${err.message}`);
+        // Fallback: send a simple formatted summary so the user isn't left hanging
         const fallback = this._buildSummaryFallback(job, label);
         this.conversationManager.addMessage(convKey, 'assistant', fallback);
-        // Try to edit notification, fall back to new message
-        try {
-          await this._sendUpdate(chatId, fallback, { editMessageId: notifyMsgId });
-        } catch {
-          await this._sendUpdate(chatId, fallback).catch(() => {});
-        }
+        await this._sendUpdate(chatId, fallback).catch(() => {});
       }
     });
 
@@ -590,7 +598,7 @@ export class OrchestratorAgent {
       }
     });
 
-    this.jobManager.on('job:failed', (job) => {
+    this.jobManager.on('job:failed', async (job) => {
       const chatId = job.chatId;
       const convKey = this._chatKey(chatId);
       const workerDef = WORKER_TYPES[job.workerType] || {};
@@ -598,9 +606,32 @@ export class OrchestratorAgent {
 
       logger.error(`[Orchestrator] Job failed event: ${job.id} [${job.workerType}] in chat ${chatId} — ${job.error}`);
 
-      const msg = `❌ **${label} failed** (\`${job.id}\`): ${job.error}`;
-      this.conversationManager.addMessage(convKey, 'assistant', msg);
-      this._sendUpdate(chatId, msg).catch(() => {});
+      // Store failure context in history
+      const failMsg = `[${label} failed — job ${job.id}]: ${job.error}`;
+      this.conversationManager.addMessage(convKey, 'assistant', failMsg);
+
+      // Trigger proactive Orchestrator follow-up for the failure
+      try {
+        const triggerMessage = `[System: The ${label} worker failed on job \`${job.id}\`. Error: ${job.error}\n\nProactively notify the user about the failure. Explain what went wrong in simple terms, apologize if appropriate, and suggest how to fix or retry. Do NOT mention "worker" or internal job details — speak as if you encountered the issue yourself.]`;
+
+        const messages = [...this.conversationManager.getSummarizedHistory(convKey)];
+        messages.push({ role: 'user', content: triggerMessage });
+
+        logger.info(`[Orchestrator] Triggering proactive follow-up for failed job ${job.id} in chat ${chatId}`);
+
+        const { max_tool_depth } = this.config.orchestrator;
+        const reply = await this._runLoop(chatId, messages, null, 0, max_tool_depth);
+
+        if (reply) {
+          logger.info(`[Orchestrator] Proactive failure reply for job ${job.id}: "${reply.slice(0, 200)}"`);
+          await this._sendUpdate(chatId, reply);
+        }
+      } catch (err) {
+        logger.error(`[Orchestrator] Proactive failure follow-up failed for job ${job.id}: ${err.message}`);
+        // Fallback: send the simple failure message
+        const fallback = `❌ **${label} failed** (\`${job.id}\`): ${job.error}`;
+        await this._sendUpdate(chatId, fallback).catch(() => {});
+      }
     });
 
     this.jobManager.on('job:cancelled', (job) => {
@@ -613,73 +644,6 @@ export class OrchestratorAgent {
       const msg = `🚫 **${label} cancelled** (\`${job.id}\`)`;
       this._sendUpdate(chatId, msg).catch(() => {});
     });
-  }
-
-  /**
-   * Auto-summarize a completed job result via the orchestrator LLM.
-   * Uses structured data for focused summarization when available.
-   * Short results (<500 chars) skip the LLM call entirely.
-   * Protected by the provider's built-in timeout (30s).
-   * Returns the summary text, or null. Caller handles delivery.
-   */
-  async _summarizeJobResult(chatId, job) {
-    const logger = getLogger();
-    const workerDef = WORKER_TYPES[job.workerType] || {};
-    const label = workerDef.label || job.workerType;
-
-    logger.info(`[Orchestrator] Summarizing job ${job.id} [${job.workerType}] result for user`);
-
-    const sr = job.structuredResult;
-    const resultLen = (job.result || '').length;
-
-    // Direct coding jobs: Claude Code already produces clean, human-readable output.
-    // Skip LLM summarization to avoid timeouts and latency — use the result directly.
-    if (job.workerType === 'coding') {
-      logger.info(`[Orchestrator] Job ${job.id} is a coding job — using direct result (no LLM summary)`);
-      return this._buildSummaryFallback(job, label);
-    }
-
-    // Short results don't need LLM summarization
-    if (sr?.structured && resultLen < 500) {
-      logger.info(`[Orchestrator] Job ${job.id} result short enough — skipping LLM summary`);
-      return this._buildSummaryFallback(job, label);
-    }
-
-    // Build a focused prompt using structured data if available
-    let resultContext;
-    if (sr?.structured) {
-      const parts = [`Summary: ${sr.summary}`, `Status: ${sr.status}`];
-      if (sr.artifacts?.length > 0) {
-        parts.push(`Artifacts: ${sr.artifacts.map(a => `${a.title || a.type}: ${a.url || a.path}`).join(', ')}`);
-      }
-      if (sr.followUp) parts.push(`Follow-up: ${sr.followUp}`);
-      // Include details up to 8000 chars
-      if (sr.details) {
-        const d = typeof sr.details === 'string' ? sr.details : JSON.stringify(sr.details, null, 2);
-        parts.push(`Details:\n${d.slice(0, 8000)}`);
-      }
-      resultContext = parts.join('\n');
-    } else {
-      resultContext = (job.result || 'Done.').slice(0, 8000);
-    }
-
-    const history = this.conversationManager.getSummarizedHistory(this._chatKey(chatId));
-
-    const response = await this.orchestratorProvider.chat({
-      system: this._getSystemPrompt(chatId, null),
-      messages: [
-        ...history,
-        {
-          role: 'user',
-          content: `The ${label} worker just finished job \`${job.id}\` (took ${job.duration}s). Here are the results:\n\n${resultContext}\n\nPresent these results to the user in a clean, well-formatted way. Don't mention "worker" or technical job details — just present the findings naturally as if you did the work yourself.`,
-        },
-      ],
-    });
-
-    const summary = response.text || '';
-    logger.info(`[Orchestrator] Job ${job.id} summary: "${summary.slice(0, 200)}"`);
-
-    return summary || null;
   }
 
   /**
