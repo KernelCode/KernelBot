@@ -13,7 +13,8 @@ const ARCHITECTURE_FILE = join(CODEBASE_DIR, 'architecture.md');
 // Files to always skip during scanning
 const SKIP_PATTERNS = [
   'node_modules', '.git', 'package-lock.json', 'yarn.lock',
-  '.env', '.DS_Store', 'dist/', 'build/', 'coverage/',
+  '.env', '.env.local', '.env.production', '.env.staging', '.env.development', '.env.test',
+  '.DS_Store', 'dist/', 'build/', 'coverage/',
 ];
 
 export class CodebaseKnowledge {

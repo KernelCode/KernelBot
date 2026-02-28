@@ -37,12 +37,36 @@ export const definitions = [
   },
 ];
 
+// SSRF protection: block requests to internal/cloud metadata addresses
+const BLOCKED_HOSTS = [
+  /^127\./,
+  /^10\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^192\.168\./,
+  /^169\.254\./,       // AWS/cloud metadata endpoint
+  /^0\./,
+  /^localhost$/i,
+  /^metadata\.google\.internal$/i,
+  /^\[::1\]$/,
+  /^\[fd/i,            // IPv6 private
+  /^\[fe80:/i,         // IPv6 link-local
+];
+
+function isBlockedHost(host) {
+  return BLOCKED_HOSTS.some(pattern => pattern.test(host));
+}
+
 export const handlers = {
   check_port: async (params) => {
     const logger = getLogger();
     const host = params.host || 'localhost';
     const port = parseInt(params.port, 10);
     if (!Number.isFinite(port) || port <= 0 || port > 65535) return { error: 'Invalid port number' };
+
+    // SSRF protection: block internal network probing
+    if (host !== 'localhost' && isBlockedHost(host)) {
+      return { error: 'Blocked: cannot probe internal or cloud metadata addresses' };
+    }
 
     logger.debug(`check_port: checking ${host}:${port}`);
     // Use nc (netcat) for port check — works on both macOS and Linux
@@ -59,6 +83,16 @@ export const handlers = {
 
   curl_url: async (params) => {
     const { url, method = 'GET', headers, body } = params;
+
+    // SSRF protection: block requests to internal networks and cloud metadata
+    try {
+      const parsed = new URL(url);
+      if (isBlockedHost(parsed.hostname)) {
+        return { error: 'Blocked: cannot access internal or cloud metadata addresses' };
+      }
+    } catch {
+      return { error: 'Invalid URL' };
+    }
 
     let cmd = `curl -s -w "\\n---HTTP_STATUS:%{http_code}" -X ${shellEscape(method)}`;
 

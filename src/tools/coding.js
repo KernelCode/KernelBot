@@ -50,6 +50,17 @@ export const handlers = {
     const onUpdate = context.onUpdate || null;
     const dir = resolve(params.working_directory);
 
+    // Validate working_directory against blocked paths
+    const blockedPaths = context.config?.security?.blocked_paths || [];
+    for (const bp of blockedPaths) {
+      const expandedBp = resolve(bp.startsWith('~') ? bp.replace('~', process.env.HOME || '') : bp);
+      if (dir.startsWith(expandedBp) || dir === expandedBp) {
+        const msg = `Blocked: working directory is within restricted path ${bp}`;
+        logger.warn(`spawn_claude_code: ${msg}`);
+        return { error: msg };
+      }
+    }
+
     // Validate directory exists
     if (!existsSync(dir)) {
       const msg = `Directory not found: ${dir}`;

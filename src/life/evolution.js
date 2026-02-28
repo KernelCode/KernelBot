@@ -32,13 +32,14 @@ export class EvolutionTracker {
         return {
           proposals: raw.proposals || [],
           lessons: raw.lessons || [],
-          stats: { ...DEFAULT_DATA.stats, ...raw.stats },
+          // Deep-copy DEFAULT_DATA.stats to avoid mutating the module-level default
+          stats: { ...structuredClone(DEFAULT_DATA.stats), ...raw.stats },
         };
       } catch {
-        return { ...DEFAULT_DATA, proposals: [], lessons: [] };
+        return { proposals: [], lessons: [], stats: structuredClone(DEFAULT_DATA.stats) };
       }
     }
-    return { ...DEFAULT_DATA, proposals: [], lessons: [] };
+    return { proposals: [], lessons: [], stats: structuredClone(DEFAULT_DATA.stats) };
   }
 
   _save() {

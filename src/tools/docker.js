@@ -94,6 +94,19 @@ export const handlers = {
   docker_compose: async (params) => {
     const logger = getLogger();
     const dir = params.project_dir ? `-f ${shellEscape(params.project_dir + '/docker-compose.yml')}` : '';
+
+    // Sanitize action: only allow known compose subcommands and safe flags
+    const ALLOWED_ACTIONS = ['up', 'down', 'build', 'logs', 'ps', 'restart', 'stop', 'start', 'pull', 'config', 'exec', 'run', 'top', 'images'];
+    const actionParts = params.action.trim().split(/\s+/);
+    const subcommand = actionParts[0];
+    if (!ALLOWED_ACTIONS.includes(subcommand)) {
+      return { error: `Invalid compose action: "${subcommand}". Allowed: ${ALLOWED_ACTIONS.join(', ')}` };
+    }
+    // Reject shell metacharacters in the action string to prevent injection
+    if (/[;&|`$(){}]/.test(params.action)) {
+      return { error: 'Invalid characters in compose action' };
+    }
+
     logger.debug(`docker_compose: ${params.action}`);
     const result = await run(`docker compose ${dir} ${params.action}`, 120000);
     if (result.error) logger.error(`docker_compose '${params.action}' failed: ${result.error}`);

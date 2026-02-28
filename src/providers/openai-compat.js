@@ -102,6 +102,9 @@ export class OpenAICompatProvider extends BaseProvider {
 
   /** OpenAI response → normalized format with rawContent in Anthropic format */
   _normalizeResponse(response) {
+    if (!response.choices || response.choices.length === 0) {
+      return { stopReason: 'end_turn', text: '', toolCalls: [], rawContent: [] };
+    }
     const choice = response.choices[0];
     const finishReason = choice.finish_reason;
 

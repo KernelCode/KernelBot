@@ -770,7 +770,8 @@ export async function executeOrchestratorTool(name, input, context) {
       if (!conversationManager) return { error: 'Conversation system not available.' };
 
       const { query, chat_id } = input;
-      const targetChatId = chat_id || chatId;
+      // Prevent cross-chat history access — only allow searching own chat
+      const targetChatId = chatId;
       logger.info(`[search_conversations] Searching chat ${targetChatId} for: "${query}"`);
 
       const history = conversationManager.getHistory(targetChatId);

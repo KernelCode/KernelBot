@@ -75,7 +75,15 @@ export const handlers = {
       return await run(`journalctl -n ${finalLines}${filterArg} --no-pager`);
     }
 
-    // Reading a log file
+    // Reading a log file — restrict to known safe directories
+    const { resolve: resolvePath } = await import('path');
+    const resolvedSource = resolvePath(source);
+    const ALLOWED_LOG_DIRS = ['/var/log', process.cwd(), process.env.HOME || ''];
+    const isAllowed = ALLOWED_LOG_DIRS.some(dir => dir && resolvedSource.startsWith(dir));
+    if (!isAllowed) {
+      return { error: `Blocked: log source must be within /var/log, the project directory, or home directory` };
+    }
+
     const filterCmd = filter ? ` | grep -i ${shellEscape(filter)}` : '';
     return await run(`tail -n ${finalLines} ${shellEscape(source)}${filterCmd}`);
   },

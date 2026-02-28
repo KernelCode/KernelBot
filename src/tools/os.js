@@ -137,12 +137,26 @@ export const handlers = {
     const { config } = context;
     const blockedPaths = config.security?.blocked_paths || [];
 
-    // Simple check: if the command references a blocked path, reject
-    for (const bp of blockedPaths) {
-      const expanded = expandPath(bp);
-      if (command.includes(expanded)) {
-        logger.warn(`execute_command blocked: command references restricted path ${bp}`);
-        return { error: `Blocked: command references restricted path ${bp}` };
+    // Tokenize the command to extract all path-like arguments, then resolve
+    // each one and check against blocked paths. This prevents bypasses via
+    // shell operators (&&, |, ;), quoting, or subshells.
+    const shellTokens = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+    for (const token of shellTokens) {
+      // Strip surrounding quotes
+      const cleaned = token.replace(/^["']|["']$/g, '');
+      // Skip tokens that look like flags or shell operators
+      if (/^[-|;&<>]/.test(cleaned) || cleaned.length === 0) continue;
+      try {
+        const resolved = expandPath(cleaned);
+        for (const bp of blockedPaths) {
+          const expandedBp = expandPath(bp);
+          if (resolved.startsWith(expandedBp) || resolved === expandedBp) {
+            logger.warn(`execute_command blocked: argument "${cleaned}" references restricted path ${bp}`);
+            return { error: `Blocked: command references restricted path ${bp}` };
+          }
+        }
+      } catch {
+        // Not a valid path — skip
       }
     }
 

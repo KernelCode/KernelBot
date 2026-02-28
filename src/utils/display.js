@@ -121,7 +121,7 @@ export function showCharacterCard(character, isActive = false) {
     ...(art ? art.split("\n").map((line) => chalk.cyan(line)) : []),
     "",
     chalk.dim(`Origin: ${character.origin || "Unknown"}`),
-    chalk.dim(`Style: ${character.age || "Unknown"}`),
+    chalk.dim(`Age: ${character.age || "Unknown"}`),
   ].join("\n");
 
   console.log(
