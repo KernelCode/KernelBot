@@ -38,7 +38,7 @@ const DEFAULTS = {
   claude_code: {
     model: 'claude-opus-4-6',
     max_turns: 50,
-    timeout_seconds: 600,
+    timeout_seconds: 86400,
     workspace_dir: null, // defaults to ~/.kernelbot/workspaces
     auth_mode: 'system', // system | api_key | oauth_token
   },

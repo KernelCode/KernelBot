@@ -137,9 +137,9 @@ export class ClaudeCodeSpawner {
   constructor(config) {
     this.config = config;
     this.maxTurns = config.claude_code?.max_turns || 50;
-    // Default 30 minutes — generous enough for complex tasks (blog posts, PRs),
-    // but not so long that stuck processes waste resources for hours.
-    this.timeout = (config.claude_code?.timeout_seconds || 1800) * 1000;
+    // Default 24 hours — background workers can legitimately run for extended periods.
+    // Stuck process detection is handled separately by idle/loop heuristics.
+    this.timeout = (config.claude_code?.timeout_seconds || 86400) * 1000;
   }
 
   _buildSpawnEnv() {
