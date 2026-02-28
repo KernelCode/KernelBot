@@ -162,7 +162,12 @@ export class ClaudeCodeSpawner {
     }
     // authMode === 'system' — pass env as-is
 
-    return env;
+    
+    // FIX: Ensure system auth uses local credentials, not the bot's API key
+    if (authMode === 'system') {
+      delete env.ANTHROPIC_API_KEY;
+    }
+  return env;
   }
 
   async run({ workingDirectory, prompt, maxTurns, timeoutMs, onOutput, signal }) {
