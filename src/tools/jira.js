@@ -186,7 +186,11 @@ export const handlers = {
       const client = getJiraClient(context.config);
       const assignee = params.assignee || 'currentUser()';
       const maxResults = params.max_results || 20;
-      const jql = `assignee = ${assignee} ORDER BY updated DESC`;
+      // Sanitize assignee to prevent JQL injection — allow currentUser() or quote the value
+      const safeAssignee = assignee === 'currentUser()'
+        ? 'currentUser()'
+        : `"${assignee.replace(/["\\]/g, '')}"`;
+      const jql = `assignee = ${safeAssignee} ORDER BY updated DESC`;
 
       const { data } = await client.get('/search', {
         params: {
@@ -215,7 +219,12 @@ export const handlers = {
     try {
       const client = getJiraClient(context.config);
       const maxResults = params.max_results || 20;
-      const jql = `project = ${params.project_key} ORDER BY updated DESC`;
+      // Sanitize project_key to prevent JQL injection — only allow alphanumeric and underscore
+      const safeProjectKey = params.project_key.replace(/[^a-zA-Z0-9_]/g, '');
+      if (safeProjectKey !== params.project_key) {
+        return { error: `Invalid project key: "${params.project_key}". Only alphanumeric characters and underscores are allowed.` };
+      }
+      const jql = `project = "${safeProjectKey}" ORDER BY updated DESC`;
 
       const { data } = await client.get('/search', {
         params: {

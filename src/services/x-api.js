@@ -25,11 +25,22 @@ export class XApi {
       timeout: 30000,
     });
 
-    // Sign every request with OAuth 1.0a
+    // Sign every request with OAuth 1.0a — include query params in the signature
+    // base string, as required by the OAuth 1.0a spec. Without this, GET requests
+    // with query parameters fail authentication.
     this.client.interceptors.request.use((config) => {
-      const url = `${config.baseURL}${config.url}`;
+      let fullUrl = `${config.baseURL}${config.url}`;
+      // Build data object including query params for OAuth signature
+      const oauthData = { url: fullUrl, method: config.method.toUpperCase() };
+      // Include query params in the OAuth signature base string
+      if (config.params) {
+        oauthData.data = {};
+        for (const [key, val] of Object.entries(config.params)) {
+          oauthData.data[key] = String(val);
+        }
+      }
       const authHeader = this.oauth.toHeader(
-        this.oauth.authorize({ url, method: config.method.toUpperCase() }, this.token),
+        this.oauth.authorize(oauthData, this.token),
       );
       config.headers = { ...config.headers, ...authHeader, 'Content-Type': 'application/json' };
       return config;

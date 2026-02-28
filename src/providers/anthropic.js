@@ -23,7 +23,9 @@ export class AnthropicProvider extends BaseProvider {
     return this._callWithResilience(async (timedSignal) => {
       const response = await this.client.messages.create(params, { signal: timedSignal });
 
-      const stopReason = response.stop_reason === 'end_turn' ? 'end_turn' : 'tool_use';
+      // Map all Anthropic stop reasons correctly — not just end_turn vs tool_use.
+      // 'max_tokens' was incorrectly mapped to 'tool_use', causing phantom tool-call processing.
+      const stopReason = response.stop_reason === 'tool_use' ? 'tool_use' : response.stop_reason || 'end_turn';
 
       const textBlocks = response.content.filter((b) => b.type === 'text');
       const text = textBlocks.map((b) => b.text).join('\n');

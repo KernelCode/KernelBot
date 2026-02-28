@@ -392,7 +392,10 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
       } else if (data.startsWith('brain_model:')) {
         // User picked a model — attempt switch
-        const [, providerKey, modelId] = data.split(':');
+        // Use split with limit to avoid truncating model IDs containing colons
+        const parts = data.split(':');
+        const providerKey = parts[1];
+        const modelId = parts.slice(2).join(':');
         const providerDef = PROVIDERS[providerKey];
         const modelEntry = providerDef?.models.find((m) => m.id === modelId);
         const modelLabel = modelEntry ? modelEntry.label : modelId;
@@ -726,7 +729,10 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         await bot.answerCallbackQuery(query.id);
 
       } else if (data.startsWith('orch_model:')) {
-        const [, providerKey, modelId] = data.split(':');
+        // Use split with limit to avoid truncating model IDs containing colons
+        const parts = data.split(':');
+        const providerKey = parts[1];
+        const modelId = parts.slice(2).join(':');
         const providerDef = PROVIDERS[providerKey];
         const modelEntry = providerDef?.models.find((m) => m.id === modelId);
         const modelLabel = modelEntry ? modelEntry.label : modelId;

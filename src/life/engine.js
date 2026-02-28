@@ -308,6 +308,7 @@ export class LifeEngine {
         // Auto-recover after 1 hour since last failure
         if (info.lastFailure && now - info.lastFailure > 3600_000) {
           delete failures[type];
+          this._saveState(); // Persist the deletion so it survives restarts
         } else {
           weights[type] = 0;
           logger.debug(`[LifeEngine] Suppressing "${type}" due to ${info.count} consecutive failures`);

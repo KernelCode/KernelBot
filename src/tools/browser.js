@@ -665,9 +665,16 @@ async function handleInteract(params, context) {
 
   for (const action of params.actions) {
     if (action.type === 'evaluate' && action.script) {
-      const blocked = /fetch\s*\(|XMLHttpRequest|window\.location\s*=|document\.cookie|localStorage|sessionStorage/i;
-      if (blocked.test(action.script)) {
-        return { error: 'Script contains blocked patterns (network requests, cookie access, storage access, or redirects)' };
+      // Block dangerous APIs using both direct access and bracket notation bypass patterns
+      const blocked = /fetch\s*\(|XMLHttpRequest|document\.cookie|localStorage|sessionStorage/i;
+      // Also detect bracket notation bypasses like window['location'], globalThis['fetch']
+      const bracketBypass = /\[\s*['"`](location|cookie|fetch|XMLHttpRequest|localStorage|sessionStorage|eval|Function)['"`]\s*\]/i;
+      // Block window.location assignment (direct or bracket)
+      const locationAssign = /window\s*(\.\s*location\s*=|\[\s*['"`]location['"`]\s*\]\s*=)/i;
+      // Block eval and Function constructor
+      const evalPattern = /\beval\s*\(|\bnew\s+Function\s*\(/i;
+      if (blocked.test(action.script) || bracketBypass.test(action.script) || locationAssign.test(action.script) || evalPattern.test(action.script)) {
+        return { error: 'Script contains blocked patterns (network requests, cookie access, storage access, eval, or redirects)' };
       }
     }
   }

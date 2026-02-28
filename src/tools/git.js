@@ -10,22 +10,29 @@ function getWorkspaceDir(config) {
   return dir;
 }
 
-function injectToken(url, config) {
+/**
+ * Get the auth header value for GitHub HTTPS operations.
+ * Uses extraheader instead of embedding credentials in the URL,
+ * preventing token leaks in git remote -v, error messages, and process listings.
+ */
+function getGitAuthEnv(config) {
   const token = config.github?.token || process.env.GITHUB_TOKEN;
-  if (!token) return url;
+  if (!token) return null;
+  const base64 = Buffer.from(`x-access-token:${token}`).toString('base64');
+  return `AUTHORIZATION: basic ${base64}`;
+}
 
-  // Inject token into HTTPS GitHub URLs for auth-free push/pull
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname === 'github.com' && parsed.protocol === 'https:') {
-      parsed.username = token;
-      parsed.password = 'x-oauth-basic';
-      return parsed.toString();
-    }
-  } catch {
-    // Not a parseable URL (e.g. org/repo shorthand before expansion)
+/**
+ * Configure a simple-git instance with auth via extraheader (not URL embedding).
+ */
+function configureGitAuth(git, config) {
+  const authHeader = getGitAuthEnv(config);
+  if (authHeader) {
+    git.env('GIT_CONFIG_COUNT', '1');
+    git.env('GIT_CONFIG_KEY_0', 'http.extraheader');
+    git.env('GIT_CONFIG_VALUE_0', authHeader);
   }
-  return url;
+  return git;
 }
 
 export const definitions = [
@@ -107,15 +114,19 @@ export const handlers = {
       url = `https://github.com/${repo}.git`;
     }
 
-    // Inject GitHub token for authenticated clone (enables push later)
-    const authUrl = injectToken(url, context.config);
-
     const repoName = dest || repo.split('/').pop().replace('.git', '');
+    // Prevent path traversal — dest must not escape workspace directory
+    if (repoName.includes('..') || repoName.startsWith('/')) {
+      return { error: 'Invalid destination: path traversal is not allowed' };
+    }
     const targetDir = join(workspaceDir, repoName);
+    if (!targetDir.startsWith(workspaceDir)) {
+      return { error: 'Invalid destination: path escapes workspace directory' };
+    }
 
     try {
-      const git = simpleGit();
-      await git.clone(authUrl, targetDir);
+      const git = configureGitAuth(simpleGit(), context.config);
+      await git.clone(url, targetDir);
       return { success: true, path: targetDir };
     } catch (err) {
       getLogger().error(`git_clone failed for ${params.repo}: ${err.message}`);
@@ -155,17 +166,8 @@ export const handlers = {
   git_push: async (params, context) => {
     const { dir, force = false } = params;
     try {
-      const git = simpleGit(dir);
-
-      // Ensure remote URL has auth token for push
-      const remotes = await git.getRemotes(true);
-      const origin = remotes.find((r) => r.name === 'origin');
-      if (origin) {
-        const authUrl = injectToken(origin.refs.push || origin.refs.fetch, context.config);
-        if (authUrl !== (origin.refs.push || origin.refs.fetch)) {
-          await git.remote(['set-url', 'origin', authUrl]);
-        }
-      }
+      // Use extraheader auth instead of modifying remote URLs
+      const git = configureGitAuth(simpleGit(dir), context.config);
 
       const branch = (await git.branchLocal()).current;
       const options = ['-u'];

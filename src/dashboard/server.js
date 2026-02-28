@@ -40,6 +40,34 @@ export function startDashboard(deps) {
 
   const logger = getLogger();
 
+  // --- Authentication ---
+  const dashboardToken = config.dashboard?.token || process.env.DASHBOARD_TOKEN || null;
+  const allowedOrigins = config.dashboard?.allowed_origins || null;
+
+  function getCorOrigin(req) {
+    if (!allowedOrigins) return null; // No CORS headers when no origins configured
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.includes(origin)) return origin;
+    return null;
+  }
+
+  function authenticate(req, res) {
+    if (!dashboardToken) return true; // No token configured = no auth required
+
+    // Check Authorization header or query param
+    const authHeader = req.headers.authorization;
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const queryToken = url.searchParams.get('token');
+
+    if (authHeader === `Bearer ${dashboardToken}` || queryToken === dashboardToken) {
+      return true;
+    }
+
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unauthorized — provide a valid dashboard token' }));
+    return false;
+  }
+
   // --- Static file serving ---
   const MIME_TYPES = {
     '.html': 'text/html; charset=utf-8',
@@ -429,13 +457,18 @@ export function startDashboard(deps) {
   }, 3000);
 
   // --- HTTP routing ---
-  function sendJson(res, data) {
+  function sendJson(res, data, req) {
     const body = JSON.stringify(data);
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
       'Cache-Control': 'no-cache',
-    });
+    };
+    // Only set CORS header for explicitly allowed origins (not wildcard)
+    if (req) {
+      const corsOrigin = getCorOrigin(req);
+      if (corsOrigin) headers['Access-Control-Allow-Origin'] = corsOrigin;
+    }
+    res.writeHead(200, headers);
     res.end(body);
   }
 
@@ -445,16 +478,18 @@ export function startDashboard(deps) {
 
     // CORS preflight
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
+      const corsOrigin = getCorOrigin(req);
+      const headers = {
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      });
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      };
+      if (corsOrigin) headers['Access-Control-Allow-Origin'] = corsOrigin;
+      res.writeHead(204, headers);
       res.end();
       return;
     }
 
-    // Serve index.html
+    // Serve index.html (static pages don't require auth)
     if (path === '/' || path === '/index.html') {
       serveStaticFile(res, 'index.html');
       return;
@@ -466,14 +501,19 @@ export function startDashboard(deps) {
       return;
     }
 
+    // All API and SSE endpoints require authentication
+    if (!authenticate(req, res)) return;
+
     // SSE endpoint
     if (path === '/events') {
-      res.writeHead(200, {
+      const sseHeaders = {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-      });
+      };
+      const corsOrigin = getCorOrigin(req);
+      if (corsOrigin) sseHeaders['Access-Control-Allow-Origin'] = corsOrigin;
+      res.writeHead(200, sseHeaders);
       res.write(`data: ${JSON.stringify(getSnapshot())}\n\n`);
       sseClients.add(res);
       req.on('close', () => sseClients.delete(res));
@@ -502,7 +542,7 @@ export function startDashboard(deps) {
 
     if (routes[path]) {
       try {
-        sendJson(res, routes[path]());
+        sendJson(res, routes[path](), req);
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
