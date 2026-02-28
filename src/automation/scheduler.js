@@ -110,7 +110,7 @@ function nextCronTime(expression, after) {
 /**
  * Parse a single cron field into a Set of valid integer values.
  *
- * @param {string} field - Cron field expression (e.g. '*', '1-5', '*/10', '1,3,5')
+ * @param {string} field - Cron field expression (e.g. '*', '1-5', '*\/10', '1,3,5')
  * @param {number} min   - Minimum allowed value for this field (inclusive)
  * @param {number} max   - Maximum allowed value for this field (inclusive)
  * @returns {Set<number>} Set of matching integer values clamped to [min, max]
