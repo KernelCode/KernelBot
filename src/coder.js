@@ -180,7 +180,6 @@ export class ClaudeCodeSpawner {
       '--max-turns', String(turns),
       '--output-format', 'stream-json',
       '--verbose',
-      '--yes',
       '--dangerously-skip-permissions',
     ];
     if (model) {
