@@ -16,7 +16,7 @@ export function createLogger(config) {
         format: winston.format.combine(
           winston.format.colorize(),
           winston.format.printf(({ level, message, timestamp }) => {
-            return `[KernelBot] ${level}: ${message}`;
+            return `${timestamp} [KernelBot] ${level}: ${message}`;
           }),
         ),
       }),

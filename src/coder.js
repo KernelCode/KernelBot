@@ -219,7 +219,9 @@ export class ClaudeCodeSpawner {
         } else {
           statusMsgId = await onOutput(buildStatusText());
         }
-      } catch {}
+      } catch (err) {
+        logger.debug(`flushStatus failed: ${err.message}`);
+      }
     };
 
     const addActivity = (line) => {
@@ -346,7 +348,9 @@ export class ClaudeCodeSpawner {
           const finalState = code === 0 ? 'done' : 'error';
           try {
             await onOutput(buildStatusText(finalState), { editMessageId: statusMsgId });
-          } catch {}
+          } catch (err) {
+            logger.debug(`Final status update failed: ${err.message}`);
+          }
         }
 
         logger.info(`Claude Code exited with code ${code} | stdout: ${fullOutput.length} chars | stderr: ${stderr.length} chars`);
