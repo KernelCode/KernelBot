@@ -24,7 +24,7 @@ export const WORKER_TYPES = {
     emoji: '🖥️',
     categories: ['core', 'process', 'monitor', 'network'],
     description: 'OS operations, monitoring, network',
-    timeout: 600,    // 10 minutes
+    timeout: 86400,  // 24 hours
   },
   devops: {
     label: 'DevOps Worker',
@@ -38,7 +38,7 @@ export const WORKER_TYPES = {
     emoji: '🔍',
     categories: ['browser', 'core'],
     description: 'Deep web research and analysis',
-    timeout: 600,    // 10 minutes
+    timeout: 86400,  // 24 hours
   },
   social: {
     label: 'Social Worker',
