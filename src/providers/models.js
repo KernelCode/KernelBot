@@ -55,6 +55,28 @@ export const PROVIDERS = {
   },
 };
 
+/**
+ * Fallback model map: when a model hits limitations, fall back to a more stable model
+ * within the same provider. Maps model ID → fallback model ID.
+ */
+export const MODEL_FALLBACKS = {
+  // Google — preview models fall back to stable ones
+  'gemini-3.1-pro-preview': 'gemini-2.5-flash',
+  'gemini-3-flash-preview': 'gemini-2.5-flash',
+  'gemini-3-pro-preview': 'gemini-2.5-pro',
+  'gemini-2.5-pro': 'gemini-2.5-flash',
+  'gemini-2.5-flash': 'gemini-2.5-flash-lite',
+  // OpenAI
+  'gpt-4o': 'gpt-4o-mini',
+  'o1': 'gpt-4o',
+  'o3-mini': 'gpt-4o-mini',
+  // Anthropic
+  'claude-opus-4-6': 'claude-sonnet-4-6',
+  'claude-sonnet-4-6': 'claude-haiku-4-5-20251001',
+  // Groq
+  'llama-3.3-70b-versatile': 'llama-3.1-8b-instant',
+};
+
 /** Models that don't support system prompts or temperature (reasoning models). */
 export const REASONING_MODELS = new Set(['o1', 'o3-mini']);
 

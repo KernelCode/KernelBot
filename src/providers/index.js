@@ -3,7 +3,7 @@ import { OpenAICompatProvider } from './openai-compat.js';
 import { GoogleGenaiProvider } from './google-genai.js';
 import { PROVIDERS } from './models.js';
 
-export { PROVIDERS } from './models.js';
+export { PROVIDERS, MODEL_FALLBACKS } from './models.js';
 
 /**
  * Create the right provider based on config.brain.

@@ -1,4 +1,5 @@
-import { createProvider, PROVIDERS } from './providers/index.js';
+import { createProvider, PROVIDERS, MODEL_FALLBACKS } from './providers/index.js';
+import { BaseProvider } from './providers/base.js';
 import { orchestratorToolDefinitions, executeOrchestratorTool } from './tools/orchestrator-tools.js';
 import { getToolsForWorker } from './swarm/worker-registry.js';
 import { WORKER_TYPES } from './swarm/worker-registry.js';
@@ -1120,11 +1121,54 @@ export class OrchestratorAgent {
         workingMessages = [{ role: 'user', content: `[Worker Status]\n${digest}` }, ...workingMessages];
       }
 
-      const response = await this.orchestratorProvider.chat({
-        system: this._getSystemPrompt(chatId, user, temporalContext),
-        messages: workingMessages,
-        tools: orchestratorToolDefinitions,
-      });
+      let response;
+      let activeProvider = this.orchestratorProvider;
+
+      try {
+        response = await activeProvider.chat({
+          system: this._getSystemPrompt(chatId, user, temporalContext),
+          messages: workingMessages,
+          tools: orchestratorToolDefinitions,
+        });
+      } catch (err) {
+        // If this is a model limitation, try falling back to a simpler model
+        const currentModel = activeProvider.model;
+        const fallbackModel = MODEL_FALLBACKS[currentModel];
+
+        if (fallbackModel && BaseProvider.isModelLimitation(err)) {
+          logger.warn(`[Orchestrator] Model ${currentModel} hit limitation: ${err.message} — falling back to ${fallbackModel}`);
+          this._sendUpdate(chatId, `⚠️ ${currentModel} hit a limitation, switching to ${fallbackModel}...`).catch(() => {});
+
+          try {
+            const orchProviderKey = this.config.orchestrator.provider || 'anthropic';
+            const orchProviderDef = PROVIDERS[orchProviderKey];
+            const orchApiKey = this.config.orchestrator.api_key || (orchProviderDef && process.env[orchProviderDef.envKey]);
+
+            const fallbackProvider = createProvider({
+              brain: {
+                provider: orchProviderKey,
+                model: fallbackModel,
+                max_tokens: this.config.orchestrator.max_tokens,
+                temperature: this.config.orchestrator.temperature,
+                api_key: orchApiKey,
+                timeout: 30_000,
+              },
+            });
+
+            response = await fallbackProvider.chat({
+              system: this._getSystemPrompt(chatId, user, temporalContext),
+              messages: workingMessages,
+              tools: orchestratorToolDefinitions,
+            });
+            activeProvider = fallbackProvider;
+          } catch (fallbackErr) {
+            logger.error(`[Orchestrator] Fallback model ${fallbackModel} also failed: ${fallbackErr.message}`);
+            throw err; // Throw the original error
+          }
+        } else {
+          throw err;
+        }
+      }
 
       logger.info(`[Orchestrator] LLM response: stopReason=${response.stopReason}, text=${(response.text || '').length} chars, toolCalls=${(response.toolCalls || []).length}`);
 

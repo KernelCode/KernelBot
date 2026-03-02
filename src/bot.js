@@ -206,6 +206,39 @@ class ChatQueue {
   }
 }
 
+/**
+ * Convert raw errors into user-friendly messages.
+ * Keeps technical details in logs, shows something helpful in chat.
+ */
+function _friendlyError(err) {
+  const msg = (err?.message || '').toLowerCase();
+
+  if (msg.includes('api key') || msg.includes('authentication') || msg.includes('unauthorized')) {
+    return '🔑 Authentication issue — please check your API key configuration.';
+  }
+  if (msg.includes('rate limit') || msg.includes('429') || msg.includes('quota')) {
+    return '⏳ Rate limited — too many requests. I\'ll be back in a moment, try again shortly.';
+  }
+  if (msg.includes('timed out') || msg.includes('timeout')) {
+    return '⏱️ The request timed out. Try again or simplify your request.';
+  }
+  if (msg.includes('context length') || msg.includes('too long') || msg.includes('too large') || msg.includes('token limit')) {
+    return '📏 Message too long for the current model. Try a shorter message or switch to a model with a larger context window.';
+  }
+  if (msg.includes('safety') || msg.includes('blocked') || msg.includes('recitation')) {
+    return '🛡️ The model declined this request due to safety filters. Try rephrasing.';
+  }
+  if (msg.includes('not found') || msg.includes('not available') || msg.includes('does not exist')) {
+    return '❓ The configured model is not available. Try switching to a different model with /brain.';
+  }
+  if (msg.includes('connection') || msg.includes('network') || msg.includes('fetch failed')) {
+    return '🌐 Network issue — couldn\'t reach the AI provider. Check your connection and try again.';
+  }
+
+  // Generic fallback — still don't expose raw internals
+  return '⚠️ Something went wrong processing your message. Try again, or switch models with /brain if the issue persists.';
+}
+
 export function startBot(config, agent, conversationManager, jobManager, automationManager, lifeDeps = {}) {
   let { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge, characterManager, dashboardHandle, dashboardDeps } = lifeDeps;
   const logger = getLogger();
@@ -2525,7 +2558,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       } catch (err) {
         clearInterval(typingInterval);
         logger.error(`[Bot] Error processing message in chat ${chatId}: ${err.message}`);
-        await bot.sendMessage(chatId, `Error: ${err.message}`);
+        // Show a friendly message instead of raw error details
+        const friendly = _friendlyError(err);
+        await bot.sendMessage(chatId, friendly);
       }
     });
   });

@@ -144,4 +144,37 @@ export class BaseProvider {
   async ping() {
     throw new Error('ping() not implemented');
   }
+
+  /**
+   * Determine if an error is a model limitation (not transient, not auth).
+   * These are errors where falling back to a simpler model may help:
+   * context length exceeded, unsupported features, content too large, etc.
+   */
+  static isModelLimitation(err) {
+    const msg = (err?.message || '').toLowerCase();
+    const status = err?.status || err?.statusCode;
+
+    // 400-class errors that indicate model-specific limitations
+    if (status === 400 || status === 413 || status === 422) {
+      // Exclude auth/key errors
+      if (msg.includes('api key') || msg.includes('authentication') || msg.includes('unauthorized')) {
+        return false;
+      }
+      return true;
+    }
+
+    // Common limitation keywords across providers
+    const limitationPatterns = [
+      'context length', 'token limit', 'too long', 'too large',
+      'max.*token', 'content.*too', 'exceeds.*limit', 'input.*too',
+      'not supported', 'not available', 'does not support',
+      'resource exhausted', 'quota', 'capacity',
+      'invalid.*model', 'model.*not.*found',
+      'recitation', 'safety', 'blocked',
+      'finish_reason.*length', 'max_output_tokens',
+      'prompt.*too', 'request.*too.*large',
+    ];
+
+    return limitationPatterns.some((p) => new RegExp(p).test(msg));
+  }
 }
