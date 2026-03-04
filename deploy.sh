@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
-#  KERNEL — VPS Deploy Script
+#  KernelBot — VPS Deploy Script
 #  Installs bun, Chromium, clones the repo, configures .env,
 #  sets up a systemd service, and starts the bot.
 #
@@ -10,12 +10,12 @@
 set -euo pipefail
 
 # ── Config ──
-INSTALL_DIR="/opt/kernel"
-SERVICE_NAME="kernel"
+INSTALL_DIR="/opt/kernelbot"
+SERVICE_NAME="kernelbot"
 DATA_DIR="/root/.kernelbot"
 ENV_FILE="$DATA_DIR/.env"
 REPO_URL="https://github.com/KernelCode/KernelBot.git"
-LOG_FILE="/tmp/kernel-deploy-$(date +%Y%m%d-%H%M%S).log"
+LOG_FILE="/tmp/kernelbot-deploy-$(date +%Y%m%d-%H%M%S).log"
 MIN_DISK_MB=500
 MIN_RAM_MB=256
 REQUIRED_CMDS=(curl git)
@@ -45,8 +45,8 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 # ── Banner ──
 echo ""
 echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║       KERNEL — VPS Deploy Script         ║${NC}"
-echo -e "${CYAN}║  Telegram AI Bot · Bun · Chromium · SSH  ║${NC}"
+echo -e "${CYAN}║     KernelBot — VPS Deploy Script         ║${NC}"
+echo -e "${CYAN}║  Telegram AI Bot · Bun · Chromium · SSH   ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
 echo -e "${DIM}  Log: $LOG_FILE${NC}"
 
@@ -240,7 +240,7 @@ fi
 # ═══════════════════════════════════════════════════════════════
 #  STEP 4 — Clone or update repository
 # ═══════════════════════════════════════════════════════════════
-step "KERNEL source code"
+step "KernelBot source code"
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   info "Existing installation found at $INSTALL_DIR"
@@ -507,7 +507,7 @@ fi
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=KERNEL Telegram Bot
+Description=KernelBot Telegram Bot
 Documentation=https://github.com/KernelCode/KernelBot
 After=network-online.target
 Wants=network-online.target
