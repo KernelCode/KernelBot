@@ -114,6 +114,20 @@ export class DaydreamEngine {
     this._metacognition = opts.metacognition || null;
     this._knowledgeBasePath = opts.knowledgeBasePath || '/root/kernelbot/knowledge_base';
 
+    /**
+     * Uncertainty level of the generative model (0 = fully certain, 1 = fully uncertain).
+     *
+     * In the Free Energy Principle (FEP), an agent maintains a generative model
+     * of its environment and continuously tries to minimise *surprise* (or,
+     * equivalently, Variational Free Energy).  This scalar is a simplified
+     * proxy for that internal uncertainty.  A high value signals that the
+     * engine's model of the world is imprecise, which in turn drives
+     * exploratory (curious) behaviour via {@link getCuriosityScore}.
+     *
+     * @type {number}
+     */
+    this.uncertainty = 0.5;
+
     mkdirSync(this._dir, { recursive: true });
 
     this._archive = this._loadFile(this._archiveFile, {});
@@ -290,6 +304,43 @@ export class DaydreamEngine {
     return { stored: false, replacedId: null };
   }
 
+  // ── Active Inference ─────────────────────────────────────────────
+
+  /**
+   * Update the engine's uncertainty level.
+   *
+   * This is a placeholder for the Active Inference feedback loop.  In a
+   * full implementation the uncertainty would be updated by comparing the
+   * engine's *predictions* against actual outcomes — the prediction-error
+   * signal that drives Variational Free Energy minimisation.  For now we
+   * accept an explicit value and clamp it to the valid [0, 1] range.
+   *
+   * @param {number} newLevel — Desired uncertainty (will be clamped to 0–1)
+   */
+  updateUncertainty(newLevel) {
+    this.uncertainty = Math.max(0, Math.min(1, newLevel));
+  }
+
+  /**
+   * Compute a curiosity score derived from the current uncertainty.
+   *
+   * In Active Inference, curiosity (or *epistemic foraging*) is the drive
+   * to seek out information that reduces uncertainty about the world.
+   * Higher uncertainty → higher curiosity → more exploratory behaviour.
+   *
+   * The returned score is `1 − uncertainty`:
+   *   - 0 → maximum curiosity  (the model knows nothing — explore!)
+   *   - 1 → minimum curiosity  (the model is confident — exploit)
+   *
+   * Future phases may use this score to modulate how aggressively the
+   * daydream cycle samples novel vs. familiar concepts.
+   *
+   * @returns {number} Curiosity score in [0, 1]
+   */
+  getCuriosityScore() {
+    return 1 - this.uncertainty;
+  }
+
   // ── Queries ──────────────────────────────────────────────────────
 
   /**
@@ -369,6 +420,14 @@ export class DaydreamEngine {
 
   // ── File Helpers ─────────────────────────────────────────────────
 
+  /**
+   * Load and parse a JSON file, returning a default value on missing or corrupt files.
+   *
+   * @param {string} filePath     — Absolute path to the JSON file
+   * @param {*}      defaultValue — Value to return when the file is absent or unparseable
+   * @returns {*} Parsed contents or a structured clone of `defaultValue`
+   * @private
+   */
   _loadFile(filePath, defaultValue) {
     if (existsSync(filePath)) {
       try {
@@ -380,6 +439,13 @@ export class DaydreamEngine {
     return structuredClone(defaultValue);
   }
 
+  /**
+   * Persist data as pretty-printed JSON.
+   *
+   * @param {string} filePath — Absolute path to write to
+   * @param {*}      data     — Serialisable data
+   * @private
+   */
   _saveFile(filePath, data) {
     writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
   }
