@@ -12,8 +12,8 @@ set -euo pipefail
 # ── Config ──
 INSTALL_DIR="/opt/kernel"
 SERVICE_NAME="kernel"
-ENV_FILE="$INSTALL_DIR/.env"
 DATA_DIR="/root/.kernelbot"
+ENV_FILE="$DATA_DIR/.env"
 REPO_URL="https://github.com/KernelCode/KernelBot.git"
 LOG_FILE="/tmp/kernel-deploy-$(date +%Y%m%d-%H%M%S).log"
 MIN_DISK_MB=500
@@ -110,37 +110,100 @@ if ! apt-get update -qq 2>>"$LOG_FILE"; then
   die "apt-get update failed. Check your sources.list or network."
 fi
 
-PACKAGES=(
-  curl unzip git
-  chromium
-  libnss3 libgbm1 libasound2 libatk-bridge2.0-0 libatk1.0-0
+# Base packages (everything except browser)
+BASE_PACKAGES=(
+  curl unzip git wget
+  libnss3 libgbm1 libatk-bridge2.0-0 libatk1.0-0
   libcups2 libdbus-1-3 libdrm2 libxcomposite1 libxdamage1
   libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation
+  libxshmfence1 libglu1-mesa
 )
 
-# Try chromium, fall back to chromium-browser (some distros differ)
-info "Installing ${#PACKAGES[@]} packages..."
-if ! apt-get install -y --no-install-recommends "${PACKAGES[@]}" >>"$LOG_FILE" 2>&1; then
-  warn "chromium failed, trying chromium-browser..."
-  PACKAGES=("${PACKAGES[@]/chromium/chromium-browser}")
-  if ! apt-get install -y --no-install-recommends "${PACKAGES[@]}" >>"$LOG_FILE" 2>&1; then
-    die "Failed to install system dependencies. Check $LOG_FILE"
-  fi
+# libasound2 was renamed to libasound2t64 in Ubuntu 24.04+
+if apt-cache show libasound2t64 &>/dev/null; then
+  BASE_PACKAGES+=(libasound2t64)
+else
+  BASE_PACKAGES+=(libasound2)
 fi
 
-# Verify Chromium
+info "Installing ${#BASE_PACKAGES[@]} base packages..."
+if ! apt-get install -y --no-install-recommends "${BASE_PACKAGES[@]}" >>"$LOG_FILE" 2>&1; then
+  # Show the actual error for debugging
+  fail "Package install failed. Retrying one-by-one to find the problem..."
+  FAILED_PKGS=()
+  for pkg in "${BASE_PACKAGES[@]}"; do
+    if ! apt-get install -y --no-install-recommends "$pkg" >>"$LOG_FILE" 2>&1; then
+      FAILED_PKGS+=("$pkg")
+      warn "Failed: $pkg"
+    fi
+  done
+  if (( ${#FAILED_PKGS[@]} > 3 )); then
+    die "Too many packages failed (${#FAILED_PKGS[@]}). Check $LOG_FILE"
+  elif (( ${#FAILED_PKGS[@]} > 0 )); then
+    warn "Continuing without: ${FAILED_PKGS[*]}"
+  fi
+fi
+ok "Base packages installed"
+
+# ── Browser install (multi-strategy) ──
+# Ubuntu 24.04+ removed chromium from apt (snap-only), so we try
+# multiple strategies in order of reliability.
+info "Installing browser for Puppeteer..."
 CHROMIUM_PATH=""
-for cmd in chromium chromium-browser; do
+
+# Strategy 1: Check if already installed
+for cmd in google-chrome-stable google-chrome chromium-browser chromium; do
   if command -v "$cmd" &>/dev/null; then
     CHROMIUM_PATH=$(command -v "$cmd")
+    ok "Browser already installed: $cmd"
     break
   fi
 done
+
+# Strategy 2: Install Google Chrome stable .deb (works on all Debian/Ubuntu)
 if [[ -z "$CHROMIUM_PATH" ]]; then
-  die "Chromium not found after install. Check $LOG_FILE for errors."
+  info "Downloading Google Chrome..."
+  CHROME_DEB="/tmp/google-chrome-stable.deb"
+  if wget -q -O "$CHROME_DEB" "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" 2>>"$LOG_FILE"; then
+    if apt-get install -y "$CHROME_DEB" >>"$LOG_FILE" 2>>"$LOG_FILE"; then
+      CHROMIUM_PATH=$(command -v google-chrome-stable || command -v google-chrome || echo "")
+      if [[ -n "$CHROMIUM_PATH" ]]; then
+        ok "Google Chrome installed"
+      fi
+    else
+      warn "Chrome .deb install failed, trying apt fix..."
+      apt-get install -f -y >>"$LOG_FILE" 2>&1 || true
+      CHROMIUM_PATH=$(command -v google-chrome-stable || command -v google-chrome || echo "")
+    fi
+    rm -f "$CHROME_DEB"
+  else
+    warn "Chrome download failed"
+  fi
 fi
-ok "Chromium: $CHROMIUM_PATH ($(${CHROMIUM_PATH} --version 2>/dev/null || echo 'installed'))"
-ok "All system dependencies installed"
+
+# Strategy 3: Try apt chromium (works on Debian, older Ubuntu)
+if [[ -z "$CHROMIUM_PATH" ]]; then
+  info "Trying apt chromium package..."
+  if apt-get install -y --no-install-recommends chromium >>"$LOG_FILE" 2>&1; then
+    CHROMIUM_PATH=$(command -v chromium || echo "")
+  fi
+fi
+
+# Strategy 4: Try chromium-browser package
+if [[ -z "$CHROMIUM_PATH" ]]; then
+  info "Trying chromium-browser package..."
+  if apt-get install -y --no-install-recommends chromium-browser >>"$LOG_FILE" 2>&1; then
+    CHROMIUM_PATH=$(command -v chromium-browser || echo "")
+  fi
+fi
+
+# Final check
+if [[ -z "$CHROMIUM_PATH" ]]; then
+  die "Could not install any browser. Check $LOG_FILE for details."
+fi
+
+BROWSER_VERSION=$($CHROMIUM_PATH --version 2>/dev/null || echo "installed")
+ok "Browser: $CHROMIUM_PATH ($BROWSER_VERSION)"
 
 # ═══════════════════════════════════════════════════════════════
 #  STEP 3 — Install bun
@@ -241,11 +304,40 @@ ok "Entry point verified: bin/kernel.js"
 # ═══════════════════════════════════════════════════════════════
 step "Project dependencies"
 
+# On low-RAM systems, bun install gets OOM-killed. Create swap if needed.
+SWAP_CREATED=false
+TOTAL_RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
+EXISTING_SWAP_MB=$(free -m | awk '/Swap:/ {print $2}')
+
+if (( TOTAL_RAM_MB < 1024 )) && (( EXISTING_SWAP_MB < 512 )); then
+  info "Low RAM detected (${TOTAL_RAM_MB}MB). Creating 1GB swap file..."
+  if [[ ! -f /swapfile ]]; then
+    dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none 2>>"$LOG_FILE"
+    chmod 600 /swapfile
+    mkswap /swapfile >>"$LOG_FILE" 2>&1
+    swapon /swapfile 2>>"$LOG_FILE"
+    SWAP_CREATED=true
+    ok "Swap enabled (1GB) — prevents OOM during install"
+  elif ! swapon --show | grep -q /swapfile; then
+    swapon /swapfile 2>>"$LOG_FILE" || true
+    SWAP_CREATED=true
+    ok "Existing swap file activated"
+  else
+    ok "Swap already active"
+  fi
+
+  # Make swap permanent
+  if ! grep -q '/swapfile' /etc/fstab 2>/dev/null; then
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    ok "Swap added to /etc/fstab (persistent across reboots)"
+  fi
+fi
+
 cd "$INSTALL_DIR"
-info "Running bun install..."
+info "Running bun install... (this may take a minute)"
 if ! bun install >>"$LOG_FILE" 2>&1; then
   warn "bun install failed, retrying with clean cache..."
-  rm -rf node_modules
+  rm -rf node_modules bun.lock
   if ! bun install >>"$LOG_FILE" 2>&1; then
     die "bun install failed twice. Check $LOG_FILE"
   fi
@@ -262,6 +354,10 @@ ok "$DEP_COUNT packages installed"
 #  STEP 6 — Environment variables
 # ═══════════════════════════════════════════════════════════════
 step "Environment variables"
+
+# Ensure data dir exists before writing .env
+mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR"
 
 SKIP_ENV=false
 
@@ -309,16 +405,12 @@ if [[ "$SKIP_ENV" != "true" ]]; then
     fi
   done
 
-  while true; do
-    read -rp "  OWNER_TELEGRAM_ID: " OWNER_ID
-    if [[ -z "$OWNER_ID" ]]; then
-      fail "Owner ID is required."
-    elif [[ ! "$OWNER_ID" =~ ^[0-9]+$ ]]; then
-      fail "Owner ID must be a number. Get it from @userinfobot on Telegram."
-    else
-      break
-    fi
-  done
+  read -rp "  OWNER_TELEGRAM_ID (optional, press Enter to skip): " OWNER_ID
+  if [[ -n "$OWNER_ID" && ! "$OWNER_ID" =~ ^[0-9]+$ ]]; then
+    warn "Owner ID should be a number. Get it from @userinfobot on Telegram."
+    read -rp "  Use it anyway? [y/N] " yn
+    [[ "$yn" =~ ^[Yy]$ ]] || OWNER_ID=""
+  fi
 
   echo ""
   echo "  AI provider keys (press Enter to skip any):"
@@ -340,8 +432,9 @@ if [[ "$SKIP_ENV" != "true" ]]; then
 # Generated by deploy.sh on $(date)
 
 TELEGRAM_BOT_TOKEN=${BOT_TOKEN}
-OWNER_TELEGRAM_ID=${OWNER_ID}
 EOF
+
+  [[ -n "${OWNER_ID:-}" ]] && echo "OWNER_TELEGRAM_ID=${OWNER_ID}" >> "$ENV_FILE"
 
   [[ -n "${ANTHROPIC_KEY:-}" ]] && echo "ANTHROPIC_API_KEY=${ANTHROPIC_KEY}" >> "$ENV_FILE"
   [[ -n "${OPENAI_KEY:-}" ]]    && echo "OPENAI_API_KEY=${OPENAI_KEY}" >> "$ENV_FILE"
