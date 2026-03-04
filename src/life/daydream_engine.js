@@ -51,6 +51,9 @@ import { todayDateStr } from '../utils/date.js';
  */
 
 const LIFE_DIR = join(homedir(), '.kernelbot', 'life');
+const SELF_DIR = join(homedir(), '.kernelbot', 'self');
+const REFLECTION_FILE = join(SELF_DIR, 'inner_monologue.json');
+const MAX_REFLECTIONS = 20;
 
 /** The domain axis of the MAP-Elites grid. */
 const DOMAINS = [
@@ -129,6 +132,9 @@ export class DaydreamEngine {
     this.uncertainty = 0.5;
 
     mkdirSync(this._dir, { recursive: true });
+    mkdirSync(SELF_DIR, { recursive: true });
+
+    this._reflectionLog = this._loadFile(REFLECTION_FILE, []);
 
     this._archive = this._loadFile(this._archiveFile, {});
     this._history = this._loadFile(this._historyFile, []);
@@ -187,6 +193,12 @@ export class DaydreamEngine {
       `[Daydream] Cycle #${this._generation} complete: ` +
       `domain=${thought.domain}, strategy=${thought.strategy}, ` +
       `fitness=${thought.fitness.toFixed(2)}, stored=${storeResult.stored}`
+    );
+
+    // Step 5 — Self-reflection: log internal state for observability
+    this.recordReflection(
+      `Cycle #${this._generation}: generated ${thought.domain}×${thought.strategy} thought ` +
+      `(fitness=${thought.fitness.toFixed(2)}, stored=${storeResult.stored})`
     );
 
     return result;
@@ -339,6 +351,49 @@ export class DaydreamEngine {
    */
   getCuriosityScore() {
     return 1 - this.uncertainty;
+  }
+
+  // ── Self-Reflection ─────────────────────────────────────────────
+
+  /**
+   * Record a self-reflection entry, capturing a snapshot of internal state.
+   *
+   * Each reflection logs the current uncertainty, curiosity score, generation,
+   * and an insight string — providing an observable "inner monologue" that
+   * persists to ~/.kernelbot/self/inner_monologue.json.
+   *
+   * The log is capped at the most recent {@link MAX_REFLECTIONS} entries,
+   * creating a rolling window into Rachel's inner life.
+   *
+   * @param {string} insight — A short description of the thought or state
+   */
+  recordReflection(insight) {
+    const entry = {
+      timestamp: new Date().toISOString(),
+      generation: this._generation,
+      uncertainty: this.uncertainty,
+      curiosityScore: this.getCuriosityScore(),
+      archiveCoverage: this.getCoverage(),
+      insight,
+    };
+
+    this._reflectionLog.push(entry);
+
+    // Keep only the last N reflections (rolling window)
+    if (this._reflectionLog.length > MAX_REFLECTIONS) {
+      this._reflectionLog = this._reflectionLog.slice(-MAX_REFLECTIONS);
+    }
+
+    this._saveFile(REFLECTION_FILE, this._reflectionLog);
+  }
+
+  /**
+   * Get the current reflection log.
+   * @param {number} [limit=10] — Number of recent reflections to return
+   * @returns {object[]}
+   */
+  getReflectionLog(limit = 10) {
+    return this._reflectionLog.slice(-limit);
   }
 
   // ── Queries ──────────────────────────────────────────────────────
