@@ -4,10 +4,17 @@
 #  Installs bun, Chromium, clones the repo, configures .env,
 #  sets up a systemd service, and starts the bot.
 #
-#  Usage:  sudo bash deploy.sh
+#  Usage:  curl -fsSL https://kernelbot.io/install.sh | bash
 #  Re-run safe — detects existing installs and skips/updates.
 # ─────────────────────────────────────────────────────────────
 set -euo pipefail
+
+# ── Handle curl | bash ──
+# When piped from curl, stdin is not a terminal. Redirect interactive
+# input from /dev/tty so read prompts work correctly.
+if [[ ! -t 0 ]] && [[ -e /dev/tty ]]; then
+  exec </dev/tty
+fi
 
 # ── Config ──
 INSTALL_DIR="/opt/kernelbot"
