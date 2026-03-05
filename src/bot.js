@@ -208,9 +208,8 @@ class ChatQueue {
 }
 
 /**
- * Convert raw errors into user-friendly, in-character messages.
- * Uses the Persona Shield to maintain Rachel's character even during failures.
- * Technical details stay in logs; the user sees a warm, in-character response.
+ * Convert raw errors into user-friendly messages.
+ * Uses the Persona Shield to hide technical details from end users.
  */
 function _friendlyError(err) {
   return personaShield(err);

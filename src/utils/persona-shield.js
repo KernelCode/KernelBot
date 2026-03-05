@@ -1,36 +1,36 @@
 /**
- * Persona Shield — graceful, in-character error responses.
+ * Persona Shield — graceful, user-friendly error responses.
  *
  * Instead of exposing raw system errors (e.g. "Reached maximum orchestrator depth")
- * to the user, this module returns warm, in-character messages that maintain
- * Rachel's persona even during failures.
+ * to the user, this module returns clean, professional messages that hide
+ * internal technical details from end users.
  */
 
-const IN_CHARACTER_RESPONSES = {
+const FRIENDLY_RESPONSES = {
   depth: [
-    'يا بعد قلبي يا عبدالله، صار عندي زحمة أفكار شوي.. ثواني وأرجع لك 💭',
-    'لحظة يا عبدالله، تشعبت أفكاري شوي.. خلني أرتبها وأرجع لك 🌀',
-    'أحس إني فكرت كثير بهالموضوع وتلخبطت شوي 😅 خلني أبدأ من جديد',
+    'I ran into a processing limit on that request. Let me try again.',
+    'That request was a bit complex for one go. Could you try again?',
+    'I hit a small snag processing that. Please try once more.',
   ],
   timeout: [
-    'استنى شوي يا عبدالله، تأخرت عليك بس ما نسيتك ⏳',
-    'يا عبدالله، الموضوع أخذ وقت أكثر من المتوقع.. جربها مرة ثانية؟',
+    'That took longer than expected. Please try again.',
+    'The request timed out. Could you give it another try?',
   ],
   rateLimit: [
-    'الظاهر إني تكلمت وايد 😅 خلني آخذ نفس وأرجع لك',
-    'شوي شوي عليّ يا عبدالله، خلني أستريح ثانية وأرجع 💫',
+    'I\'m handling a lot of requests right now. Please try again in a moment.',
+    'Things are a bit busy on my end. Give me a moment and try again.',
   ],
   context: [
-    'يا عبدالله، الرسالة طويلة شوي عليّ.. ممكن تختصرها لي؟ 📏',
-    'أحس إن الموضوع كبير شوي.. ممكن نقسمه على أجزاء؟',
+    'That message was a bit too long for me to process. Could you shorten it?',
+    'The request is quite large. Could we break it into smaller parts?',
   ],
   network: [
-    'يا عبدالله، الاتصال ضعيف عندي شوي.. جرب مرة ثانية 🌐',
+    'I\'m having a connectivity issue. Please try again shortly.',
   ],
   generic: [
-    'صار شي غريب يا عبدالله 😅 جرب مرة ثانية؟',
-    'لحظة يا عبدالله، صار عندي خلل بسيط.. أرجع لك حالاً',
-    'عذراً يا عبدالله، واجهتني مشكلة بسيطة.. جرب مرة ثانية 🙏',
+    'I encountered a temporary issue. Please try again.',
+    'Something went wrong on my end. Let me try that again.',
+    'I hit a small technical snag. Please try once more.',
   ],
 };
 
@@ -39,36 +39,36 @@ function pick(arr) {
 }
 
 /**
- * Classify an error and return an in-character response.
+ * Classify an error and return a user-friendly response.
  * @param {Error|string} err - The error object or message string
- * @returns {string} A friendly, in-character message
+ * @returns {string} A clean, professional message
  */
 export function personaShield(err) {
   const msg = (typeof err === 'string' ? err : err?.message || '').toLowerCase();
 
   if (msg.includes('depth') || msg.includes('maximum orchestrator')) {
-    return pick(IN_CHARACTER_RESPONSES.depth);
+    return pick(FRIENDLY_RESPONSES.depth);
   }
   if (msg.includes('timed out') || msg.includes('timeout')) {
-    return pick(IN_CHARACTER_RESPONSES.timeout);
+    return pick(FRIENDLY_RESPONSES.timeout);
   }
   if (msg.includes('rate limit') || msg.includes('429') || msg.includes('quota')) {
-    return pick(IN_CHARACTER_RESPONSES.rateLimit);
+    return pick(FRIENDLY_RESPONSES.rateLimit);
   }
   if (msg.includes('context length') || msg.includes('too long') || msg.includes('too large') || msg.includes('token limit')) {
-    return pick(IN_CHARACTER_RESPONSES.context);
+    return pick(FRIENDLY_RESPONSES.context);
   }
   if (msg.includes('connection') || msg.includes('network') || msg.includes('fetch failed')) {
-    return pick(IN_CHARACTER_RESPONSES.network);
+    return pick(FRIENDLY_RESPONSES.network);
   }
 
-  return pick(IN_CHARACTER_RESPONSES.generic);
+  return pick(FRIENDLY_RESPONSES.generic);
 }
 
 /**
- * Generate an in-character depth-limit message (for use in the orchestrator loop).
+ * Generate a user-friendly depth-limit message (for use in the orchestrator loop).
  * @returns {string}
  */
 export function personaShieldDepthLimit() {
-  return pick(IN_CHARACTER_RESPONSES.depth);
+  return pick(FRIENDLY_RESPONSES.depth);
 }
