@@ -86,6 +86,10 @@ function loadSkillFile(filePath) {
       description: data.description || '',
       worker_affinity: data.worker_affinity || null,
       tags: data.tags || [],
+      auto_assign: data.auto_assign || [],
+      forge_managed: data.forge_managed || false,
+      maturity: data.maturity ?? null,
+      last_researched: data.last_researched || null,
       body, // raw markdown body = the full prompt
       filePath,
       isCustom: filePath.startsWith(CUSTOM_DIR),

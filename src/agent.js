@@ -6,6 +6,7 @@ import { WORKER_TYPES } from './swarm/worker-registry.js';
 import { getOrchestratorPrompt } from './prompts/orchestrator.js';
 import { getWorkerPrompt } from './prompts/workers.js';
 import { getSkillById, buildSkillPrompt, filterSkillsForWorker } from './skills/loader.js';
+import { SkillForge } from './skills/forge.js';
 import { WorkerAgent } from './worker.js';
 import { getLogger } from './utils/logger.js';
 import { getMissingCredential, saveCredential, saveProviderToYaml, saveOrchestratorToYaml, saveClaudeCodeModelToYaml, saveClaudeCodeAuth } from './utils/config.js';
@@ -46,6 +47,7 @@ export class OrchestratorAgent {
     this.memoryManager = memoryManager || null;
     this.shareQueue = shareQueue || null;
     this.characterManager = characterManager || null;
+    this.skillForge = new SkillForge({ agent: this, memoryManager, config });
     this._activePersonaMd = null;
     this._activeCharacterName = null;
     this._activeCharacterId = null;
@@ -106,8 +108,12 @@ export class OrchestratorAgent {
       sharesBlock = this.shareQueue.buildShareBlock(user?.id || null);
     }
 
-    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skills=${skillIds.length > 0 ? skillIds.join(',') : 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'} | temporal=${temporalContext ? 'yes' : 'none'} | character=${this._activeCharacterId || 'default'}`);
-    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData, memoriesBlock, sharesBlock, temporalContext, this._activePersonaMd, this._activeCharacterName);
+    // Build forge expertise profile
+    const forgeExpertise = this.skillForge.buildExpertiseProfile();
+    const forgeSkillsSummary = this.skillForge.buildLearnedSkillsSummary();
+
+    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skills=${skillIds.length > 0 ? skillIds.join(',') : 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'} | temporal=${temporalContext ? 'yes' : 'none'} | character=${this._activeCharacterId || 'default'} | forge=${forgeExpertise ? 'yes' : 'none'}`);
+    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData, memoriesBlock, sharesBlock, temporalContext, this._activePersonaMd, this._activeCharacterName, forgeExpertise, forgeSkillsSummary);
   }
 
   // ── Multi-skill methods ─────────────────────────────────────────────
@@ -860,8 +866,13 @@ export class OrchestratorAgent {
 
     // Get scoped tools and skills (filtered by worker affinity)
     const tools = getToolsForWorker(job.workerType);
-    const allSkillIds = this.conversationManager.getSkills(this._chatKey(chatId));
+    const manualSkillIds = this.conversationManager.getSkills(this._chatKey(chatId));
+    const autoSkillIds = this.skillForge.matchSkills(job.task, job.workerType);
+    const allSkillIds = [...new Set([...manualSkillIds, ...autoSkillIds])];
     const workerSkillIds = filterSkillsForWorker(allSkillIds, job.workerType);
+    if (autoSkillIds.length > 0) {
+      logger.info(`[Orchestrator] Auto-assigned forge skills for job ${job.id}: ${autoSkillIds.join(', ')}`);
+    }
 
     // Build worker context (conversation history, persona, dependency results)
     const workerContext = this._buildWorkerContext(job);
@@ -1212,6 +1223,7 @@ export class OrchestratorAgent {
           user,
           sendReaction: chatCallbacks.sendReaction || null,
           lastUserMessageId: chatCallbacks.lastUserMessageId || null,
+          skillForge: this.skillForge,
         };
 
         const toolResults = await Promise.all(

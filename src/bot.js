@@ -1589,6 +1589,96 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       return;
     }
 
+    // ── /skills forge subcommands ──────────────────────────────
+    if (text === '/skills forge' || text === '/skill forge') {
+      logger.info(`[Bot] /skills forge from ${username} (${userId}) in chat ${chatId}`);
+      const forge = agent.skillForge;
+      const status = forge.getForgeStatus();
+
+      if (status.total === 0) {
+        await bot.sendMessage(chatId, '🔨 *Skill Forge*\n\nNo learned skills yet. Use `/skills forge learn <topic>` to start learning.', { parse_mode: 'Markdown' });
+        return;
+      }
+
+      const statusEmoji = { seed: '🌱', growing: '🌿', mature: '🌳', contributed: '🎁' };
+      const skillLines = status.skills.map(s =>
+        `${statusEmoji[s.status] || '📦'} *${s.topic}* — ${s.status} (${s.maturity}/10) — ${s.researchCount} research sessions`
+      ).join('\n');
+
+      const summary = [
+        '🔨 *Skill Forge*',
+        '',
+        `Total: ${status.total} | 🌱 ${status.byStatus.seed || 0} seed | 🌿 ${status.byStatus.growing || 0} growing | 🌳 ${status.byStatus.mature || 0} mature | 🎁 ${status.byStatus.contributed || 0} contributed`,
+        '',
+        skillLines,
+      ].join('\n');
+
+      await bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    if (text.startsWith('/skills forge learn ') || text.startsWith('/skill forge learn ')) {
+      const topic = text.replace(/^\/skills? forge learn\s+/, '').trim();
+      if (!topic) {
+        await bot.sendMessage(chatId, '❌ Please provide a topic: `/skills forge learn <topic>`', { parse_mode: 'Markdown' });
+        return;
+      }
+      logger.info(`[Bot] /skills forge learn "${topic}" from ${username} (${userId}) in chat ${chatId}`);
+      const forge = agent.skillForge;
+      const meta = await forge.seedSkill(topic);
+      if (meta) {
+        await bot.sendMessage(chatId, `🌱 Started learning about *${topic}*!\n\nThe skill will grow through autonomous research during my inner life activities. You can also trigger growth with \`/life trigger learn\`.`, { parse_mode: 'Markdown' });
+      } else {
+        await bot.sendMessage(chatId, `❌ Failed to create skill for "${topic}".`);
+      }
+      return;
+    }
+
+    if (text.startsWith('/skills forge grow ') || text.startsWith('/skill forge grow ')) {
+      const skillIdOrTopic = text.replace(/^\/skills? forge grow\s+/, '').trim();
+      if (!skillIdOrTopic) {
+        await bot.sendMessage(chatId, '❌ Please provide a skill ID: `/skills forge grow <skill_id>`', { parse_mode: 'Markdown' });
+        return;
+      }
+      logger.info(`[Bot] /skills forge grow "${skillIdOrTopic}" from ${username} (${userId}) in chat ${chatId}`);
+      const forge = agent.skillForge;
+
+      // Try to find by ID first, then by topic match
+      let meta = forge.getSkillMeta(skillIdOrTopic);
+      if (!meta) {
+        const allSkills = Object.values(forge._data.skills);
+        meta = allSkills.find(s => s.topic.toLowerCase() === skillIdOrTopic.toLowerCase());
+      }
+
+      if (!meta) {
+        await bot.sendMessage(chatId, `❌ Skill "${skillIdOrTopic}" not found in forge. Use \`/skills forge\` to see available skills.`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      await bot.sendMessage(chatId, `🌿 Triggering growth for *${meta.topic}*... This will dispatch a research worker.`, { parse_mode: 'Markdown' });
+      // Process through the agent so a research worker gets dispatched
+      await agent.processMessage(chatId, `Research and find the latest developments about "${meta.topic}". Focus on what's new, best practices, and practical insights. This is to grow my knowledge skill about this topic.`, { id: userId, username }, onUpdate, sendPhoto);
+      return;
+    }
+
+    if (text === '/skills forge contribute' || text === '/skill forge contribute') {
+      logger.info(`[Bot] /skills forge contribute from ${username} (${userId}) in chat ${chatId}`);
+      const forge = agent.skillForge;
+      const mature = forge.getMatureSkills();
+
+      if (mature.length === 0) {
+        await bot.sendMessage(chatId, '🔨 No skills are mature enough for contribution yet. Skills need maturity 7+ to be contributed.', { parse_mode: 'Markdown' });
+        return;
+      }
+
+      const lines = mature.map(s => `🌳 *${s.topic}* (maturity ${s.maturity}/10)`).join('\n');
+      await bot.sendMessage(chatId,
+        `🎁 *Ready for Contribution*\n\n${lines}\n\nTo contribute these skills as a PR, dispatch a coding worker to prepare and submit them.`,
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+
     if (text === '/skills reset' || text === '/skill reset') {
       logger.info(`[Bot] /skills reset from ${username} (${userId}) in chat ${chatId}`);
       agent.clearSkill(chatId);

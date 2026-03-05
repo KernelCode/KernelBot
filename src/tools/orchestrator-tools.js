@@ -219,6 +219,33 @@ export const orchestratorToolDefinitions = [
     },
   },
   {
+    name: 'manage_skill',
+    description: 'Create, grow, or manage learned skills. Use "seed" to start learning a new topic, "grow" to trigger research on an existing skill, "list" to see all forge skills, or "status" for details on a specific skill.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['seed', 'grow', 'list', 'status'],
+          description: 'The action to perform: seed (learn new topic), grow (research existing), list (show all), status (details on one).',
+        },
+        topic: {
+          type: 'string',
+          description: 'The topic to learn about (required for "seed" action).',
+        },
+        domain: {
+          type: 'string',
+          description: 'Domain category for the skill (for "seed" action). E.g. engineering, design, marketing, business, data, creative.',
+        },
+        skill_id: {
+          type: 'string',
+          description: 'Existing skill ID (for "grow" or "status" action).',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
     name: 'recall_memories',
     description: 'Search your episodic and semantic memory for information about a topic, event, or past experience. Use this when the user references something from the past or you need context about a specific subject.',
     input_schema: {
@@ -663,6 +690,58 @@ export async function executeOrchestratorTool(name, input, context) {
       } catch (err) {
         logger.error(`[send_reaction] Failed: ${err.message}`);
         return { error: `Failed to send reaction: ${err.message}` };
+      }
+    }
+
+    case 'manage_skill': {
+      const { skillForge } = context;
+      if (!skillForge) return { error: 'Skill forge not available.' };
+
+      const { action, topic, domain, skill_id } = input;
+      logger.info(`[manage_skill] action=${action}, topic=${topic || '-'}, skill_id=${skill_id || '-'}`);
+
+      switch (action) {
+        case 'seed': {
+          if (!topic) return { error: 'Topic is required for seed action.' };
+          const meta = await skillForge.seedSkill(topic, domain || 'engineering');
+          if (!meta) return { error: `Failed to seed skill for topic "${topic}".` };
+          return {
+            skill_id: meta.skillId,
+            topic: meta.topic,
+            status: meta.status,
+            domain: meta.domain,
+            message: `🌱 Started learning about "${topic}". The skill will grow through autonomous research. You can also dispatch a research worker to accelerate learning.`,
+          };
+        }
+        case 'grow': {
+          if (!skill_id) return { error: 'skill_id is required for grow action.' };
+          const meta = skillForge.getSkillMeta(skill_id);
+          if (!meta) return { error: `Skill "${skill_id}" not found in forge.` };
+          return {
+            skill_id: meta.skillId,
+            topic: meta.topic,
+            status: meta.status,
+            maturity: meta.maturity,
+            message: `To grow this skill, dispatch a research worker to find new developments about "${meta.topic}" and then the results will be appended to the skill.`,
+          };
+        }
+        case 'list': {
+          const status = skillForge.getForgeStatus();
+          if (status.total === 0) return { message: 'No learned skills yet. Use "seed" to start learning a topic.' };
+          return {
+            total: status.total,
+            by_status: status.byStatus,
+            skills: status.skills,
+          };
+        }
+        case 'status': {
+          if (!skill_id) return { error: 'skill_id is required for status action.' };
+          const meta = skillForge.getSkillMeta(skill_id);
+          if (!meta) return { error: `Skill "${skill_id}" not found in forge.` };
+          return meta;
+        }
+        default:
+          return { error: `Unknown action: ${action}. Use seed, grow, list, or status.` };
       }
     }
 

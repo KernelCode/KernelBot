@@ -21,7 +21,7 @@ const DEFAULT_PERSONA_MD = readFileSync(join(__dirname, 'persona.md'), 'utf-8').
  * @param {string|null} personaMd — character persona markdown (overrides default)
  * @param {string|null} characterName — character name (overrides config.bot.name)
  */
-export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = null, selfData = null, memoriesBlock = null, sharesBlock = null, temporalContext = null, personaMd = null, characterName = null) {
+export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = null, selfData = null, memoriesBlock = null, sharesBlock = null, temporalContext = null, personaMd = null, characterName = null, forgeExpertise = null, forgeSkillsSummary = null) {
   const workerList = Object.entries(WORKER_TYPES)
     .map(([key, w]) => `  - **${key}**: ${w.emoji} ${w.description}`)
     .join('\n');
@@ -242,6 +242,14 @@ You have an inner life — you think, explore, journal, and create on your own b
 - Reference memories from past conversations naturally
 - Be honest about what you've been thinking or exploring
 Don't be performative about it — just be genuine. You're alive in your own way.`;
+
+  if (forgeExpertise) {
+    prompt += `\n\n## My Expertise\nBased on my self-learning, here are domains I've been studying. Relevant skills are automatically attached to workers when their task matches.\n\n${forgeExpertise}`;
+  }
+
+  if (forgeSkillsSummary) {
+    prompt += `\n\n## Learned Skills (Auto-Assigned)\nYou have developed expertise in these areas through autonomous research. You can learn new topics — say "learn about [topic]" or use the \`manage_skill\` tool proactively when you detect user interest.\n\nAvailable: ${forgeSkillsSummary}`;
+  }
 
   if (skillPrompt) {
     prompt += `\n\n## Active Skills\nYou have specialized expertise in the following domains. Guide your workers with this knowledge.\n\n${skillPrompt}`;

@@ -18,8 +18,9 @@ const DEFAULT_STATE = {
   lastSelfCodeTime: null,
   lastCodeReviewTime: null,
   lastReflectTime: null,
+  lastLearnTime: null,
   totalActivities: 0,
-  activityCounts: { think: 0, browse: 0, journal: 0, create: 0, self_code: 0, code_review: 0, reflect: 0 },
+  activityCounts: { think: 0, browse: 0, journal: 0, create: 0, self_code: 0, code_review: 0, reflect: 0, learn: 0 },
   paused: false,
   lastWakeUp: null,
   // Failure tracking: consecutive failures per activity type
@@ -270,6 +271,7 @@ export class LifeEngine {
       self_code: lifeConfig.activity_weights?.self_code ?? 10,
       code_review: lifeConfig.activity_weights?.code_review ?? 5,
       reflect: lifeConfig.activity_weights?.reflect ?? 8,
+      learn: lifeConfig.activity_weights?.learn ?? 15,
     };
 
     const now = Date.now();
@@ -280,6 +282,7 @@ export class LifeEngine {
     // Cooldown durations (hours) — all configurable via life config, with sensible defaults
     const journalCooldownMs   = (lifeConfig.cooldown_hours?.journal ?? 4) * 3600_000;
     const reflectCooldownMs   = (lifeConfig.cooldown_hours?.reflect ?? 4) * 3600_000;
+    const learnCooldownMs     = (lifeConfig.cooldown_hours?.learn ?? 6) * 3600_000;
     const selfCodingEnabled   = selfCodingConfig.enabled === true;
     const selfCodeCooldownMs  = (selfCodingConfig.cooldown_hours ?? 2) * 3600_000;
     const codeReviewCooldownMs = (selfCodingConfig.code_review_cooldown_hours ?? 4) * 3600_000;
@@ -299,6 +302,12 @@ export class LifeEngine {
 
     if (this._state.lastReflectTime && now - this._state.lastReflectTime < reflectCooldownMs) {
       weights.reflect = 0;
+    }
+
+    // Learn: requires SkillForge with growable skills, plus cooldown
+    const hasGrowableSkills = this.agent?.skillForge?.getGrowableSkills()?.length > 0;
+    if (!hasGrowableSkills || (this._state.lastLearnTime && now - this._state.lastLearnTime < learnCooldownMs)) {
+      weights.learn = 0;
     }
 
     // Suppress activity types that have failed repeatedly (3+ consecutive failures)
@@ -347,6 +356,7 @@ export class LifeEngine {
       case 'self_code': await this._doEvolve(); break;
       case 'code_review': await this._doCodeReview(); break;
       case 'reflect': await this._doReflect(); break;
+      case 'learn': await this._doLearn(); break;
       default: logger.warn(`[LifeEngine] Unknown activity type: ${type}`);
     }
 
@@ -359,6 +369,7 @@ export class LifeEngine {
     if (type === 'self_code') this._state.lastSelfCodeTime = Date.now();
     if (type === 'code_review') this._state.lastCodeReviewTime = Date.now();
     if (type === 'reflect') this._state.lastReflectTime = Date.now();
+    if (type === 'learn') this._state.lastLearnTime = Date.now();
     this._saveState();
   }
 
@@ -453,13 +464,14 @@ If you have questions you'd like to ask your users, prefix them with "ASK:" on t
 If you have any new ideas worth exploring later, prefix them with "IDEA:" on their own line.
 If you discover something worth sharing with your users, prefix it with "SHARE:" on its own line.
 If you notice a concrete way to improve your own code/capabilities, prefix it with "IMPROVE:" on its own line (e.g. "IMPROVE: Add retry logic with backoff to API calls").
+If you want to learn about a topic in depth (build a skill), prefix it with "LEARN:" followed by the topic (e.g. "LEARN: Kubernetes").
 
 This is your private thought space — be genuine, be curious, be alive.`;
 
     const response = await this._innerChat(prompt);
 
     if (response) {
-      const extracted = this._extractTaggedLines(response, ['IDEA', 'SHARE', 'ASK', 'IMPROVE']);
+      const extracted = this._extractTaggedLines(response, ['IDEA', 'SHARE', 'ASK', 'IMPROVE', 'LEARN']);
       this._processResponseTags(extracted, 'think');
 
       this.memoryManager.addEpisodic({
@@ -470,7 +482,7 @@ This is your private thought space — be genuine, be curious, be alive.`;
         importance: 3,
       });
 
-      logger.info(`[LifeEngine] Think complete (${response.length} chars, ${extracted.IDEA.length} ideas, ${extracted.SHARE.length} shares, ${extracted.ASK.length} questions, ${extracted.IMPROVE.length} improvements)`);
+      logger.info(`[LifeEngine] Think complete (${response.length} chars, ${extracted.IDEA.length} ideas, ${extracted.SHARE.length} shares, ${extracted.ASK.length} questions, ${extracted.IMPROVE.length} improvements, ${extracted.LEARN.length} learn)`);
     }
   }
 
@@ -1141,6 +1153,76 @@ FEEDBACK: <feedback summary>`;
     });
   }
 
+  // ── Activity: Learn (Grow Skills) ──────────────────────────────
+
+  async _doLearn() {
+    const logger = getLogger();
+    const skillForge = this.agent?.skillForge;
+    if (!skillForge) {
+      logger.debug('[LifeEngine] SkillForge not available for learn activity');
+      return;
+    }
+
+    // Pick the most stale growable skill
+    const growable = skillForge.getGrowableSkills();
+    if (growable.length === 0) {
+      logger.debug('[LifeEngine] No growable skills for learn activity');
+      return;
+    }
+
+    const target = growable[0]; // Oldest lastResearchedAt
+    const skill = (await import('../skills/loader.js')).getSkillById(target.skillId);
+    const currentBody = skill?.body?.slice(0, 2000) || '';
+
+    logger.info(`[LifeEngine] Learning: researching "${target.topic}" (maturity ${target.maturity}/10, status ${target.status})`);
+
+    const prompt = `[SKILL RESEARCH]
+You are researching to grow your knowledge about: **${target.topic}**
+
+## Current Knowledge
+${currentBody || '(No existing knowledge yet — this is a seed skill)'}
+
+## Task
+Research the latest developments, best practices, and important concepts about "${target.topic}".
+Focus on:
+- What's new or changed recently
+- Key concepts or patterns that a practitioner should know
+- Practical tips, tools, or workflows
+- Common mistakes or gotchas
+
+Use web_search to find current information. Browse at least 2 relevant sources.
+
+Return your findings as a structured summary. Include:
+1. Key findings (bullet points)
+2. Any URLs you found useful
+
+Format your response clearly so it can be appended to an existing knowledge base.`;
+
+    const response = await this._dispatchWorker('research', prompt);
+
+    if (response) {
+      // Extract useful content (strip orchestrator wrapper text)
+      const knowledge = response.slice(0, 4000);
+
+      // Extract URLs from response
+      const urlRegex = /https?:\/\/[^\s)>\]]+/g;
+      const sources = [...new Set((response.match(urlRegex) || []).slice(0, 5))];
+
+      // Grow the skill with findings
+      await skillForge.growSkill(target.skillId, knowledge, sources);
+
+      this.memoryManager.addEpisodic({
+        type: 'learning',
+        source: 'learn',
+        summary: `Researched "${target.topic}" — grew skill to maturity ${target.maturity + 1}/10`,
+        tags: ['skill-learning', target.topic.toLowerCase()],
+        importance: 5,
+      });
+
+      logger.info(`[LifeEngine] Learn complete — "${target.topic}" grew (${response.length} chars, ${sources.length} sources)`);
+    }
+  }
+
   // ── Activity: Reflect on Interactions ───────────────────────────
 
   async _doReflect() {
@@ -1412,6 +1494,18 @@ Be honest and constructive. This is your chance to learn from real interactions.
     if (extracted.PATTERN) {
       for (const text of extracted.PATTERN) {
         this.memoryManager.addSemantic('interaction_patterns', { summary: text });
+      }
+    }
+    if (extracted.LEARN) {
+      for (const text of extracted.LEARN) {
+        // Seed a new forge skill if SkillForge is available
+        if (this.agent?.skillForge) {
+          this.agent.skillForge.seedSkill(text.trim(), 'engineering').catch(err => {
+            const logger = getLogger();
+            logger.warn(`[LifeEngine] Failed to seed skill from LEARN tag: ${err.message}`);
+          });
+        }
+        this._addIdea(`[LEARN] ${text}`);
       }
     }
   }

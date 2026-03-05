@@ -66,6 +66,14 @@ const DEFAULTS = {
     enabled: false,
     port: 3000,
   },
+  skills: {
+    forge: {
+      enabled: true,
+      contribute_threshold: 7,
+      max_auto_assign: 3,
+      research_cooldown_hours: 6,
+    },
+  },
   linkedin: {},
   x: {},
 };
