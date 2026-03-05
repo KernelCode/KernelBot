@@ -342,10 +342,14 @@ export class WorkerAgent {
 
   _reportProgress(text) {
     if (this.callbacks.onProgress) {
-      try { this.callbacks.onProgress(text); } catch {}
+      try { this.callbacks.onProgress(text); } catch (err) {
+        getLogger().debug(`[Worker ${this.jobId}] onProgress callback error: ${err.message}`);
+      }
     }
     if (this.callbacks.onHeartbeat) {
-      try { this.callbacks.onHeartbeat(text); } catch {}
+      try { this.callbacks.onHeartbeat(text); } catch (err) {
+        getLogger().debug(`[Worker ${this.jobId}] onHeartbeat callback error: ${err.message}`);
+      }
     }
   }
 
@@ -357,7 +361,9 @@ export class WorkerAgent {
           toolCalls: this._toolCallCount,
           lastThinking: thinking || null,
         });
-      } catch {}
+      } catch (err) {
+        getLogger().debug(`[Worker ${this.jobId}] onStats callback error: ${err.message}`);
+      }
     }
   }
 

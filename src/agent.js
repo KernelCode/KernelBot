@@ -479,9 +479,13 @@ export class OrchestratorAgent {
 
     logger.info(`Orchestrator reply for chat ${chatId}: "${(reply || '').slice(0, 150)}"`);
 
-    // Background persona extraction + self-reflection
-    this._extractPersonaBackground(userMessage, reply, user).catch(() => {});
-    this._reflectOnSelfBackground(userMessage, reply, user).catch(() => {});
+    // Background persona extraction + self-reflection (log failures for diagnostics)
+    this._extractPersonaBackground(userMessage, reply, user).catch((err) => {
+      logger.warn(`[Orchestrator] Background persona extraction failed: ${err.message}`);
+    });
+    this._reflectOnSelfBackground(userMessage, reply, user).catch((err) => {
+      logger.warn(`[Orchestrator] Background self-reflection failed: ${err.message}`);
+    });
 
     // Mark pending shares as shared (they were in the prompt, bot wove them in)
     if (this.shareQueue && user?.id) {
