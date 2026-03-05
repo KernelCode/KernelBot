@@ -3,6 +3,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { getLogger } from '../utils/logger.js';
 import { isQuietHours } from '../utils/timeUtils.js';
+import { selectTopicForLearning, logEpistemicDecision } from '../utils/epistemic-curiosity.js';
 
 const LIFE_DIR = join(homedir(), '.kernelbot', 'life');
 const STATE_FILE = join(LIFE_DIR, 'state.json');
@@ -1155,6 +1156,18 @@ FEEDBACK: <feedback summary>`;
 
   // ── Activity: Learn (Grow Skills) ──────────────────────────────
 
+  /**
+   * Autonomous learning activity — researches a skill topic to grow expertise.
+   *
+   * Topic selection uses **epistemic curiosity** (Active Inference) instead of
+   * simple FIFO ordering. Each candidate skill is scored on three signals:
+   *   - staleness (time since last research)
+   *   - immaturity (lower maturity = more unknowns)
+   *   - domain diversity (under-explored domains get a novelty bonus)
+   *
+   * The highest-scoring topic is selected, and the decision is logged for
+   * metacognitive audit at ~/.kernelbot/life/epistemic_log.json.
+   */
   async _doLearn() {
     const logger = getLogger();
     const skillForge = this.agent?.skillForge;
@@ -1163,24 +1176,43 @@ FEEDBACK: <feedback summary>`;
       return;
     }
 
-    // Pick the most stale growable skill
+    // Rank growable skills by epistemic value (Active Inference)
     const growable = skillForge.getGrowableSkills();
     if (growable.length === 0) {
       logger.debug('[LifeEngine] No growable skills for learn activity');
       return;
     }
 
-    const target = growable[0]; // Oldest lastResearchedAt
+    const selection = selectTopicForLearning(growable);
+    if (!selection) return;
+
+    const target = selection.skill;
+
+    // Log the epistemic decision for metacognitive audit
+    logEpistemicDecision(selection, growable.length);
+
     const skill = (await import('../skills/loader.js')).getSkillById(target.skillId);
     const currentBody = skill?.body?.slice(0, 2000) || '';
 
-    logger.info(`[LifeEngine] Learning: researching "${target.topic}" (maturity ${target.maturity}/10, status ${target.status})`);
+    logger.info(
+      `[LifeEngine] Learning: researching "${target.topic}" ` +
+      `(maturity ${target.maturity}/10, epistemic value ${selection.epistemicValue.toFixed(3)}, ` +
+      `staleness=${selection.breakdown.staleness.toFixed(2)}, ` +
+      `immaturity=${selection.breakdown.immaturity.toFixed(2)}, ` +
+      `diversity=${selection.breakdown.diversity.toFixed(2)})`
+    );
 
     const prompt = `[SKILL RESEARCH]
 You are researching to grow your knowledge about: **${target.topic}**
 
 ## Current Knowledge
 ${currentBody || '(No existing knowledge yet — this is a seed skill)'}
+
+## Why This Topic Was Selected
+This topic was chosen by epistemic curiosity scoring (epistemic value: ${selection.epistemicValue.toFixed(3)}):
+- Staleness: ${selection.breakdown.staleness.toFixed(2)} — ${selection.breakdown.staleness > 0.7 ? 'knowledge is quite outdated' : 'relatively recent knowledge'}
+- Immaturity: ${selection.breakdown.immaturity.toFixed(2)} — ${selection.breakdown.immaturity > 0.7 ? 'still very early-stage' : 'building on existing knowledge'}
+- Domain diversity: ${selection.breakdown.diversity.toFixed(2)} — ${selection.breakdown.diversity > 0.5 ? 'under-explored domain, broadening horizons' : 'well-covered domain'}
 
 ## Task
 Research the latest developments, best practices, and important concepts about "${target.topic}".
@@ -1214,8 +1246,8 @@ Format your response clearly so it can be appended to an existing knowledge base
       this.memoryManager.addEpisodic({
         type: 'learning',
         source: 'learn',
-        summary: `Researched "${target.topic}" — grew skill to maturity ${target.maturity + 1}/10`,
-        tags: ['skill-learning', target.topic.toLowerCase()],
+        summary: `Researched "${target.topic}" (epistemic value ${selection.epistemicValue.toFixed(3)}) — grew skill to maturity ${target.maturity + 1}/10`,
+        tags: ['skill-learning', 'epistemic-curiosity', target.topic.toLowerCase()],
         importance: 5,
       });
 
