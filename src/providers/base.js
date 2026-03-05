@@ -85,6 +85,37 @@ export class BaseProvider {
   }
 
   /**
+   * Extract HTTP status code from an error, handling provider-specific nesting.
+   * Anthropic/OpenAI expose `err.status`; Google SDK sometimes nests it in a
+   * JSON-encoded message or in `err.errorDetails`.
+   *
+   * @param {Error} err
+   * @returns {number|undefined}
+   */
+  static extractHttpStatus(err) {
+    // Direct status property (Anthropic, OpenAI, most SDKs)
+    const direct = err?.status || err?.statusCode;
+    if (direct) return direct;
+
+    // Google SDK: nested in errorDetails array
+    const googleCode = err?.errorDetails?.[0]?.reason
+      ? err?.code  // @google/genai uses err.code for HTTP status
+      : undefined;
+    if (googleCode) return googleCode;
+
+    // Google SDK: JSON-encoded message fallback
+    const msg = err?.message || '';
+    if (msg.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(msg);
+        return parsed?.error?.code || parsed?.code;
+      } catch { /* not JSON, ignore */ }
+    }
+
+    return undefined;
+  }
+
+  /**
    * Determine if an error is transient and worth retrying.
    * Covers connection errors, DNS failures, timeouts, 5xx, and 429 rate limits.
    */
@@ -112,16 +143,7 @@ export class BaseProvider {
       return true;
     }
 
-    // Check top-level status (Anthropic, OpenAI)
-    let status = err?.status || err?.statusCode;
-
-    // Google SDK nests HTTP status in JSON message — try to extract
-    if (!status && msg.startsWith('{')) {
-      try {
-        const parsed = JSON.parse(msg);
-        status = parsed?.error?.code || parsed?.code;
-      } catch {}
-    }
+    const status = BaseProvider.extractHttpStatus(err);
 
     // Anthropic overloaded (529) is also transient
     return (status >= 500 && status < 600) || status === 429 || status === 529;
@@ -146,13 +168,30 @@ export class BaseProvider {
   }
 
   /**
+   * Determine if an error is a payment or billing issue (HTTP 402, quota exhaustion).
+   * Useful for surfacing actionable diagnostics instead of retrying endlessly.
+   *
+   * @param {Error} err
+   * @returns {boolean}
+   */
+  static isPaymentOrBillingError(err) {
+    const status = BaseProvider.extractHttpStatus(err);
+    if (status === 402) return true;
+
+    const msg = (err?.message || '').toLowerCase();
+    return /insufficient.*(funds|credits|balance|quota)/.test(msg)
+      || msg.includes('billing')
+      || msg.includes('payment required');
+  }
+
+  /**
    * Determine if an error is a model limitation (not transient, not auth).
    * These are errors where falling back to a simpler model may help:
    * context length exceeded, unsupported features, content too large, etc.
    */
   static isModelLimitation(err) {
     const msg = (err?.message || '').toLowerCase();
-    const status = err?.status || err?.statusCode;
+    const status = BaseProvider.extractHttpStatus(err);
 
     // 400-class errors that indicate model-specific limitations
     if (status === 400 || status === 413 || status === 422) {
