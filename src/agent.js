@@ -11,6 +11,7 @@ import { getLogger } from './utils/logger.js';
 import { getMissingCredential, saveCredential, saveProviderToYaml, saveOrchestratorToYaml, saveClaudeCodeModelToYaml, saveClaudeCodeAuth } from './utils/config.js';
 import { resetClaudeCodeSpawner, getSpawner } from './tools/coding.js';
 import { truncateToolResult } from './utils/truncate.js';
+import { personaShieldDepthLimit } from './utils/persona-shield.js';
 
 /**
  * Format a time gap in minutes into natural, human-readable language.
@@ -1235,7 +1236,7 @@ export class OrchestratorAgent {
     }
 
     logger.warn(`[Orchestrator] Reached max depth (${maxDepth}) for chat ${chatId}`);
-    const depthWarning = `Reached maximum orchestrator depth (${maxDepth}).`;
+    const depthWarning = personaShieldDepthLimit();
     this.conversationManager.addMessage(convKey, 'assistant', depthWarning);
     return depthWarning;
   }
