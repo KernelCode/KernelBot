@@ -6,7 +6,6 @@ import { genId } from '../utils/ids.js';
 import { getStartOfDayMs } from '../utils/date.js';
 
 const LIFE_DIR = join(homedir(), '.kernelbot', 'life');
-const SHARES_FILE = join(LIFE_DIR, 'shares.json');
 
 export class ShareQueue {
   constructor(basePath = null) {

@@ -518,61 +518,30 @@ export function loadConfig() {
       config.telegram.allowed_users.push(ownerId);
     }
   }
-  if (process.env.GITHUB_TOKEN) {
-    if (!config.github) config.github = {};
-    config.github.token = process.env.GITHUB_TOKEN;
-  }
-  // ElevenLabs voice credentials
-  if (process.env.ELEVENLABS_API_KEY) {
-    if (!config.elevenlabs) config.elevenlabs = {};
-    config.elevenlabs.api_key = process.env.ELEVENLABS_API_KEY;
-  }
-  if (process.env.ELEVENLABS_VOICE_ID) {
-    if (!config.elevenlabs) config.elevenlabs = {};
-    config.elevenlabs.voice_id = process.env.ELEVENLABS_VOICE_ID;
-  }
+  // Declarative env → config mapping for integration credentials.
+  // Each entry: [ENV_VAR_NAME, configSection, configKey]
+  const ENV_TO_CONFIG = [
+    ['GITHUB_TOKEN',           'github',     'token'],
+    ['ELEVENLABS_API_KEY',     'elevenlabs', 'api_key'],
+    ['ELEVENLABS_VOICE_ID',    'elevenlabs', 'voice_id'],
+    ['JIRA_BASE_URL',          'jira',       'base_url'],
+    ['JIRA_EMAIL',             'jira',       'email'],
+    ['JIRA_API_TOKEN',         'jira',       'api_token'],
+    ['CLAUDE_CODE_API_KEY',    'claude_code', 'api_key'],
+    ['CLAUDE_CODE_OAUTH_TOKEN','claude_code', 'oauth_token'],
+    ['LINKEDIN_ACCESS_TOKEN',  'linkedin',   'access_token'],
+    ['LINKEDIN_PERSON_URN',    'linkedin',   'person_urn'],
+    ['X_CONSUMER_KEY',         'x',          'consumer_key'],
+    ['X_CONSUMER_SECRET',      'x',          'consumer_secret'],
+    ['X_ACCESS_TOKEN',         'x',          'access_token'],
+    ['X_ACCESS_TOKEN_SECRET',  'x',          'access_token_secret'],
+  ];
 
-  if (process.env.JIRA_BASE_URL || process.env.JIRA_EMAIL || process.env.JIRA_API_TOKEN) {
-    if (!config.jira) config.jira = {};
-    if (process.env.JIRA_BASE_URL) config.jira.base_url = process.env.JIRA_BASE_URL;
-    if (process.env.JIRA_EMAIL) config.jira.email = process.env.JIRA_EMAIL;
-    if (process.env.JIRA_API_TOKEN) config.jira.api_token = process.env.JIRA_API_TOKEN;
-  }
-
-  // Claude Code auth credentials from env
-  if (process.env.CLAUDE_CODE_API_KEY) {
-    config.claude_code.api_key = process.env.CLAUDE_CODE_API_KEY;
-  }
-  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-    config.claude_code.oauth_token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-  }
-
-  // LinkedIn token-based auth from env
-  if (process.env.LINKEDIN_ACCESS_TOKEN) {
-    if (!config.linkedin) config.linkedin = {};
-    config.linkedin.access_token = process.env.LINKEDIN_ACCESS_TOKEN;
-  }
-  if (process.env.LINKEDIN_PERSON_URN) {
-    if (!config.linkedin) config.linkedin = {};
-    config.linkedin.person_urn = process.env.LINKEDIN_PERSON_URN;
-  }
-
-  // X (Twitter) OAuth 1.0a credentials from env
-  if (process.env.X_CONSUMER_KEY) {
-    if (!config.x) config.x = {};
-    config.x.consumer_key = process.env.X_CONSUMER_KEY;
-  }
-  if (process.env.X_CONSUMER_SECRET) {
-    if (!config.x) config.x = {};
-    config.x.consumer_secret = process.env.X_CONSUMER_SECRET;
-  }
-  if (process.env.X_ACCESS_TOKEN) {
-    if (!config.x) config.x = {};
-    config.x.access_token = process.env.X_ACCESS_TOKEN;
-  }
-  if (process.env.X_ACCESS_TOKEN_SECRET) {
-    if (!config.x) config.x = {};
-    config.x.access_token_secret = process.env.X_ACCESS_TOKEN_SECRET;
+  for (const [envKey, section, key] of ENV_TO_CONFIG) {
+    if (process.env[envKey]) {
+      if (!config[section]) config[section] = {};
+      config[section][key] = process.env[envKey];
+    }
   }
 
   return config;
