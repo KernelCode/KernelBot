@@ -54,6 +54,7 @@ export class OrchestratorAgent {
     this.behavioralDNA = null;
     this.synthesisLoop = null;
     this.identityAwareness = null;
+    this.onboardingManager = null;
     this.skillForge = new SkillForge({ agent: this, memoryManager, config });
     this._activePersonaMd = null;
     this._activeCharacterName = null;
@@ -161,6 +162,27 @@ export class OrchestratorAgent {
         );
       } catch (err) {
         logger.warn(`[Orchestrator] Adjustment block build failed: ${err.message}`);
+      }
+    }
+
+    // Inject user training context from onboarding
+    if (this.onboardingManager && user?.id) {
+      try {
+        const onboardState = this.onboardingManager.getState(user.id);
+        if (onboardState?.phase === 'complete' && onboardState.training_notes) {
+          const notes = onboardState.training_notes;
+          const trainingLines = [];
+          if (notes.brand_voice) trainingLines.push(`- Brand voice: ${notes.brand_voice}`);
+          if (notes.workflows) trainingLines.push(`- Workflows: ${notes.workflows}`);
+          if (notes.custom_instructions) trainingLines.push(`- Instructions: ${notes.custom_instructions}`);
+          if (notes.tools) trainingLines.push(`- Tools: ${notes.tools}`);
+          if (trainingLines.length > 0) {
+            const trainingBlock = `\n## User Training Context\n${trainingLines.join('\n')}`;
+            userPersona = (userPersona || '') + trainingBlock;
+          }
+        }
+      } catch (err) {
+        logger.warn(`[Orchestrator] Training context build failed: ${err.message}`);
       }
     }
 

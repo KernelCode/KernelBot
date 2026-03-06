@@ -88,6 +88,10 @@ const DEFAULTS = {
     default_trust: 'unknown',
     agent_detection_threshold: 0.6,
   },
+  onboarding: {
+    enabled: true,
+    skip_for_owner: false,
+  },
   linkedin: {},
   x: {},
 };

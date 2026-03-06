@@ -19,6 +19,8 @@ import { isQuietHours } from './utils/timeUtils.js';
 import { CharacterBuilder } from './characters/builder.js';
 import { LifeEngine } from './life/engine.js';
 import { personaShield } from './utils/persona-shield.js';
+import { OnboardingManager } from './onboarding/manager.js';
+import { OnboardingFlow } from './onboarding/flow.js';
 
 /**
  * Simulate a human-like typing delay based on response length.
@@ -281,6 +283,25 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     });
   }
 
+  // ── Onboarding ──────────────────────────────────────────────────
+  let onboardingManager = null;
+  let onboardingFlow = null;
+  const onboardingEnabled = config.onboarding?.enabled !== false;
+
+  if (onboardingEnabled && agent._brainDB?.isOpen) {
+    onboardingManager = new OnboardingManager(agent._brainDB);
+    onboardingFlow = new OnboardingFlow({
+      onboardingManager,
+      provider: agent.orchestratorProvider,
+      characterName: config.bot?.name || 'KernelBot',
+      personaManager: agent.personaManager,
+      conversationManager,
+      identityAwareness,
+    });
+    agent.onboardingManager = onboardingManager;
+    logger.info('[Bot] Onboarding system initialized');
+  }
+
   // Per-chat message batching: chatId -> { messages[], timer, resolve }
   const chatBatches = new Map();
 
@@ -317,6 +338,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     { command: 'linkedin', description: 'Link/unlink LinkedIn account' },
     { command: 'x', description: 'Link/unlink X (Twitter) account' },
     { command: 'dashboard', description: 'Start/stop the monitoring dashboard' },
+    { command: 'onboarding', description: 'Show onboarding status or reset' },
     { command: 'context', description: 'Show all models, auth, and context info' },
     { command: 'clean', description: 'Clear conversation and start fresh' },
     { command: 'history', description: 'Show message count in memory' },
@@ -912,6 +934,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           rebuildLifeEngine(charCtx);
 
           const character = characterManager.getCharacter(charId);
+          if (onboardingFlow) onboardingFlow.setCharacterName(character.name);
           logger.info(`[Bot] Character switched to ${character.name} (${charId})`);
 
           await bot.editMessageText(
@@ -1054,6 +1077,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         // Start life engine for the selected character
         rebuildLifeEngine(charCtx);
 
+        // Update onboarding flow with character name
+        if (onboardingFlow) onboardingFlow.setCharacterName(character.name);
+
         logger.info(`[Bot] Onboarding complete — character: ${character.name} (${charId})`);
 
         await bot.editMessageText(
@@ -1081,6 +1107,39 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           );
         }
         await bot.answerCallbackQuery(query.id);
+
+      // ── User onboarding callbacks ────────────────────────────────
+      } else if (data.startsWith('onboard_skill:') && onboardingFlow) {
+        const skillId = data.slice('onboard_skill:'.length);
+        const result = onboardingFlow.handleSkillToggle(query.from.id, skillId);
+        if (!result) {
+          await bot.answerCallbackQuery(query.id, { text: 'Not in skills phase' });
+          return;
+        }
+        if (result.alert) {
+          await bot.answerCallbackQuery(query.id, { text: result.alert, show_alert: true });
+          return;
+        }
+        // Update the inline keyboard
+        try {
+          await bot.editMessageReplyMarkup(result.keyboard, {
+            chat_id: chatId,
+            message_id: query.message.message_id,
+          });
+        } catch { /* message might not have changed */ }
+        await bot.answerCallbackQuery(query.id);
+
+      } else if (data === 'onboard_skills_done' && onboardingFlow) {
+        await bot.answerCallbackQuery(query.id);
+        const result = await onboardingFlow.confirmSkills(query.from.id);
+        if (result.text) {
+          await bot.sendMessage(chatId, result.text, { parse_mode: 'Markdown' });
+        }
+
+      } else if (data === 'onboard_skip' && onboardingFlow) {
+        await bot.answerCallbackQuery(query.id);
+        await onboardingFlow.skip(query.from.id);
+        await bot.sendMessage(chatId, 'Onboarding skipped. You can always run /onboarding reset to start over.\n\nWhat can I help you with?');
       }
     } catch (err) {
       logger.error(`[Bot] Callback query error for "${data}" in chat ${chatId}: ${err.message}`);
@@ -1178,6 +1237,50 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         reply_markup: { inline_keyboard: buttons },
       });
       return;
+    }
+
+    // ── User onboarding ───────────────────────────────────────────
+    // After character is chosen, onboard the user (profile → skills → training)
+    if (onboardingManager && onboardingFlow) {
+      // Check for /onboarding command first (bypass intercept)
+      if (msg.text && msg.text.trim().startsWith('/onboarding')) {
+        // Handled below in the commands section
+      } else if (onboardingManager.needsOnboarding(userId)) {
+        // Skip owner if configured
+        const skipOwner = config.onboarding?.skip_for_owner && config.identity?.owner_id && String(config.identity.owner_id) === String(userId);
+        if (!skipOwner) {
+          onboardingManager.start(userId);
+          const reply = await onboardingFlow.initiate(chatId, userId, msg.from);
+          if (reply) {
+            await bot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
+          }
+          return;
+        }
+      } else if (onboardingManager.isOnboarding(userId)) {
+        // User is mid-onboarding — route to flow
+        if (!msg.text) return;
+        const text = msg.text.trim();
+        const result = await onboardingFlow.processMessage(chatId, userId, text, msg.from);
+        if (result.text) {
+          const sendOpts = { parse_mode: 'Markdown' };
+          if (result.keyboard) sendOpts.reply_markup = result.keyboard;
+          await bot.sendMessage(chatId, result.text, sendOpts);
+        }
+        if (!result.text && !result.keyboard) {
+          // Onboarding just completed — activate selected skills for this chat
+          const state = onboardingManager.getState(userId);
+          if (state?.selected_skills?.length > 0) {
+            const key = agent._chatKey ? agent._chatKey(chatId) : String(chatId);
+            for (const skillId of state.selected_skills) {
+              conversationManager.addSkill(key, skillId);
+            }
+            logger.info(`[Bot] Activated ${state.selected_skills.length} onboarding skills for chat ${chatId}`);
+          }
+          // Fall through to normal message processing
+        } else {
+          return;
+        }
+      }
     }
 
     // Handle file upload for pending custom skill prompt step
@@ -2601,6 +2704,52 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       return;
     }
 
+    if (text === '/onboarding' || text === '/onboarding reset') {
+      logger.info(`[Bot] /onboarding command from ${username} (${userId}) in chat ${chatId}`);
+      if (!onboardingManager) {
+        await bot.sendMessage(chatId, 'Onboarding system not available (brain\\_db required).');
+        return;
+      }
+
+      if (text === '/onboarding reset') {
+        onboardingManager.reset(userId);
+        await bot.sendMessage(chatId, 'Onboarding reset. Send any message to start fresh.');
+        return;
+      }
+
+      const state = onboardingManager.getState(userId);
+      if (!state) {
+        await bot.sendMessage(chatId, 'No onboarding data found. Send any message to start onboarding.');
+        return;
+      }
+
+      const phaseEmoji = { profile: '\uD83D\uDCDD', skills: '\uD83C\uDFAF', training: '\uD83C\uDFD3', complete: '\u2705' };
+      const lines = [
+        `*Onboarding Status*`,
+        '',
+        `Phase: ${phaseEmoji[state.phase] || ''} ${state.phase}`,
+        `Started: ${new Date(state.started_at).toLocaleDateString()}`,
+      ];
+      if (state.completed_at) lines.push(`Completed: ${new Date(state.completed_at).toLocaleDateString()}`);
+      if (state.profile_data) {
+        const p = state.profile_data;
+        lines.push('', '*Profile:*');
+        if (p.name) lines.push(`  Name: ${p.name}`);
+        if (p.occupation) lines.push(`  Occupation: ${p.occupation}`);
+        if (p.location) lines.push(`  Location: ${p.location}`);
+      }
+      if (state.selected_skills?.length > 0) {
+        lines.push('', `*Skills:* ${state.selected_skills.join(', ')}`);
+      }
+      if (state.training_notes) {
+        lines.push('', '*Training:* configured');
+      }
+      lines.push('', '_Use /onboarding reset to re-run onboarding._');
+
+      await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
     if (text === '/help') {
       const activeSkills = agent.getActiveSkills(chatId);
       const skillLine = activeSkills.length > 0
@@ -2630,6 +2779,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         '/privacy — Show knowledge scope stats',
         '/synthesis — Synthesis loop status & manual trigger',
         '/evolution — Self-evolution status, history, lessons',
+        '/onboarding — View onboarding status or reset',
         '/dashboard — Start/stop the monitoring dashboard',
         '/linkedin — Link/unlink your LinkedIn account',
         '/x — Link/unlink your X (Twitter) account',

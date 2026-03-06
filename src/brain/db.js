@@ -4,7 +4,7 @@ import { dirname } from 'path';
 import { getLogger } from '../utils/logger.js';
 import { EmbeddingProvider } from './embeddings.js';
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 /**
  * BrainDB — unified SQLite database for all KERNEL data.
@@ -493,6 +493,18 @@ export class BrainDB {
         last_run_at INTEGER,
         cooldown_ms INTEGER DEFAULT 0,
         character_id TEXT
+      );
+
+      -- User Onboarding (Phase 9)
+      CREATE TABLE IF NOT EXISTS user_onboarding (
+        user_id TEXT PRIMARY KEY,
+        phase TEXT NOT NULL DEFAULT 'profile',
+        profile_data TEXT,
+        selected_skills TEXT,
+        training_notes TEXT,
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER
       );
 
       -- Identity Awareness: Known Senders (Phase 7)
