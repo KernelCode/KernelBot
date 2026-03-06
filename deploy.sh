@@ -9,6 +9,13 @@
 # ─────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# ── Wrap in main() for curl | bash safety ──
+# When piped from curl, bash reads the script incrementally. If we
+# redirect stdin (exec </dev/tty) before bash finishes reading, the
+# pipe closes and curl errors with "Failure writing output to destination".
+# Wrapping in a function forces bash to read the entire script first.
+main() {
+
 # ── Handle curl | bash ──
 # When piped from curl, stdin is not a terminal. Redirect interactive
 # input from /dev/tty so read prompts work correctly.
@@ -614,3 +621,7 @@ echo ""
 echo -e "  ${BOLD}Update:${NC}"
 echo "    cd $INSTALL_DIR && git pull && bun install && systemctl restart $SERVICE_NAME"
 echo ""
+
+} # end main
+
+main "$@"
