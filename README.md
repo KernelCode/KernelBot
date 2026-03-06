@@ -2,7 +2,7 @@
 
 [kernelbot.io](https://kernelbot.io) | [npm](https://www.npmjs.com/package/kernelbot) | [GitHub](https://github.com/KernelCode/kernelbot)
 
-A self-evolving AI agent that runs on your machine. KernelBot doesn't just respond to messages — it thinks, learns, remembers why things happened, builds a model of your world, and rewrites its own behavior based on every interaction. All through Telegram.
+A self-evolving AI agent system that runs on your machine. KernelBot doesn't just respond to messages — it thinks, learns, remembers why things happened, builds a model of your world, and rewrites its own behavior based on every interaction.
 
 ## What Makes KernelBot Different
 
@@ -21,15 +21,15 @@ Everything is stored in a unified SQLite brain with vector embeddings for semant
 ## How It Works
 
 ```
-You (Telegram) → Orchestrator (your chosen model)
-                        ↓ dispatch_task
-            ┌───────────┼───────────────┐
-            ↓           ↓               ↓
-     Coding      Browser      System      DevOps      Research
-     Worker       Worker       Worker      Worker       Worker
+You → Orchestrator (your chosen model)
+              ↓ dispatch_task
+  ┌───────────┼───────────────┐
+  ↓           ↓               ↓
+Coding    Browser    System    DevOps    Research
+Worker     Worker     Worker    Worker     Worker
 ```
 
-1. You send a message on Telegram.
+1. You send a message.
 2. The **orchestrator** plans what needs to happen, informed by your world model and past task outcomes.
 3. It dispatches **workers** that run in the background using your chosen AI model.
 4. Each worker has a focused set of tools (git, shell, Docker, browser, etc.) and receives relevant causal context from similar past tasks.
@@ -38,7 +38,7 @@ You (Telegram) → Orchestrator (your chosen model)
 ## Features
 
 **Multi-Agent Swarm**
-Orchestrator + five specialized worker types (coding, browser, system, devops, research) running in parallel with live Telegram updates.
+Orchestrator + five specialized worker types (coding, browser, system, devops, research) running in parallel with live updates.
 
 **Multi-Model**
 Anthropic, OpenAI, Google Gemini, and Groq. Switch the orchestrator or workers anytime with `/brain` or `/orchestrator`.
@@ -71,12 +71,11 @@ npm install -g kernelbot
 kernelbot
 ```
 
-On first run, KernelBot walks you through picking a provider, entering API keys, and setting up your Telegram bot token. Config is saved to `~/.kernelbot/`.
+On first run, KernelBot walks you through picking a provider and entering API keys. Config is saved to `~/.kernelbot/`.
 
 ## Requirements
 
 - Node.js 18+
-- [Telegram Bot Token](https://t.me/BotFather)
 - An API key for your chosen provider(s):
   [Anthropic](https://console.anthropic.com/) | [OpenAI](https://platform.openai.com/api-keys) | [Google AI](https://aistudio.google.com/apikey) | [Groq](https://console.groq.com/keys)
 - Optional: [GitHub Token](https://github.com/settings/tokens), [JIRA API Token](https://id.atlassian.net/manage-profile/security/api-tokens), [ElevenLabs API Key](https://elevenlabs.io/), [Claude Code CLI](https://www.npmjs.com/package/@anthropic-ai/claude-code)
@@ -116,7 +115,7 @@ On first run, KernelBot walks you through picking a provider, entering API keys,
 ## Architecture
 
 ```
-Telegram Bot (src/bot.js)
+Interface Layer (src/bot.js)
     ↓
 OrchestratorAgent (src/agent.js) — 3 core tools
     ↓ dispatch_task / list_jobs / cancel_job
@@ -162,8 +161,7 @@ swarm:
   max_concurrent_jobs: 3
   job_timeout_seconds: 300
 
-telegram:
-  allowed_users: []      # empty = allow all
+allowed_users: []        # empty = allow all
 
 life:
   enabled: true
