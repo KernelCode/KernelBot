@@ -22,7 +22,7 @@ const DEFAULTS = {
   },
   brain: {
     provider: 'google',
-    model: 'gemini-3.1-flash-lite',
+    model: 'gemini-3.1-flash-lite-preview',
     max_tokens: 4096,
     temperature: 0.3,
   },
