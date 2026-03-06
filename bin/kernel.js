@@ -43,7 +43,7 @@ import {
 /**
  * Register SIGINT/SIGTERM handlers to shut down the bot cleanly.
  */
-function setupGracefulShutdown({ bot, lifeEngine, automationManager, jobManager, conversationManager, intervals, dashboardHandle }) {
+function setupGracefulShutdown({ bot, lifeEngine, automationManager, jobManager, conversationManager, intervals, dashboardHandle, brainDB }) {
   let shuttingDown = false;
 
   const shutdown = async (signal) => {
@@ -65,6 +65,7 @@ function setupGracefulShutdown({ bot, lifeEngine, automationManager, jobManager,
 
     try { conversationManager.save(); logger.info('[Shutdown] Conversations saved'); } catch (err) { logger.error(`[Shutdown] Failed to save conversations: ${err.message}`); }
     try { dashboardHandle?.stop(); } catch (err) { logger.error(`[Shutdown] Failed to stop dashboard: ${err.message}`); }
+    try { brainDB?.close(); logger.info('[Shutdown] BrainDB closed'); } catch (err) { logger.error(`[Shutdown] Failed to close BrainDB: ${err.message}`); }
 
     for (const id of intervals) clearInterval(id);
     logger.info('[Shutdown] Periodic timers cleared');
@@ -213,10 +214,63 @@ async function startBotFlow(config) {
   }
 
   const activeCharacterId = characterManager.getActiveCharacterId();
-  const charCtx = characterManager.buildContext(activeCharacterId);
 
-  const conversationManager = new ConversationManager(config, charCtx.conversationFilePath);
-  const personaManager = new UserPersonaManager();
+  // ── BrainDB (Phase 0) ──────────────────────────────────────────
+  let brainDB = null;
+  if (config.brain_db?.enabled) {
+    try {
+      const { BrainDB } = await import('../src/brain/db.js');
+      const { BrainMigration } = await import('../src/brain/migration.js');
+
+      const dbPath = config.brain_db.path || join(homedir(), '.kernelbot', 'brain.sqlite');
+      brainDB = new BrainDB({ dbPath, config });
+      await brainDB.open();
+
+      if (config.brain_db.migrate_on_startup !== false) {
+        const migration = new BrainMigration(brainDB);
+        if (migration.needsMigration()) {
+          const stats = await migration.migrateAll();
+          logger.info(`[Startup] BrainDB migration complete: ${JSON.stringify(stats)}`);
+        }
+      }
+    } catch (err) {
+      logger.error(`[Startup] BrainDB failed to initialize: ${err.message}`);
+      brainDB = null;
+    }
+  }
+
+  // One-time vector backfill for existing data
+  if (brainDB?.isOpen && brainDB.hasVectors) {
+    try {
+      const backfillDone = brainDB.get("SELECT value FROM codebase_meta WHERE key = 'vector_backfill_done'");
+      if (!backfillDone) {
+        brainDB.backfillVectors().then(() => {
+          brainDB.run("INSERT OR REPLACE INTO codebase_meta (key, value, updated_at) VALUES ('vector_backfill_done', '1', :now)", { now: Date.now() });
+          logger.info('[Startup] Vector backfill complete');
+        }).catch(err => logger.warn(`[Startup] Vector backfill failed: ${err.message}`));
+      }
+    } catch (err) {
+      logger.warn(`[Startup] Vector backfill check failed: ${err.message}`);
+    }
+  }
+
+  // Build character context — uses brain-backed managers when brainDB is open
+  const charCtx = await characterManager.buildContext(activeCharacterId, { brainDB });
+
+  // Conversation + Persona managers: brain-backed when brainDB is open
+  let conversationManager;
+  let personaManager;
+  if (brainDB?.isOpen) {
+    const { BrainConversationManager } = await import('../src/brain/managers/conversation-manager.js');
+    const { BrainPersonaManager } = await import('../src/brain/managers/persona-manager.js');
+    conversationManager = new BrainConversationManager(brainDB, config);
+    conversationManager.switchFile(charCtx.conversationFilePath);
+    personaManager = new BrainPersonaManager(brainDB);
+  } else {
+    conversationManager = new ConversationManager(config, charCtx.conversationFilePath);
+    personaManager = new UserPersonaManager();
+  }
+
   const jobManager = new JobManager({
     jobTimeoutSeconds: config.swarm.job_timeout_seconds,
     cleanupIntervalMinutes: config.swarm.cleanup_interval_minutes,
@@ -232,10 +286,99 @@ async function startBotFlow(config) {
     memoryManager: charCtx.memoryManager,
     shareQueue: charCtx.shareQueue,
     characterManager,
+    brainDB,
   });
 
-  agent.loadCharacter(activeCharacterId);
+  await agent.loadCharacter(activeCharacterId);
   codebaseKnowledge.setAgent(agent);
+
+  // ── Feedback Engine (Phase 3) ─────────────────────────────────
+  if (brainDB?.isOpen) {
+    try {
+      const { FeedbackEngine } = await import('../src/brain/feedback-engine.js');
+      agent.feedbackEngine = new FeedbackEngine(brainDB, agent.worldModel);
+      logger.info('[Startup] FeedbackEngine initialized');
+    } catch (err) {
+      logger.warn(`[Startup] FeedbackEngine init failed: ${err.message}`);
+    }
+  }
+
+  // ── Causal Memory (Phase 4) ──────────────────────────────────
+  if (brainDB?.isOpen) {
+    try {
+      const { CausalMemory } = await import('../src/brain/causal-memory.js');
+      agent.causalMemory = new CausalMemory(brainDB, agent.worldModel);
+      // Cross-wire: feedback engine and consolidation get access to causal memory
+      if (agent.feedbackEngine) agent.feedbackEngine._causalMemory = agent.causalMemory;
+      logger.info('[Startup] CausalMemory initialized');
+    } catch (err) {
+      logger.warn(`[Startup] CausalMemory init failed: ${err.message}`);
+    }
+  }
+
+  // ── Behavioral DNA (Phase 5) ──────────────────────────────────
+  if (brainDB?.isOpen) {
+    try {
+      const { BehavioralDNA } = await import('../src/brain/behavioral-dna.js');
+      agent.behavioralDNA = new BehavioralDNA(brainDB, agent.feedbackEngine, agent.causalMemory);
+      await agent.behavioralDNA.initializeDefaultTraits(activeCharacterId);
+      await agent.behavioralDNA.initializeNarratives(activeCharacterId, charCtx.selfManager);
+      if (agent.feedbackEngine) agent.feedbackEngine._behavioralDNA = agent.behavioralDNA;
+      logger.info('[Startup] BehavioralDNA initialized');
+    } catch (err) {
+      logger.warn(`[Startup] BehavioralDNA init failed: ${err.message}`);
+    }
+  }
+
+  // ── Synthesis Loop (Phase 6) ──────────────────────────────────
+  let synthesisLoop = null;
+  if (brainDB?.isOpen) {
+    try {
+      const { SynthesisLoop } = await import('../src/brain/synthesis.js');
+      synthesisLoop = new SynthesisLoop(brainDB, {
+        worldModel: agent.worldModel,
+        feedbackEngine: agent.feedbackEngine,
+        causalMemory: agent.causalMemory,
+        behavioralDNA: agent.behavioralDNA,
+        memoryManager: charCtx.memoryManager,
+        skillForge: agent.skillForge,
+        characterId: activeCharacterId,
+      });
+      agent.synthesisLoop = synthesisLoop;
+      logger.info('[Startup] SynthesisLoop initialized');
+    } catch (err) {
+      logger.warn(`[Startup] SynthesisLoop init failed: ${err.message}`);
+    }
+  }
+
+  // ── Identity Awareness (Phase 7) ────────────────────────────
+  let identityAwareness = null;
+  if (brainDB?.isOpen) {
+    try {
+      const { IdentityAwareness } = await import('../src/brain/identity-awareness.js');
+      identityAwareness = new IdentityAwareness(brainDB, agent.worldModel, config);
+      identityAwareness._characterId = activeCharacterId;
+      agent.identityAwareness = identityAwareness;
+      logger.info('[Startup] IdentityAwareness initialized');
+    } catch (err) {
+      logger.warn(`[Startup] IdentityAwareness init failed: ${err.message}`);
+    }
+  }
+
+  // ── Memory Consolidation ──────────────────────────────────────
+  let consolidation = null;
+  if (brainDB?.isOpen && agent.worldModel) {
+    try {
+      const { MemoryConsolidation } = await import('../src/brain/consolidation.js');
+      consolidation = new MemoryConsolidation(brainDB, agent.worldModel);
+      if (agent.causalMemory) consolidation._causalMemory = agent.causalMemory;
+      if (agent.behavioralDNA) consolidation._behavioralDNA = agent.behavioralDNA;
+      if (identityAwareness) consolidation._identityAwareness = identityAwareness;
+      logger.info('[Startup] Memory consolidation initialized');
+    } catch (err) {
+      logger.warn(`[Startup] Memory consolidation init failed: ${err.message}`);
+    }
+  }
 
   const lifeEngine = new LifeEngine({
     config, agent,
@@ -247,7 +390,15 @@ async function startBotFlow(config) {
     selfManager: charCtx.selfManager,
     basePath: charCtx.lifeBasePath,
     characterId: activeCharacterId,
+    consolidation,
   });
+
+  // Cross-wire synthesis loop ↔ life engine (circular dep)
+  if (synthesisLoop) {
+    synthesisLoop._lifeEngine = lifeEngine;
+    lifeEngine.synthesisLoop = synthesisLoop;
+    if (consolidation) synthesisLoop._consolidation = consolidation;
+  }
 
   const dashboardDeps = {
     config, jobManager, automationManager, lifeEngine, conversationManager, characterManager,
@@ -275,6 +426,9 @@ async function startBotFlow(config) {
     characterManager,
     dashboardHandle,
     dashboardDeps,
+    consolidation,
+    synthesisLoop,
+    identityAwareness,
   });
 
   const cleanupMs = (config.swarm.cleanup_interval_minutes || 30) * 60 * 1000;
@@ -316,7 +470,7 @@ async function startBotFlow(config) {
   setupGracefulShutdown({
     bot, lifeEngine, automationManager, jobManager,
     conversationManager, intervals: [cleanupInterval, pruneInterval],
-    dashboardHandle,
+    dashboardHandle, brainDB,
   });
 
   return true;

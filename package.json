@@ -1,7 +1,7 @@
 {
   "name": "kernelbot",
   "version": "1.0.40",
-  "description": "KernelBot — AI engineering agent with full OS control",
+  "description": "A self-evolving AI agent that thinks, learns, remembers, and rewrites its own behavior — all through Telegram",
   "type": "module",
   "author": "Abdullah Al-Taheri <abdullah@altaheri.me>",
   "bin": {
@@ -28,13 +28,14 @@
     "url": "https://github.com/KernelCode/KernelBot/issues"
   },
   "homepage": "https://kernelbot.io",
-  "license": "MIT",
+  "license": "BSL-1.1",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@clack/prompts": "^0.10.0",
     "@google/genai": "^1.42.0",
     "@octokit/rest": "^22.0.1",
     "axios": "^1.13.5",
+    "better-sqlite3": "^12.6.2",
     "boxen": "^8.0.1",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
@@ -47,6 +48,7 @@
     "ora": "^8.1.1",
     "puppeteer": "^24.37.3",
     "simple-git": "^3.31.1",
+    "sqlite-vec": "0.1.7-alpha.2",
     "uuid": "^11.1.0",
     "winston": "^3.17.0"
   }

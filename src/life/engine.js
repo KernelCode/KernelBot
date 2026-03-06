@@ -20,7 +20,7 @@ const DEFAULT_STATE = {
   lastReflectTime: null,
   lastLearnTime: null,
   totalActivities: 0,
-  activityCounts: { think: 0, browse: 0, journal: 0, create: 0, self_code: 0, code_review: 0, reflect: 0, learn: 0 },
+  activityCounts: { think: 0, browse: 0, journal: 0, create: 0, self_code: 0, code_review: 0, reflect: 0, learn: 0, consolidate: 0 },
   paused: false,
   lastWakeUp: null,
   // Failure tracking: consecutive failures per activity type
@@ -36,7 +36,7 @@ export class LifeEngine {
   /**
    * @param {{ config: object, agent: object, memoryManager: object, journalManager: object, shareQueue: object, improvementTracker?: object, evolutionTracker?: object, codebaseKnowledge?: object, selfManager: object }} deps
    */
-  constructor({ config, agent, memoryManager, journalManager, shareQueue, improvementTracker, evolutionTracker, codebaseKnowledge, selfManager, basePath = null, characterId = null }) {
+  constructor({ config, agent, memoryManager, journalManager, shareQueue, improvementTracker, evolutionTracker, codebaseKnowledge, selfManager, basePath = null, characterId = null, consolidation = null }) {
     this.config = config;
     this.agent = agent;
     this.memoryManager = memoryManager;
@@ -47,6 +47,8 @@ export class LifeEngine {
     // Backward compat: keep improvementTracker ref if no evolutionTracker
     this.improvementTracker = improvementTracker || null;
     this.selfManager = selfManager;
+    this.consolidation = consolidation || null;
+    this.synthesisLoop = null; // Set post-construction (Phase 6)
     this._timerId = null;
     this._status = 'idle'; // idle, active, paused
     this._characterId = characterId || null;
@@ -220,6 +222,19 @@ export class LifeEngine {
       return;
     }
 
+    // Phase 6: Delegate to SynthesisLoop if available
+    if (this.synthesisLoop) {
+      try {
+        const { action } = await this.synthesisLoop.runCycle();
+        this._recordSynthesisActivity(action.action);
+        logger.info(`[LifeEngine] Synthesis cycle: ${action.action} (urgency=${action.urgency.toFixed(2)})`);
+      } catch (err) {
+        logger.error(`[LifeEngine] Synthesis cycle failed: ${err.message}`);
+      }
+      if (this._status === 'active') this._armNext();
+      return;
+    }
+
     const activityType = this._selectActivity();
     logger.info(`[LifeEngine] Heartbeat tick — selected: ${activityType}`);
 
@@ -272,6 +287,7 @@ export class LifeEngine {
       code_review: lifeConfig.activity_weights?.code_review ?? 5,
       reflect: lifeConfig.activity_weights?.reflect ?? 8,
       learn: lifeConfig.activity_weights?.learn ?? 15,
+      consolidate: lifeConfig.activity_weights?.consolidate ?? 8,
     };
 
     const now = Date.now();
@@ -308,6 +324,11 @@ export class LifeEngine {
     const hasGrowableSkills = this.agent?.skillForge?.getGrowableSkills()?.length > 0;
     if (!hasGrowableSkills || (this._state.lastLearnTime && now - this._state.lastLearnTime < learnCooldownMs)) {
       weights.learn = 0;
+    }
+
+    // Consolidate: requires consolidation instance + its own shouldConsolidate check
+    if (!this.consolidation || !this.consolidation.shouldConsolidate(this._characterId || 'default')) {
+      weights.consolidate = 0;
     }
 
     // Suppress activity types that have failed repeatedly (3+ consecutive failures)
@@ -357,6 +378,7 @@ export class LifeEngine {
       case 'code_review': await this._doCodeReview(); break;
       case 'reflect': await this._doReflect(); break;
       case 'learn': await this._doLearn(); break;
+      case 'consolidate': await this._doConsolidate(); break;
       default: logger.warn(`[LifeEngine] Unknown activity type: ${type}`);
     }
 
@@ -370,6 +392,38 @@ export class LifeEngine {
     if (type === 'code_review') this._state.lastCodeReviewTime = Date.now();
     if (type === 'reflect') this._state.lastReflectTime = Date.now();
     if (type === 'learn') this._state.lastLearnTime = Date.now();
+    if (type === 'consolidate') this._state.lastConsolidateTime = Date.now();
+    this._saveState();
+  }
+
+  /**
+   * Map synthesis action types to legacy activity names for state tracking.
+   */
+  _recordSynthesisActivity(synthesisAction) {
+    const LEGACY_MAP = {
+      consolidate: 'consolidate',
+      synthesize_feedback: 'reflect',
+      grow_skill: 'learn',
+      research_gaps: 'browse',
+      evolve_dna: 'reflect',
+      evolve_narrative: 'reflect',
+      extract_patterns: 'reflect',
+      decay_stale: 'consolidate',
+      think: 'think',
+      browse: 'browse',
+      journal: 'journal',
+    };
+
+    const legacyType = LEGACY_MAP[synthesisAction] || 'think';
+
+    this._state.lastActivity = legacyType;
+    this._state.lastActivityTime = Date.now();
+    this._state.totalActivities++;
+    this._state.activityCounts[legacyType] = (this._state.activityCounts[legacyType] || 0) + 1;
+    if (legacyType === 'journal') this._state.lastJournalTime = Date.now();
+    if (legacyType === 'reflect') this._state.lastReflectTime = Date.now();
+    if (legacyType === 'learn') this._state.lastLearnTime = Date.now();
+    if (legacyType === 'consolidate') this._state.lastConsolidateTime = Date.now();
     this._saveState();
   }
 
@@ -1313,6 +1367,19 @@ Be honest and constructive. This is your chance to learn from real interactions.
       });
 
       logger.info(`[LifeEngine] Reflection complete (${response.length} chars, ${extracted.IMPROVE.length} improvements, ${extracted.PATTERN.length} patterns)`);
+
+      // Extract world model entities from reflection
+      if (this.agent.worldModel) {
+        try {
+          await this.agent.worldModel.extractFromConversation(
+            logsText.slice(0, 2000), response,
+            null, this.characterId || 'default',
+            this.agent.orchestratorProvider,
+          );
+        } catch (err) {
+          logger.debug(`[LifeEngine] World model extraction from reflection failed: ${err.message}`);
+        }
+      }
     }
   }
 
@@ -1378,6 +1445,58 @@ Be honest and constructive. This is your chance to learn from real interactions.
       }
     }
     return null;
+  }
+
+  // ── Activity: Consolidate Memories ──────────────────────────────
+
+  async _doConsolidate() {
+    const logger = getLogger();
+
+    if (!this.consolidation) {
+      logger.debug('[LifeEngine] Consolidation not available — skipping');
+      return;
+    }
+
+    const characterId = this._characterId || 'default';
+    if (!this.consolidation.shouldConsolidate(characterId)) {
+      logger.debug('[LifeEngine] Consolidation not due yet — skipping');
+      return;
+    }
+
+    logger.info('[LifeEngine] Running memory consolidation...');
+
+    const provider = this.agent?.orchestratorProvider;
+    if (!provider) {
+      logger.warn('[LifeEngine] No orchestrator provider for consolidation');
+      return;
+    }
+
+    const stats = await this.consolidation.consolidate(characterId, provider);
+
+    // Write journal entry about consolidation insights
+    if (stats.entitiesCreated > 0 || stats.relationshipsCreated > 0 || stats.beliefsCreated > 0) {
+      const insights = [];
+      if (stats.entitiesCreated > 0) insights.push(`${stats.entitiesCreated} entities identified`);
+      if (stats.relationshipsCreated > 0) insights.push(`${stats.relationshipsCreated} relationships mapped`);
+      if (stats.beliefsCreated > 0) insights.push(`${stats.beliefsCreated} beliefs recorded`);
+      if (stats.memoriesMerged > 0) insights.push(`${stats.memoriesMerged} redundant memories merged`);
+
+      this.journalManager.writeEntry(
+        'Memory Consolidation',
+        `Reviewed ${stats.memoriesProcessed} recent memories.\n${insights.join(', ')}.`,
+      );
+    }
+
+    // Decay old feedback adjustments during consolidation
+    if (this.agent?.feedbackEngine) {
+      try {
+        this.agent.feedbackEngine.decayOldAdjustments();
+      } catch (err) {
+        logger.warn(`[LifeEngine] Feedback adjustment decay failed: ${err.message}`);
+      }
+    }
+
+    logger.info(`[LifeEngine] Consolidation complete: ${JSON.stringify(stats)}`);
   }
 
   // ── Internal Chat Helpers ──────────────────────────────────────

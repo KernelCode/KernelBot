@@ -752,8 +752,8 @@ export async function executeOrchestratorTool(name, input, context) {
       const { query, time_range_hours } = input;
       logger.info(`[recall_memories] Searching for: "${query}" (time_range=${time_range_hours || 'all'})`);
 
-      const episodic = memoryManager.searchEpisodic(query, 10);
-      const semantic = memoryManager.searchSemantic(query, 5);
+      const episodic = await memoryManager.searchEpisodic(query, 10);
+      const semantic = await memoryManager.searchSemantic(query, 5);
 
       // Filter by time range if specified
       const now = Date.now();

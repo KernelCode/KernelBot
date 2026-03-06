@@ -66,6 +66,13 @@ const DEFAULTS = {
     enabled: false,
     port: 3000,
   },
+  brain_db: {
+    enabled: false,
+    path: null,
+    embedding_provider: 'auto',
+    embedding_model: null,
+    migrate_on_startup: true,
+  },
   skills: {
     forge: {
       enabled: true,
@@ -73,6 +80,13 @@ const DEFAULTS = {
       max_auto_assign: 3,
       research_cooldown_hours: 6,
     },
+  },
+  identity: {
+    owner_id: null,
+    auto_promote: true,
+    auto_promote_threshold: 10,
+    default_trust: 'unknown',
+    agent_detection_threshold: 0.6,
   },
   linkedin: {},
   x: {},

@@ -367,11 +367,34 @@ export class CharacterManager {
   /**
    * Build a context object with all scoped managers for a character.
    * Used when switching characters or initializing the agent.
+   * When brainDB is open, returns SQLite-backed managers instead of file-based ones.
    */
-  buildContext(characterId) {
+  async buildContext(characterId, { brainDB } = {}) {
     const dir = this.getCharacterDir(characterId);
     const character = this.getCharacter(characterId);
     if (!character) throw new Error(`Character not found: ${characterId}`);
+
+    if (brainDB?.isOpen) {
+      const { BrainSelfManager } = await import('./brain/managers/self-manager.js');
+      const { BrainMemoryManager } = await import('./brain/managers/memory-manager.js');
+      const { BrainJournalManager } = await import('./brain/managers/journal-manager.js');
+      const { BrainShareQueue } = await import('./brain/managers/share-queue.js');
+      const { BrainEvolutionTracker } = await import('./brain/managers/evolution-tracker.js');
+
+      return {
+        characterId,
+        profile: character,
+        personaMd: this.getPersonaMd(characterId),
+        selfManager: new BrainSelfManager(brainDB, characterId),
+        memoryManager: new BrainMemoryManager(brainDB, characterId),
+        journalManager: new BrainJournalManager(brainDB, characterId),
+        shareQueue: new BrainShareQueue(brainDB, characterId),
+        evolutionTracker: new BrainEvolutionTracker(brainDB, characterId),
+        conversationFilePath: join(dir, 'conversations.json'),
+        lifeBasePath: join(dir, 'life'),
+        brainDB,
+      };
+    }
 
     return {
       characterId,
@@ -384,6 +407,7 @@ export class CharacterManager {
       evolutionTracker: new EvolutionTracker(join(dir, 'life')),
       conversationFilePath: join(dir, 'conversations.json'),
       lifeBasePath: join(dir, 'life'),
+      brainDB: brainDB || null,
     };
   }
 

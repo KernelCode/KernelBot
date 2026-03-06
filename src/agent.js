@@ -37,7 +37,7 @@ function formatTimeGap(minutes) {
 }
 
 export class OrchestratorAgent {
-  constructor({ config, conversationManager, personaManager, selfManager, jobManager, automationManager, memoryManager, shareQueue, characterManager }) {
+  constructor({ config, conversationManager, personaManager, selfManager, jobManager, automationManager, memoryManager, shareQueue, characterManager, brainDB }) {
     this.config = config;
     this.conversationManager = conversationManager;
     this.personaManager = personaManager;
@@ -47,11 +47,19 @@ export class OrchestratorAgent {
     this.memoryManager = memoryManager || null;
     this.shareQueue = shareQueue || null;
     this.characterManager = characterManager || null;
+    this._brainDB = brainDB || null;
+    this.worldModel = null;
+    this.feedbackEngine = null;
+    this.causalMemory = null;
+    this.behavioralDNA = null;
+    this.synthesisLoop = null;
+    this.identityAwareness = null;
     this.skillForge = new SkillForge({ agent: this, memoryManager, config });
     this._activePersonaMd = null;
     this._activeCharacterName = null;
     this._activeCharacterId = null;
     this._pending = new Map(); // chatId -> pending state
+    this._pendingOutcomes = new Map(); // jobId -> { timestamp, chatId, userId, characterId }
 
     // Character-scoped conversation keys: prefix chatId with character ID
     // so each character has isolated conversation history.
@@ -80,7 +88,7 @@ export class OrchestratorAgent {
   }
 
   /** Build the orchestrator system prompt. */
-  _getSystemPrompt(chatId, user, temporalContext = null) {
+  _getSystemPrompt(chatId, user, temporalContext = null, identityCtx = null) {
     const logger = getLogger();
     const key = this._chatKey(chatId);
     const skillIds = this.conversationManager.getSkills(key);
@@ -92,14 +100,26 @@ export class OrchestratorAgent {
     }
 
     let selfData = null;
-    if (this.selfManager) {
+    if (this.behavioralDNA) {
+      try {
+        selfData = this.behavioralDNA.buildDNAContext(user?.id || null, this._activeCharacterId || 'default');
+      } catch (err) {
+        logger.warn(`[Orchestrator] BehavioralDNA context build failed: ${err.message}`);
+      }
+    }
+    if (!selfData && this.selfManager) {
       selfData = this.selfManager.loadAll();
     }
 
-    // Build memory context block
+    // Build memory context block (scope-filtered for non-owner)
     let memoriesBlock = null;
     if (this.memoryManager) {
-      memoriesBlock = this.memoryManager.buildContextBlock(user?.id || null);
+      let senderType = 'owner';
+      if (this.identityAwareness && user?.id) {
+        const sender = this.identityAwareness.getSender(String(user.id));
+        if (sender) senderType = sender.sender_type;
+      }
+      memoriesBlock = this.memoryManager.buildContextBlock(user?.id || null, senderType);
     }
 
     // Build share queue block
@@ -112,8 +132,40 @@ export class OrchestratorAgent {
     const forgeExpertise = this.skillForge.buildExpertiseProfile();
     const forgeSkillsSummary = this.skillForge.buildLearnedSkillsSummary();
 
-    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skills=${skillIds.length > 0 ? skillIds.join(',') : 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'} | temporal=${temporalContext ? 'yes' : 'none'} | character=${this._activeCharacterId || 'default'} | forge=${forgeExpertise ? 'yes' : 'none'}`);
-    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData, memoriesBlock, sharesBlock, temporalContext, this._activePersonaMd, this._activeCharacterName, forgeExpertise, forgeSkillsSummary);
+    // Build world model context
+    let worldContext = null;
+    if (this.worldModel) {
+      try {
+        worldContext = this.worldModel.buildWorldContext(this._activeCharacterId || 'default', user?.id || null);
+      } catch (err) {
+        logger.warn(`[Orchestrator] WorldModel context build failed: ${err.message}`);
+      }
+    }
+
+    // Build task intelligence from causal memory
+    let taskIntelligence = null;
+    if (this.causalMemory) {
+      try {
+        taskIntelligence = this.causalMemory.buildOrchestratorContext(this._activeCharacterId || 'default');
+      } catch (err) {
+        logger.warn(`[Orchestrator] Task intelligence build failed: ${err.message}`);
+      }
+    }
+
+    // Build feedback adjustments block
+    let adjustmentsBlock = null;
+    if (this.feedbackEngine) {
+      try {
+        adjustmentsBlock = this.feedbackEngine.buildAdjustmentBlock(
+          user?.id || null, this._activeCharacterId || 'default'
+        );
+      } catch (err) {
+        logger.warn(`[Orchestrator] Adjustment block build failed: ${err.message}`);
+      }
+    }
+
+    logger.debug(`Orchestrator building system prompt for chat ${chatId} | skills=${skillIds.length > 0 ? skillIds.join(',') : 'none'} | persona=${userPersona ? 'yes' : 'none'} | self=${selfData ? 'yes' : 'none'} | memories=${memoriesBlock ? 'yes' : 'none'} | shares=${sharesBlock ? 'yes' : 'none'} | temporal=${temporalContext ? 'yes' : 'none'} | character=${this._activeCharacterId || 'default'} | forge=${forgeExpertise ? 'yes' : 'none'} | world=${worldContext ? 'yes' : 'none'} | adjustments=${adjustmentsBlock ? 'yes' : 'none'} | causal=${taskIntelligence ? 'yes' : 'none'} | identity=${identityCtx ? 'yes' : 'none'}`);
+    return getOrchestratorPrompt(this.config, skillPrompt || null, userPersona, selfData, memoriesBlock, sharesBlock, temporalContext, this._activePersonaMd, this._activeCharacterName, forgeExpertise, forgeSkillsSummary, worldContext, adjustmentsBlock, taskIntelligence, identityCtx);
   }
 
   // ── Multi-skill methods ─────────────────────────────────────────────
@@ -159,17 +211,28 @@ export class OrchestratorAgent {
    * Load a character's context into the agent.
    * Called on startup and on character switch.
    */
-  loadCharacter(characterId) {
+  async loadCharacter(characterId) {
     const logger = getLogger();
     if (!this.characterManager) return;
 
-    const ctx = this.characterManager.buildContext(characterId);
+    const ctx = await this.characterManager.buildContext(characterId, { brainDB: this._brainDB });
     this._activeCharacterId = characterId;
     this._activePersonaMd = ctx.personaMd;
     this._activeCharacterName = ctx.profile.name;
     this.selfManager = ctx.selfManager;
     this.memoryManager = ctx.memoryManager;
     this.shareQueue = ctx.shareQueue;
+
+    // Initialize WorldModel if BrainDB is available
+    if (this._brainDB?.isOpen && !this.worldModel) {
+      try {
+        const { WorldModel } = await import('./brain/world-model.js');
+        this.worldModel = new WorldModel(this._brainDB);
+        logger.info('[Agent] WorldModel initialized');
+      } catch (err) {
+        logger.warn(`[Agent] WorldModel init failed: ${err.message}`);
+      }
+    }
 
     logger.info(`[Agent] Loaded character: ${ctx.profile.name} (${characterId})`);
     return ctx;
@@ -179,11 +242,11 @@ export class OrchestratorAgent {
    * Switch to a different character at runtime.
    * Returns the new context for life engine rebuild.
    */
-  switchCharacter(characterId) {
+  async switchCharacter(characterId) {
     const logger = getLogger();
     if (!this.characterManager) throw new Error('CharacterManager not available');
 
-    const ctx = this.loadCharacter(characterId);
+    const ctx = await this.loadCharacter(characterId);
     this.characterManager.setActiveCharacter(characterId);
 
     logger.info(`[Agent] Switched to character: ${ctx.profile.name} (${characterId})`);
@@ -479,9 +542,22 @@ export class OrchestratorAgent {
       logger.info(`[Orchestrator] Image attached to message for chat ${chatId} (${opts.imageAttachment.media_type})`);
     }
 
+    // Classify sender and build identity context
+    let identityCtx = null;
+    if (this.identityAwareness && opts.telegramUser) {
+      try {
+        this.identityAwareness.classifySender(opts.telegramUser, opts.chatInfo);
+        identityCtx = this.identityAwareness.buildIdentityContext(
+          String(user?.id), opts.chatInfo || { type: 'private' },
+        );
+      } catch (err) {
+        logger.warn(`[Orchestrator] Identity classification failed: ${err.message}`);
+      }
+    }
+
     logger.debug(`Orchestrator conversation context: ${messages.length} messages, max_depth=${max_tool_depth}`);
 
-    const reply = await this._runLoop(chatId, messages, user, 0, max_tool_depth, temporalContext);
+    const reply = await this._runLoop(chatId, messages, user, 0, max_tool_depth, temporalContext, identityCtx);
 
     logger.info(`Orchestrator reply for chat ${chatId}: "${(reply || '').slice(0, 150)}"`);
 
@@ -492,6 +568,15 @@ export class OrchestratorAgent {
     this._reflectOnSelfBackground(userMessage, reply, user).catch((err) => {
       logger.warn(`[Orchestrator] Background self-reflection failed: ${err.message}`);
     });
+    this._extractWorldModelBackground(userMessage, reply, user).catch((err) => {
+      logger.warn(`[Orchestrator] Background world model extraction failed: ${err.message}`);
+    });
+    this._detectFeedbackBackground(userMessage, reply, user, chatId).catch((err) => {
+      logger.warn(`[Orchestrator] Background feedback detection failed: ${err.message}`);
+    });
+
+    // Check pending task outcomes — if user message references a completed job
+    this._checkPendingOutcomes(chatId, userMessage);
 
     // Mark pending shares as shared (they were in the prompt, bot wove them in)
     if (this.shareQueue && user?.id) {
@@ -545,6 +630,39 @@ export class OrchestratorAgent {
       const label = workerDef.label || job.workerType;
 
       logger.info(`[Orchestrator] Job completed event: ${job.id} [${job.workerType}] in chat ${chatId} (${job.duration}s) — result length: ${(job.result || '').length} chars, structured: ${!!job.structuredResult}`);
+
+      // Track task outcome via feedback engine
+      if (this.feedbackEngine) {
+        try {
+          const taskSummary = job.structuredResult?.summary || (job.result || '').slice(0, 200);
+          this.feedbackEngine.recordJobCompletion(job.id, job.workerType, taskSummary, job.userId || null, this._activeCharacterId || null);
+          this._pendingOutcomes.set(job.id, { timestamp: Date.now(), chatId, userId: job.userId || null, characterId: this._activeCharacterId || null });
+        } catch (err) {
+          logger.warn(`[FeedbackEngine] Job completion tracking failed: ${err.message}`);
+        }
+      }
+
+      // Record causal event for the completed job
+      if (this.causalMemory) {
+        try {
+          const sr = job.structuredResult;
+          const outcomeType = sr?.status === 'success' ? 'success' : sr?.status === 'failed' ? 'failure' : 'partial';
+          this.causalMemory.recordEvent({
+            jobId: job.id,
+            trigger: `User requested: ${(job.task || '').slice(0, 200)}`,
+            goal: (job.task || '').slice(0, 500),
+            approach: `${job.workerType} worker`,
+            toolsUsed: [job.workerType],
+            outcome: sr?.summary || (job.result || '').slice(0, 500),
+            outcomeType,
+            userId: job.userId || null,
+            characterId: this._activeCharacterId || null,
+            durationMs: job.duration ? job.duration * 1000 : null,
+          }).catch(err => logger.warn(`[CausalMemory] Event recording failed: ${err.message}`));
+        } catch (err) {
+          logger.warn(`[CausalMemory] Event recording failed: ${err.message}`);
+        }
+      }
 
       // 1. Store the job result in conversation history so the Orchestrator has full context
       const resultEntry = this._buildResultHistoryEntry(job);
@@ -732,7 +850,7 @@ export class OrchestratorAgent {
    * Build structured context for a worker.
    * Assembles: orchestrator-provided context, recent user messages, user persona, dependency results.
    */
-  _buildWorkerContext(job) {
+  async _buildWorkerContext(job) {
     const logger = getLogger();
     const sections = [];
 
@@ -795,6 +913,18 @@ export class OrchestratorAgent {
       }
       if (depResults.length > 0) {
         sections.push(`## Prior Worker Results\n${depResults.join('\n\n')}`);
+      }
+    }
+
+    // 5. Causal context — past experience with similar tasks
+    if (this.causalMemory) {
+      try {
+        const causalCtx = await this.causalMemory.buildCausalContext(job.task, 3);
+        if (causalCtx) {
+          sections.push(causalCtx);
+        }
+      } catch (err) {
+        logger.debug(`[Worker ${job.id}] Failed to load causal context: ${err.message}`);
       }
     }
 
@@ -875,7 +1005,7 @@ export class OrchestratorAgent {
     }
 
     // Build worker context (conversation history, persona, dependency results)
-    const workerContext = this._buildWorkerContext(job);
+    const workerContext = await this._buildWorkerContext(job);
 
     // Social platform credential check — require at least one platform connected
     let workerConfig = this.config;
@@ -953,7 +1083,7 @@ export class OrchestratorAgent {
     job.worker = { cancel: () => abortController.abort() };
 
     // Build context from conversation history, persona, dependency results
-    const workerContext = this._buildWorkerContext(job);
+    const workerContext = await this._buildWorkerContext(job);
     const prompt = workerContext
       ? `${workerContext}\n\n---\n\n${job.task}`
       : job.task;
@@ -1116,7 +1246,7 @@ export class OrchestratorAgent {
     return `[Active Workers]\n${lines.join('\n')}`;
   }
 
-  async _runLoop(chatId, messages, user, startDepth, maxDepth, temporalContext = null) {
+  async _runLoop(chatId, messages, user, startDepth, maxDepth, temporalContext = null, identityCtx = null) {
     const logger = getLogger();
     const convKey = this._chatKey(chatId);
 
@@ -1142,7 +1272,7 @@ export class OrchestratorAgent {
 
       try {
         response = await activeProvider.chat({
-          system: this._getSystemPrompt(chatId, user, temporalContext),
+          system: this._getSystemPrompt(chatId, user, temporalContext, identityCtx),
           messages: workingMessages,
           tools: orchestratorToolDefinitions,
         });
@@ -1172,7 +1302,7 @@ export class OrchestratorAgent {
             });
 
             response = await fallbackProvider.chat({
-              system: this._getSystemPrompt(chatId, user, temporalContext),
+              system: this._getSystemPrompt(chatId, user, temporalContext, identityCtx),
               messages: workingMessages,
               tools: orchestratorToolDefinitions,
             });
@@ -1611,6 +1741,16 @@ export class OrchestratorAgent {
       if (parsed?.memory && this.memoryManager) {
         const mem = parsed.memory;
         if (mem.summary && mem.importance >= 2) {
+          // Classify scope if identity awareness is available
+          let scope = 'org_wide';
+          if (this.identityAwareness && user?.id) {
+            try {
+              scope = this.identityAwareness.classifyScope(
+                String(user.id), null, mem.summary,
+              );
+            } catch { /* default to org_wide */ }
+          }
+
           this.memoryManager.addEpisodic({
             type: mem.type || 'interaction',
             source: 'user_chat',
@@ -1618,6 +1758,7 @@ export class OrchestratorAgent {
             tags: mem.tags || [],
             importance: mem.importance || 3,
             userId: user?.id ? String(user.id) : null,
+            scope,
           });
           logger.info(`Memory extracted: "${mem.summary.slice(0, 80)}" (importance: ${mem.importance})`);
         }
@@ -1643,6 +1784,66 @@ export class OrchestratorAgent {
       }
     } catch (err) {
       logger.debug(`Self-reflection skipped: ${err.message}`);
+    }
+  }
+
+  async _extractWorldModelBackground(userMessage, reply, user) {
+    if (!this.worldModel) return;
+    if (!userMessage || userMessage.trim().length < 5) return;
+
+    const characterId = this._activeCharacterId || 'default';
+    const userId = user?.id ? String(user.id) : null;
+
+    await this.worldModel.extractFromConversation(
+      userMessage, reply, userId, characterId, this.orchestratorProvider,
+    );
+  }
+
+  /**
+   * Background feedback signal detection — fire-and-forget after response.
+   */
+  async _detectFeedbackBackground(userMessage, reply, user, chatId) {
+    if (!this.feedbackEngine) return;
+    if (!userMessage || userMessage.trim().length < 2) return;
+
+    const characterId = this._activeCharacterId || 'default';
+    const userId = user?.id ? String(user.id) : null;
+
+    const signals = this.feedbackEngine.detectSignals(userMessage, reply || '', {
+      chatId, userId, characterId,
+    });
+
+    for (const signal of signals) {
+      this.feedbackEngine.processSignal(signal);
+    }
+  }
+
+  /**
+   * Check pending task outcomes — mark as used if user references them,
+   * or clean up expired entries (>5 min) as ignored.
+   */
+  _checkPendingOutcomes(chatId, userMessage) {
+    if (!this.feedbackEngine || this._pendingOutcomes.size === 0) return;
+
+    const now = Date.now();
+    const OBSERVATION_WINDOW_MS = 5 * 60 * 1000;
+
+    for (const [jobId, entry] of this._pendingOutcomes) {
+      const elapsed = now - entry.timestamp;
+
+      if (elapsed >= OBSERVATION_WINDOW_MS) {
+        // Expired — mark as ignored
+        const ignored = this.feedbackEngine.detectIgnored(jobId, elapsed);
+        if (ignored) {
+          this.feedbackEngine.processSignal({ ...ignored, context: { chatId: entry.chatId, userId: entry.userId, characterId: entry.characterId } });
+        }
+        this.feedbackEngine.recordTaskOutcome(jobId, { result_used: false, time_to_response: elapsed });
+        this._pendingOutcomes.delete(jobId);
+      } else if (entry.chatId === chatId) {
+        // User sent a message in the same chat — likely referencing the result
+        this.feedbackEngine.recordTaskOutcome(jobId, { result_used: true, time_to_response: elapsed });
+        this._pendingOutcomes.delete(jobId);
+      }
     }
   }
 }

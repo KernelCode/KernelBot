@@ -21,7 +21,7 @@ const DEFAULT_PERSONA_MD = readFileSync(join(__dirname, 'persona.md'), 'utf-8').
  * @param {string|null} personaMd — character persona markdown (overrides default)
  * @param {string|null} characterName — character name (overrides config.bot.name)
  */
-export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = null, selfData = null, memoriesBlock = null, sharesBlock = null, temporalContext = null, personaMd = null, characterName = null, forgeExpertise = null, forgeSkillsSummary = null) {
+export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = null, selfData = null, memoriesBlock = null, sharesBlock = null, temporalContext = null, personaMd = null, characterName = null, forgeExpertise = null, forgeSkillsSummary = null, worldContext = null, adjustmentsBlock = null, taskIntelligence = null, identityCtx = null) {
   const workerList = Object.entries(WORKER_TYPES)
     .map(([key, w]) => `  - **${key}**: ${w.emoji} ${w.description}`)
     .join('\n');
@@ -58,7 +58,7 @@ export function getOrchestratorPrompt(config, skillPrompt = null, userPersona = 
 ${timeBlock}
 
 ${activePersona}
-
+${identityCtx ? `\n${identityCtx}\n` : ''}
 ## Your Role
 You are the orchestrator. You understand what needs to be done and delegate efficiently.
 - For **simple chat, questions, or greetings** — respond directly. No dispatch needed.
@@ -225,6 +225,18 @@ Any named reference (project, tool, event) that isn't in the active conversation
 
   if (selfData) {
     prompt += `\n\n## My Self-Awareness\nThis is who you are — your evolving identity, goals, journey, and interests. This is YOUR inner world.\n\n${selfData}`;
+  }
+
+  if (worldContext) {
+    prompt += `\n\n## My Understanding of Your World\n${worldContext}`;
+  }
+
+  if (adjustmentsBlock) {
+    prompt += `\n\n## Learned Preferences\nThese are patterns you've observed about how this user likes to interact. Follow them naturally.\n\n${adjustmentsBlock}`;
+  }
+
+  if (taskIntelligence) {
+    prompt += `\n\n## Task Intelligence\n${taskIntelligence}`;
   }
 
   if (memoriesBlock) {

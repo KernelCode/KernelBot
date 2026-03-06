@@ -216,7 +216,7 @@ function _friendlyError(err) {
 }
 
 export function startBot(config, agent, conversationManager, jobManager, automationManager, lifeDeps = {}) {
-  let { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge, characterManager, dashboardHandle, dashboardDeps } = lifeDeps;
+  let { lifeEngine, memoryManager, journalManager, shareQueue, evolutionTracker, codebaseKnowledge, characterManager, dashboardHandle, dashboardDeps, consolidation, synthesisLoop, identityAwareness } = lifeDeps;
   const logger = getLogger();
   const bot = new TelegramBot(config.telegram.bot_token, {
     polling: {
@@ -269,6 +269,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       selfManager: charCtx.selfManager,
       basePath: charCtx.lifeBasePath,
       characterId: charCtx.characterId,
+      consolidation,
     });
 
     lifeEngine.wakeUp().then(() => {
@@ -306,6 +307,12 @@ export function startBot(config, agent, conversationManager, jobManager, automat
     { command: 'life', description: 'Inner life engine status and control' },
     { command: 'journal', description: 'View today\'s journal or a past date' },
     { command: 'memories', description: 'View recent memories or search' },
+    { command: 'senders', description: 'List known senders with trust levels' },
+    { command: 'whois', description: 'Show sender profile (/whois username)' },
+    { command: 'trust', description: 'Promote user to trusted (/trust username)' },
+    { command: 'restrict', description: 'Demote user to unknown (/restrict username)' },
+    { command: 'registerbot', description: 'Register AI agent (/registerbot bot purpose)' },
+    { command: 'privacy', description: 'Show knowledge scope stats' },
     { command: 'evolution', description: 'Self-evolution status, history, and lessons' },
     { command: 'linkedin', description: 'Link/unlink LinkedIn account' },
     { command: 'x', description: 'Link/unlink X (Twitter) account' },
@@ -899,7 +906,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         );
 
         try {
-          const charCtx = agent.switchCharacter(charId);
+          const charCtx = await agent.switchCharacter(charId);
 
           // Rebuild life engine with new character's scoped managers
           rebuildLifeEngine(charCtx);
@@ -1041,7 +1048,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         }
 
         characterManager.completeOnboarding(charId);
-        const charCtx = agent.loadCharacter(charId);
+        const charCtx = await agent.loadCharacter(charId);
         const character = characterManager.getCharacter(charId);
 
         // Start life engine for the selected character
@@ -1060,7 +1067,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         if (characterManager?.needsOnboarding) {
           // Complete onboarding with kernel as default, then build custom
           characterManager.completeOnboarding('kernel');
-          const kernelCtx = agent.loadCharacter('kernel');
+          const kernelCtx = await agent.loadCharacter('kernel');
           rebuildLifeEngine(kernelCtx);
         }
 
@@ -1438,7 +1445,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
             );
 
             // Auto-switch to the new character and rebuild life engine
-            const charCtx = agent.switchCharacter(profile.id);
+            const charCtx = await agent.switchCharacter(profile.id);
             rebuildLifeEngine(charCtx);
 
             await bot.sendMessage(
@@ -2035,7 +2042,7 @@ export function startBot(config, agent, conversationManager, jobManager, automat
 
       if (args.startsWith('about ')) {
         const query = args.slice('about '.length).trim();
-        const results = memoryManager.searchEpisodic(query, 10);
+        const results = await memoryManager.searchEpisodic(query, 10);
         if (results.length === 0) {
           await bot.sendMessage(chatId, `No memories matching "${query}".`);
           return;
@@ -2064,6 +2071,203 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       }
       lines.push('', '_Use `/memories about <topic>` to search._');
       await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // ── /synthesis command ──────────────────────────────────────────
+    if (text === '/synthesis' || text.startsWith('/synthesis ')) {
+      logger.info(`[Bot] /synthesis command from ${username} (${userId}) in chat ${chatId}`);
+      const args = text.slice('/synthesis'.length).trim();
+
+      if (!synthesisLoop) {
+        await bot.sendMessage(chatId, 'Synthesis loop is not available (requires brain\\_db).');
+        return;
+      }
+
+      if (args === 'trigger') {
+        await bot.sendMessage(chatId, '⚡ Running synthesis cycle...');
+        try {
+          const { action, measurement } = await synthesisLoop.runCycle();
+          if (lifeEngine) lifeEngine._recordSynthesisActivity(action.action);
+          await bot.sendMessage(chatId, `✅ *${action.action}* → ${measurement.quality} (${measurement.duration_ms}ms)\nReason: ${action.reason}`, { parse_mode: 'Markdown' });
+        } catch (err) {
+          await bot.sendMessage(chatId, `Failed: ${err.message}`);
+        }
+        return;
+      }
+
+      // Default: show status
+      const status = synthesisLoop.getStatus();
+      const lines = ['🔄 *Synthesis Loop*', ''];
+
+      // Weights
+      lines.push('*Action Weights:*');
+      const sortedWeights = Object.entries(status.weights).sort((a, b) => b[1].current_weight - a[1].current_weight);
+      for (const [action, w] of sortedWeights) {
+        const cooldownMin = Math.round(w.cooldown_ms / 60000);
+        const lastRun = w.last_run_at ? `${Math.round((Date.now() - w.last_run_at) / 60000)}m ago` : 'never';
+        lines.push(`  \`${action}\` — w=${w.current_weight.toFixed(2)} sr=${(w.success_rate * 100).toFixed(0)}% runs=${w.total_runs} cd=${cooldownMin}m last=${lastRun}`);
+      }
+
+      // Recent outcomes
+      if (status.recentOutcomes.length > 0) {
+        lines.push('', '*Recent Outcomes:*');
+        for (const o of status.recentOutcomes.slice(0, 5)) {
+          const ago = Math.round((Date.now() - o.created_at) / 60000);
+          const icon = o.result_quality === 'productive' ? '✅' : '❌';
+          lines.push(`  ${icon} ${o.action_type} (u=${o.urgency_score?.toFixed(2) || '?'}) ${o.duration_ms}ms — ${ago}m ago`);
+        }
+      }
+
+      // Last cycle
+      if (status.lastCycle) {
+        const ago = Math.round((Date.now() - status.lastCycle.timestamp) / 60000);
+        lines.push('', `*Last cycle:* ${status.lastCycle.action} → ${status.lastCycle.quality} (${ago}m ago)`);
+      }
+
+      lines.push('', '_Commands:_', '`/synthesis` — Status', '`/synthesis trigger` — Run one cycle');
+      await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // ── /senders command ──────────────────────────────────────────
+    if (text === '/senders') {
+      logger.info(`[Bot] /senders command from ${username} (${userId}) in chat ${chatId}`);
+      if (!identityAwareness) {
+        await bot.sendMessage(chatId, 'Identity awareness is not available (brain_db disabled).');
+        return;
+      }
+      const senders = identityAwareness.listSenders(20);
+      if (senders.length === 0) {
+        await bot.sendMessage(chatId, 'No known senders yet.');
+        return;
+      }
+      const lines = ['*Known Senders*', ''];
+      for (const s of senders) {
+        const icon = { owner: '👑', trusted: '🤝', known: '👤', unknown: '❓', agent: '🤖', system: '⚙️' }[s.sender_type] || '•';
+        const name = s.display_name || s.username || s.user_id;
+        const ago = Math.round((Date.now() - s.last_seen) / 60000);
+        const timeLabel = ago < 60 ? `${ago}m ago` : ago < 1440 ? `${Math.round(ago / 60)}h ago` : `${Math.round(ago / 1440)}d ago`;
+        lines.push(`${icon} *${name}* — ${s.sender_type} (trust: ${s.trust_level}) | ${s.message_count} msgs | ${timeLabel}`);
+      }
+      await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // ── /whois command ──────────────────────────────────────────
+    if (text.startsWith('/whois ')) {
+      logger.info(`[Bot] /whois command from ${username} (${userId}) in chat ${chatId}`);
+      if (!identityAwareness) {
+        await bot.sendMessage(chatId, 'Identity awareness is not available.');
+        return;
+      }
+      const target = text.slice('/whois '.length).trim().replace(/^@/, '');
+      // Try by username first, then by userId
+      const senders = identityAwareness.listSenders(100);
+      const match = senders.find(s => s.username === target || s.user_id === target || (s.display_name && s.display_name.toLowerCase() === target.toLowerCase()));
+      if (!match) {
+        await bot.sendMessage(chatId, `No sender found matching "${target}".`);
+        return;
+      }
+      const lines = [
+        `*Sender Profile: ${match.display_name || match.username || match.user_id}*`,
+        '',
+        `*User ID:* \`${match.user_id}\``,
+        `*Username:* ${match.username || 'N/A'}`,
+        `*Type:* ${match.sender_type}`,
+        `*Trust Level:* ${match.trust_level}`,
+        `*Bot:* ${match.is_bot ? 'Yes' : 'No'}`,
+        `*Messages:* ${match.message_count}`,
+        `*Quality:* ${(match.interaction_quality || 0).toFixed(2)}`,
+        `*First Seen:* ${new Date(match.first_seen).toLocaleString()}`,
+        `*Last Seen:* ${new Date(match.last_seen).toLocaleString()}`,
+      ];
+      if (match.org_role) lines.push(`*Role:* ${match.org_role}`);
+      if (match.team) lines.push(`*Team:* ${match.team}`);
+      if (match.agent_purpose) lines.push(`*Agent Purpose:* ${match.agent_purpose}`);
+      if (match.agent_owner) lines.push(`*Agent Owner:* ${match.agent_owner}`);
+      await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // ── /trust command ──────────────────────────────────────────
+    if (text.startsWith('/trust ')) {
+      logger.info(`[Bot] /trust command from ${username} (${userId}) in chat ${chatId}`);
+      if (!identityAwareness) {
+        await bot.sendMessage(chatId, 'Identity awareness is not available.');
+        return;
+      }
+      const target = text.slice('/trust '.length).trim().replace(/^@/, '');
+      const senders = identityAwareness.listSenders(100);
+      const match = senders.find(s => s.username === target || s.user_id === target);
+      if (!match) {
+        await bot.sendMessage(chatId, `No sender found matching "${target}".`);
+        return;
+      }
+      identityAwareness.setTrustLevel(match.user_id, 'trusted', 'manual_promote');
+      await bot.sendMessage(chatId, `🤝 *${match.display_name || match.username || match.user_id}* promoted to *trusted*.`, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // ── /restrict command ──────────────────────────────────────
+    if (text.startsWith('/restrict ')) {
+      logger.info(`[Bot] /restrict command from ${username} (${userId}) in chat ${chatId}`);
+      if (!identityAwareness) {
+        await bot.sendMessage(chatId, 'Identity awareness is not available.');
+        return;
+      }
+      const target = text.slice('/restrict '.length).trim().replace(/^@/, '');
+      const senders = identityAwareness.listSenders(100);
+      const match = senders.find(s => s.username === target || s.user_id === target);
+      if (!match) {
+        await bot.sendMessage(chatId, `No sender found matching "${target}".`);
+        return;
+      }
+      identityAwareness.setTrustLevel(match.user_id, 'unknown', 'manual_restrict');
+      await bot.sendMessage(chatId, `❓ *${match.display_name || match.username || match.user_id}* restricted to *unknown*.`, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // ── /registerbot command ──────────────────────────────────────
+    if (text.startsWith('/registerbot ')) {
+      logger.info(`[Bot] /registerbot command from ${username} (${userId}) in chat ${chatId}`);
+      if (!identityAwareness) {
+        await bot.sendMessage(chatId, 'Identity awareness is not available.');
+        return;
+      }
+      const parts = text.slice('/registerbot '.length).trim().split(/\s+/);
+      const botTarget = parts[0]?.replace(/^@/, '');
+      const purpose = parts.slice(1).join(' ') || 'general';
+      if (!botTarget) {
+        await bot.sendMessage(chatId, 'Usage: `/registerbot <bot_username> <purpose>`', { parse_mode: 'Markdown' });
+        return;
+      }
+      identityAwareness.registerAgent(botTarget, purpose, String(userId));
+      await bot.sendMessage(chatId, `🤖 Registered agent *${botTarget}* — purpose: ${purpose}`, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // ── /privacy command ──────────────────────────────────────────
+    if (text === '/privacy') {
+      logger.info(`[Bot] /privacy command from ${username} (${userId}) in chat ${chatId}`);
+      if (!identityAwareness) {
+        await bot.sendMessage(chatId, 'Identity awareness is not available.');
+        return;
+      }
+      try {
+        const scopeStats = identityAwareness._db.all(`
+          SELECT COALESCE(scope, 'unscoped') as scope_type, COUNT(*) as count
+          FROM memories GROUP BY scope_type ORDER BY count DESC
+        `);
+        const lines = ['*Knowledge Scope Stats*', ''];
+        for (const row of scopeStats) {
+          lines.push(`• *${row.scope_type}*: ${row.count} memories`);
+        }
+        if (scopeStats.length === 0) lines.push('No memories yet.');
+        await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+      } catch (err) {
+        await bot.sendMessage(chatId, `Failed to get stats: ${err.message}`);
+      }
       return;
     }
 
@@ -2418,6 +2622,13 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         '/life — Inner life engine status & control',
         '/journal — View today\'s journal or a past date',
         '/memories — View recent memories or search',
+        '/senders — List known senders with trust levels',
+        '/whois <user> — Show sender profile',
+        '/trust <user> — Promote to trusted',
+        '/restrict <user> — Demote to unknown',
+        '/registerbot <bot> <purpose> — Register AI agent',
+        '/privacy — Show knowledge scope stats',
+        '/synthesis — Synthesis loop status & manual trigger',
         '/evolution — Self-evolution status, history, lessons',
         '/dashboard — Start/stop the monitoring dashboard',
         '/linkedin — Link/unlink your LinkedIn account',
@@ -2585,10 +2796,12 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         const sendReaction = createSendReaction(bot);
 
         logger.debug(`[Bot] Sending to orchestrator: chat ${chatId}, text="${mergedText.slice(0, 80)}"`);
+        const telegramUser = msg.from;
+        const chatInfo = { id: msg.chat.id, type: msg.chat.type, title: msg.chat.title };
         const reply = await agent.processMessage(chatId, mergedText, {
           id: userId,
           username,
-        }, onUpdate, sendPhoto, { sendReaction, messageId: msg.message_id, imageAttachment });
+        }, onUpdate, sendPhoto, { sendReaction, messageId: msg.message_id, imageAttachment, telegramUser, chatInfo });
 
         clearInterval(typingInterval);
 
