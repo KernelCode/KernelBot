@@ -35,7 +35,6 @@
     "@google/genai": "^1.42.0",
     "@octokit/rest": "^22.0.1",
     "axios": "^1.13.5",
-    "better-sqlite3": "^12.6.2",
     "boxen": "^8.0.1",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",

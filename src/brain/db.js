@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { getLogger } from '../utils/logger.js';
@@ -7,7 +8,7 @@ const SCHEMA_VERSION = 8;
 
 /**
  * BrainDB — unified SQLite database for all KERNEL data.
- * Wraps better-sqlite3 + sqlite-vec for vector search.
+ * Uses bun:sqlite (built-in, zero native compilation needed).
  */
 export class BrainDB {
   constructor({ dbPath, config }) {
@@ -25,11 +26,9 @@ export class BrainDB {
 
     mkdirSync(dirname(this._dbPath), { recursive: true });
 
-    // Dynamic import — zero overhead when brain_db disabled
-    const { default: Database } = await import('better-sqlite3');
-    this._db = new Database(this._dbPath);
-    this._db.pragma('journal_mode = WAL');
-    this._db.pragma('foreign_keys = ON');
+    this._db = new Database(this._dbPath, { strict: true });
+    this._db.run('PRAGMA journal_mode = WAL');
+    this._db.run('PRAGMA foreign_keys = ON');
 
     // Try to load sqlite-vec
     try {
@@ -595,13 +594,13 @@ export class BrainDB {
     }
 
     // Run migrations and record schema version
-    const existing = this._db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
+    const existing = this._db.query('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
     if (!existing) {
-      this._db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
+      this._db.query('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
     } else if (existing.version < SCHEMA_VERSION) {
       if (existing.version < 7) this._runV7Migration();
       // v8: new vector tables are IF NOT EXISTS — no-op migration needed
-      this._db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
+      this._db.query('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
     }
   }
 
@@ -621,15 +620,15 @@ export class BrainDB {
   // ── SQL Helpers ────────────────────────────────────────────────
 
   run(sql, params = {}) {
-    return this._db.prepare(sql).run(params);
+    return this._db.query(sql).run(params);
   }
 
   get(sql, params = {}) {
-    return this._db.prepare(sql).get(params);
+    return this._db.query(sql).get(params);
   }
 
   all(sql, params = {}) {
-    return this._db.prepare(sql).all(params);
+    return this._db.query(sql).all(params);
   }
 
   transaction(fn) {
@@ -666,7 +665,7 @@ export class BrainDB {
     const idCol = this._vecIdCol(table) || 'memory_id';
     const buf = Buffer.from(queryVec.buffer);
 
-    const rows = this._db.prepare(`
+    const rows = this._db.query(`
       SELECT ${idCol} as id, distance
       FROM ${table}
       WHERE embedding MATCH ?
@@ -692,7 +691,7 @@ export class BrainDB {
         const vec = await this.embed(text);
         if (vec) {
           const buf = Buffer.from(vec.buffer);
-          this.run(`INSERT OR REPLACE INTO ${table} (${idCol}, embedding) VALUES (:id, :embedding)`, { id, embedding: buf });
+          this.run(`INSERT OR REPLACE INTO ${table} (${idCol}, embedding) VALUES ($id, $embedding)`, { id, embedding: buf });
         }
       } catch (err) {
         getLogger().warn(`[BrainDB] embedBackground ${table}/${id}: ${err.message}`);
@@ -736,7 +735,7 @@ export class BrainDB {
           if (vec) {
             const idCol = this._vecIdCol(table);
             const buf = Buffer.from(vec.buffer);
-            this.run(`INSERT OR REPLACE INTO ${table} (${idCol}, embedding) VALUES (:id, :embedding)`, { id: row.id, embedding: buf });
+            this.run(`INSERT OR REPLACE INTO ${table} (${idCol}, embedding) VALUES ($id, $embedding)`, { id: row.id, embedding: buf });
             count++;
           }
         } catch (err) {
