@@ -6,8 +6,6 @@ import { genId } from '../utils/ids.js';
 import { todayDateStr } from '../utils/date.js';
 
 const LIFE_DIR = join(homedir(), '.kernelbot', 'life');
-const EPISODIC_DIR = join(LIFE_DIR, 'memories', 'episodic');
-const SEMANTIC_FILE = join(LIFE_DIR, 'memories', 'semantic', 'topics.json');
 
 export class MemoryManager {
   constructor(basePath = null) {
