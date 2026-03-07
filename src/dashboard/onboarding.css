@@ -85,6 +85,12 @@
   border: 1px solid rgba(57, 255, 20, 0.3);
 }
 
+.phase-badge.not_started {
+  background: rgba(128, 128, 128, 0.15);
+  color: #888;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+}
+
 /* ── Detail panels ──────────────────────────────────── */
 
 .detail-row {

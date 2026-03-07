@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KERNEL // User Onboarding</title>
+<title>KERNEL // Chat Interface</title>
 <link rel="stylesheet" href="shared.css">
-<link rel="stylesheet" href="onboarding.css">
+<link rel="stylesheet" href="chat.css">
 </head>
 <body>
 
@@ -31,7 +31,7 @@
       <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v4M7.5 17.2l3-4.2M16.5 17.2l-3-4.2"/></svg>
       <span class="nav-label">AGENTS</span>
     </a>
-    <a class="nav-item active" href="/onboarding.html" title="Onboarding">
+    <a class="nav-item" href="/onboarding.html" title="Onboarding">
       <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
       <span class="nav-label">ONBOARD</span>
     </a>
@@ -39,7 +39,7 @@
       <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
       <span class="nav-label">DB</span>
     </a>
-    <a class="nav-item" href="/chat.html" title="Chat">
+    <a class="nav-item active" href="/chat.html" title="Chat">
       <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       <span class="nav-label">CHAT</span>
     </a>
@@ -67,9 +67,9 @@
     <span class="top-bar-nav">
       <a class="top-bar-nav-item" href="/">DASHBOARD</a>
       <a class="top-bar-nav-item" href="/agents.html">AGENTS</a>
-      <a class="top-bar-nav-item active" href="/onboarding.html">ONBOARDING</a>
+      <a class="top-bar-nav-item" href="/onboarding.html">ONBOARDING</a>
       <a class="top-bar-nav-item" href="/database.html">DATABASE</a>
-      <a class="top-bar-nav-item" href="/chat.html">CHAT</a>
+      <a class="top-bar-nav-item active" href="/chat.html">CHAT</a>
     </span>
   </div>
   <div class="top-bar-right">
@@ -82,97 +82,38 @@
   </div>
 </header>
 
-<!-- ═══════ RIGHT BAR ═══════ -->
-<aside class="right-bar">
-  <div class="right-stat" title="Total Users">
-    <span class="r-val zero" id="rb-total">0</span>
-    <span class="r-lbl">USERS</span>
-  </div>
-  <div class="right-divider"></div>
-  <div class="right-stat" title="Onboarded">
-    <span class="r-val zero" id="rb-complete">0</span>
-    <span class="r-lbl">DONE</span>
-  </div>
-  <div class="right-divider"></div>
-  <div class="right-stat" title="In Progress">
-    <span class="r-val zero" id="rb-progress">0</span>
-    <span class="r-lbl">ACTIVE</span>
-  </div>
-  <div class="right-divider"></div>
-  <div class="right-stat" title="Skills Selected">
-    <span class="r-val zero" id="rb-skills">0</span>
-    <span class="r-lbl">SKILLS</span>
-  </div>
-  <div class="right-bar-clock" id="rb-clock">--:--</div>
-</aside>
+<!-- ═══════ MAIN (chat layout) ═══════ -->
+<div class="main chat-main">
 
-<!-- ═══════ MAIN ═══════ -->
-<div class="main">
-
-  <!-- Hero bar -->
-  <div class="hero-bar">
-    <canvas id="waveform-canvas"></canvas>
-    <div class="hero-pulse">
-      <div class="pulse-stat">
-        <span class="pulse-label">TOTAL USERS</span>
-        <span class="pulse-val" id="pulse-total">0</span>
+  <!-- Chat messages area -->
+  <div class="chat-messages" id="chat-messages">
+    <div class="chat-welcome">
+      <div class="chat-welcome-icon">
+        <svg viewBox="0 0 32 32" width="48" height="48">
+          <path fill="rgba(57,255,20,0.35)" d="M10,2h10v2h-10z M8,4h2v2h-2z M6,6h2v4h-2z M4,10h2v8h-2z M6,18h2v2h-2z M8,20h2v2h-2z M10,22h14v2h-14z M24,18h2v4h-2z M26,8h2v10h-2z M24,6h2v2h-2z"/>
+          <path fill="rgba(57,255,20,0.6)" d="M12,8h8v2h-8z M10,10h2v10h-2z M20,10h2v6h-2z M18,18h2v2h-2z M12,20h6v2h-6z"/>
+          <path fill="#39ff14" d="M14,14h4v2h-2v2h-2z"/>
+        </svg>
       </div>
-      <div class="pulse-stat">
-        <span class="pulse-label">ONBOARDED</span>
-        <span class="pulse-val" id="pulse-complete">0</span>
-      </div>
-      <div class="pulse-stat">
-        <span class="pulse-label">IN PROGRESS</span>
-        <span class="pulse-val idle" id="pulse-progress">0</span>
-      </div>
-      <div class="pulse-stat">
-        <span class="pulse-label">AVG SKILLS</span>
-        <span class="pulse-val" id="pulse-avg-skills">--</span>
-      </div>
+      <div class="chat-welcome-title">KERNEL CHAT INTERFACE</div>
+      <div class="chat-welcome-sub">Direct model communication channel. Messages are processed by the orchestrator agent.</div>
     </div>
   </div>
 
-  <!-- Content grid -->
-  <div class="content">
-
-    <!-- USER TABLE -->
-    <div class="panel span-12" id="p-users">
-      <div class="sweep"></div>
-      <div class="panel-header"><span class="dot"></span>USER.ONBOARDING<span class="tag" id="users-tag">ALL USERS</span></div>
-      <div class="panel-tabs" id="users-tabs">
-        <span class="panel-tab active" data-tab="all">ALL</span>
-        <span class="panel-tab" data-tab="complete">COMPLETE</span>
-        <span class="panel-tab" data-tab="active">IN PROGRESS</span>
-        <span class="panel-tab" data-tab="pending">NOT STARTED</span>
-      </div>
-      <div class="panel-body" id="users-body"></div>
+  <!-- Chat input area -->
+  <div class="chat-input-area">
+    <div class="chat-input-wrap">
+      <textarea class="chat-input" id="chat-input" placeholder="Type a message..." rows="1"></textarea>
+      <button class="chat-send" id="chat-send" title="Send">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
     </div>
-
-    <!-- USER DETAIL -->
-    <div class="panel span-6" id="p-detail" style="display:none">
-      <div class="sweep"></div>
-      <div class="panel-header"><span class="dot"></span>USER.PROFILE<span class="tag" id="detail-tag">DETAILS</span></div>
-      <div class="panel-body" id="detail-body"></div>
-    </div>
-
-    <!-- TRAINING DETAIL -->
-    <div class="panel span-6" id="p-training" style="display:none">
-      <div class="sweep"></div>
-      <div class="panel-header"><span class="dot"></span>TRAINING.CONTEXT<span class="tag">CUSTOM</span></div>
-      <div class="panel-body" id="training-body"></div>
-    </div>
-
+    <div class="chat-status" id="chat-status"></div>
   </div>
 
-</div>
-
-<!-- Scrolling log ticker (sticky bottom) -->
-<div class="log-ticker" id="log-ticker">
-  <div class="ticker-label"><span class="dot-pulse"></span>LIVE</div>
-  <div class="ticker-track" id="ticker-track"></div>
 </div>
 
 <script src="shared.js"></script>
-<script src="onboarding.js"></script>
+<script src="chat.js"></script>
 </body>
 </html>

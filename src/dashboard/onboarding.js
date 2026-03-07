@@ -50,12 +50,12 @@
     const users = data.users;
     const total = users.length;
     const complete = users.filter(u => u.phase === 'complete').length;
-    const inProgress = users.filter(u => u.phase !== 'complete').length;
+    const inProgress = users.filter(u => u.phase && u.phase !== 'complete').length;
+    const notStarted = users.filter(u => !u.phase).length;
     const totalSkills = users.reduce((sum, u) => {
-      const skills = u.selected_skills ? JSON.parse(u.selected_skills || '[]') : [];
-      return sum + skills.length;
+      try { return sum + (u.selected_skills ? JSON.parse(u.selected_skills).length : 0); } catch { return sum; }
     }, 0);
-    const avgSkills = total > 0 ? (totalSkills / total).toFixed(1) : '--';
+    const avgSkills = complete > 0 ? (totalSkills / complete).toFixed(1) : '--';
 
     // Hero pulse
     const pt = $('pulse-total'); if (pt) pt.textContent = total;
@@ -66,20 +66,21 @@
     // Right bar
     const rt = $('rb-total'); if (rt) { rt.textContent = total; rt.classList.toggle('zero', total === 0); }
     const rc = $('rb-complete'); if (rc) { rc.textContent = complete; rc.classList.toggle('zero', complete === 0); }
-    const rp = $('rb-progress'); if (rp) { rp.textContent = inProgress; rp.classList.toggle('zero', inProgress === 0); }
+    const rp = $('rb-progress'); if (rp) { rp.textContent = inProgress + notStarted; rp.classList.toggle('zero', (inProgress + notStarted) === 0); }
     const rs = $('rb-skills'); if (rs) { rs.textContent = totalSkills; rs.classList.toggle('zero', totalSkills === 0); }
   }
 
   function renderTable(data) {
     const body = $('users-body');
     if (!data || !data.users || !data.users.length) {
-      body.innerHTML = '<div class="ob-empty">NO ONBOARDING DATA</div>';
+      body.innerHTML = '<div class="ob-empty">NO USERS FOUND</div>';
       return;
     }
 
     let users = data.users;
     if (activeTab === 'complete') users = users.filter(u => u.phase === 'complete');
-    else if (activeTab === 'active') users = users.filter(u => u.phase !== 'complete');
+    else if (activeTab === 'active') users = users.filter(u => u.phase && u.phase !== 'complete');
+    else if (activeTab === 'pending') users = users.filter(u => !u.phase);
 
     const tag = $('users-tag');
     if (tag) tag.textContent = activeTab.toUpperCase() + ' // ' + users.length;
@@ -90,23 +91,26 @@
     }
 
     let h = '<table class="ob-table"><thead><tr>';
-    h += '<th>User ID</th><th>Name</th><th>Phase</th><th>Occupation</th><th>Location</th><th>Skills</th><th>Started</th><th>Completed</th>';
+    h += '<th>User ID</th><th>Username</th><th>Name</th><th>Status</th><th>Trust</th><th>Messages</th><th>Skills</th><th>First Seen</th><th>Last Seen</th>';
     h += '</tr></thead><tbody>';
 
     for (const u of users) {
-      const profile = u.profile_data ? (typeof u.profile_data === 'string' ? JSON.parse(u.profile_data) : u.profile_data) : {};
-      const skills = u.selected_skills ? (typeof u.selected_skills === 'string' ? JSON.parse(u.selected_skills) : u.selected_skills) : [];
+      const profile = u.profile_data ? safeJSON(u.profile_data) : {};
+      const skills = u.selected_skills ? safeJSON(u.selected_skills) : [];
       const sel = selectedUserId === u.user_id ? ' selected' : '';
+      const phase = u.phase || 'not_started';
+      const displayName = u.display_name || profile.name || '--';
 
       h += `<tr class="${sel}" data-uid="${esc(u.user_id)}">`;
       h += `<td>${esc(u.user_id)}</td>`;
-      h += `<td>${esc(profile.name || '--')}</td>`;
-      h += `<td><span class="phase-badge ${esc(u.phase)}">${esc(u.phase)}</span></td>`;
-      h += `<td>${esc(profile.occupation || '--')}</td>`;
-      h += `<td>${esc(profile.location || '--')}</td>`;
-      h += `<td>${skills.length}</td>`;
-      h += `<td>${u.started_at ? timeAgo(u.started_at) : '--'}</td>`;
-      h += `<td>${u.completed_at ? timeAgo(u.completed_at) : '--'}</td>`;
+      h += `<td>${esc(u.username || '--')}</td>`;
+      h += `<td>${esc(displayName)}</td>`;
+      h += `<td><span class="phase-badge ${esc(phase)}">${esc(phase.replace('_', ' '))}</span></td>`;
+      h += `<td>${esc(u.sender_type || '--')}</td>`;
+      h += `<td>${u.message_count || 0}</td>`;
+      h += `<td>${Array.isArray(skills) ? skills.length : 0}</td>`;
+      h += `<td>${u.first_seen ? timeAgo(u.first_seen) : '--'}</td>`;
+      h += `<td>${u.last_seen ? timeAgo(u.last_seen) : '--'}</td>`;
       h += '</tr>';
     }
 
@@ -133,34 +137,40 @@
     detailPanel.style.display = '';
     trainingPanel.style.display = '';
 
-    const profile = user.profile_data ? (typeof user.profile_data === 'string' ? JSON.parse(user.profile_data) : user.profile_data) : {};
-    const skills = user.selected_skills ? (typeof user.selected_skills === 'string' ? JSON.parse(user.selected_skills) : user.selected_skills) : [];
-    const training = user.training_notes ? (typeof user.training_notes === 'string' ? JSON.parse(user.training_notes) : user.training_notes) : {};
+    const profile = user.profile_data ? safeJSON(user.profile_data) : {};
+    const skills = user.selected_skills ? safeJSON(user.selected_skills) : [];
+    const training = user.training_notes ? safeJSON(user.training_notes) : {};
 
     const tag = $('detail-tag');
-    if (tag) tag.textContent = profile.name || userId;
+    if (tag) tag.textContent = user.display_name || profile.name || user.username || userId;
 
     // Profile panel
     let h = '';
     const fields = [
       ['User ID', userId],
+      ['Username', user.username],
+      ['Display Name', user.display_name],
+      ['Trust Level', user.sender_type],
+      ['Messages', user.message_count],
+      ['Org Role', user.org_role || profile.role],
+      ['Team', user.team || profile.team_context],
       ['Name', profile.name],
       ['Location', profile.location],
       ['Timezone', profile.timezone],
       ['Age', profile.age],
       ['Occupation', profile.occupation],
       ['Company', profile.company],
-      ['Role', profile.role],
-      ['Team', profile.team_context],
       ['Interests', profile.interests],
       ['Tools', profile.tools],
-      ['Phase', user.phase],
-      ['Started', user.started_at ? new Date(user.started_at).toLocaleString() : '--'],
-      ['Completed', user.completed_at ? new Date(user.completed_at).toLocaleString() : '--'],
+      ['Onboarding', user.phase || 'not started'],
+      ['First Seen', user.first_seen ? new Date(user.first_seen).toLocaleString() : null],
+      ['Last Seen', user.last_seen ? new Date(user.last_seen).toLocaleString() : null],
+      ['Onboarding Started', user.started_at ? new Date(user.started_at).toLocaleString() : null],
+      ['Onboarding Done', user.completed_at ? new Date(user.completed_at).toLocaleString() : null],
     ];
 
     for (const [k, v] of fields) {
-      if (!v) continue;
+      if (v === null || v === undefined) continue;
       h += `<div class="detail-row"><span class="dk">${esc(k)}</span><span class="dv">${esc(String(v))}</span></div>`;
     }
 
@@ -187,6 +197,12 @@
     }
 
     $('training-body').innerHTML = th || '<div class="ob-empty">NO TRAINING DATA</div>';
+  }
+
+  function safeJSON(val) {
+    if (!val) return {};
+    if (typeof val === 'object') return val;
+    try { return JSON.parse(val); } catch { return {}; }
   }
 
 })();

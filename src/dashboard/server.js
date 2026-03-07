@@ -37,6 +37,7 @@ export function startDashboard(deps) {
     evolutionTracker,
     selfManager,
     brainDB,
+    agent,
   } = deps;
 
   const logger = getLogger();
@@ -417,10 +418,69 @@ export function startDashboard(deps) {
     } catch { return []; }
   }
 
+  function getBrainDBData() {
+    if (!brainDB?.isOpen) return { tables: [], error: 'BrainDB not open' };
+    try {
+      const tables = brainDB.all("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
+      const result = [];
+      for (const t of tables) {
+        const countRow = brainDB.get(`SELECT COUNT(*) as count FROM "${t.name}"`);
+        result.push({ name: t.name, count: countRow?.count || 0 });
+      }
+      return { tables: result };
+    } catch (err) { return { tables: [], error: err.message }; }
+  }
+
+  function getBrainDBTableData(tableName, limit = 50, offset = 0) {
+    if (!brainDB?.isOpen) return { rows: [], columns: [], total: 0 };
+    // Whitelist table names to prevent SQL injection
+    const validTables = brainDB.all("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").map(r => r.name);
+    if (!validTables.includes(tableName)) return { rows: [], columns: [], total: 0, error: 'Invalid table' };
+    try {
+      const countRow = brainDB.get(`SELECT COUNT(*) as count FROM "${tableName}"`);
+      const total = countRow?.count || 0;
+      const rows = brainDB.all(`SELECT * FROM "${tableName}" LIMIT ${Number(limit)} OFFSET ${Number(offset)}`);
+      const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+      // Truncate long values for display
+      const truncated = rows.map(r => {
+        const row = {};
+        for (const [k, v] of Object.entries(r)) {
+          if (typeof v === 'string' && v.length > 200) row[k] = v.slice(0, 200) + '...';
+          else row[k] = v;
+        }
+        return row;
+      });
+      return { rows: truncated, columns, total };
+    } catch (err) { return { rows: [], columns: [], total: 0, error: err.message }; }
+  }
+
   function getOnboardingData() {
     if (!brainDB?.isOpen) return { users: [] };
     try {
-      const users = brainDB.all('SELECT * FROM user_onboarding ORDER BY updated_at DESC');
+      // Join known_senders with user_onboarding to show ALL users + their onboarding status
+      const users = brainDB.all(`
+        SELECT
+          ks.user_id,
+          ks.username,
+          ks.display_name,
+          ks.sender_type,
+          ks.trust_level,
+          ks.org_role,
+          ks.team,
+          ks.first_seen,
+          ks.last_seen,
+          ks.message_count,
+          uo.phase,
+          uo.profile_data,
+          uo.selected_skills,
+          uo.training_notes,
+          uo.started_at,
+          uo.updated_at AS onboarding_updated_at,
+          uo.completed_at
+        FROM known_senders ks
+        LEFT JOIN user_onboarding uo ON ks.user_id = uo.user_id
+        ORDER BY ks.last_seen DESC
+      `);
       return { users };
     } catch { return { users: [] }; }
   }
@@ -489,7 +549,7 @@ export function startDashboard(deps) {
     if (req.method === 'OPTIONS') {
       const corsOrigin = getCorOrigin(req);
       const headers = {
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       };
       if (corsOrigin) headers['Access-Control-Allow-Origin'] = corsOrigin;
@@ -513,6 +573,18 @@ export function startDashboard(deps) {
     // Serve onboarding page
     if (path === '/onboarding' || path === '/onboarding.html') {
       serveStaticFile(res, 'onboarding.html');
+      return;
+    }
+
+    // Serve database explorer page
+    if (path === '/database' || path === '/database.html') {
+      serveStaticFile(res, 'database.html');
+      return;
+    }
+
+    // Serve chat page
+    if (path === '/chat' || path === '/chat.html') {
+      serveStaticFile(res, 'chat.html');
       return;
     }
 
@@ -554,6 +626,7 @@ export function startDashboard(deps) {
       '/api/capabilities': getCapabilitiesData,
       '/api/knowledge': getKnowledgeData,
       '/api/onboarding': getOnboardingData,
+      '/api/braindb': getBrainDBData,
     };
 
     if (routes[path]) {
@@ -563,6 +636,67 @@ export function startDashboard(deps) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       }
+      return;
+    }
+
+    // Dynamic API: BrainDB table data
+    if (path === '/api/braindb/table') {
+      try {
+        const tableName = url.searchParams.get('name');
+        const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+        const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+        if (!tableName) {
+          sendJson(res, { error: 'Missing table name' }, req);
+        } else {
+          sendJson(res, getBrainDBTableData(tableName, limit, offset), req);
+        }
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    // Dynamic API: Chat with the model
+    if (path === '/api/chat' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { message, history } = JSON.parse(body);
+          if (!message) {
+            sendJson(res, { error: 'Missing message' }, req);
+            return;
+          }
+          if (!agent?._provider) {
+            sendJson(res, { error: 'Agent provider not available' }, req);
+            return;
+          }
+
+          // Build messages from history
+          const msgs = [];
+          if (Array.isArray(history)) {
+            for (const h of history.slice(-20)) {
+              if (h.role === 'user' || h.role === 'assistant') {
+                msgs.push({ role: h.role, content: h.content });
+              }
+            }
+          }
+          // Add the new message
+          msgs.push({ role: 'user', content: message });
+
+          const result = await agent._provider.chat({
+            system: 'You are KERNEL, an AI assistant. Respond helpfully and concisely. Use markdown formatting when appropriate.',
+            messages: msgs,
+            max_tokens: agent._config?.brain?.max_tokens || 2048,
+            temperature: agent._config?.brain?.temperature ?? 0.7,
+          });
+
+          sendJson(res, { reply: result.text || '' }, req);
+        } catch (err) {
+          sendJson(res, { error: err.message }, req);
+        }
+      });
       return;
     }
 

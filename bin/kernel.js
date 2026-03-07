@@ -408,6 +408,7 @@ async function startBotFlow(config) {
     evolutionTracker: charCtx.evolutionTracker,
     selfManager: charCtx.selfManager,
     brainDB,
+    agent,
   };
 
   let dashboardHandle = null;

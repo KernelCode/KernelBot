@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KERNEL // Agent Topology</title>
+<title>KERNEL // Database Explorer</title>
 <link rel="stylesheet" href="shared.css">
-<link rel="stylesheet" href="agents.css">
+<link rel="stylesheet" href="database.css">
 </head>
 <body>
 
@@ -27,7 +27,7 @@
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
       <span class="nav-label">DASH</span>
     </a>
-    <a class="nav-item active" href="/agents.html" title="Agents">
+    <a class="nav-item" href="/agents.html" title="Agents">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v4M7.5 17.2l3-4.2M16.5 17.2l-3-4.2"/></svg>
       <span class="nav-label">AGENTS</span>
     </a>
@@ -35,7 +35,7 @@
       <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
       <span class="nav-label">ONBOARD</span>
     </a>
-    <a class="nav-item" href="/database.html" title="Database">
+    <a class="nav-item active" href="/database.html" title="Database">
       <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
       <span class="nav-label">DB</span>
     </a>
@@ -66,9 +66,9 @@
     <span class="top-bar-sep">//</span>
     <span class="top-bar-nav">
       <a class="top-bar-nav-item" href="/">DASHBOARD</a>
-      <a class="top-bar-nav-item active" href="/agents.html">AGENTS</a>
+      <a class="top-bar-nav-item" href="/agents.html">AGENTS</a>
       <a class="top-bar-nav-item" href="/onboarding.html">ONBOARDING</a>
-      <a class="top-bar-nav-item" href="/database.html">DATABASE</a>
+      <a class="top-bar-nav-item active" href="/database.html">DATABASE</a>
       <a class="top-bar-nav-item" href="/chat.html">CHAT</a>
     </span>
   </div>
@@ -84,29 +84,14 @@
 
 <!-- ═══════ RIGHT BAR ═══════ -->
 <aside class="right-bar">
-  <div class="right-stat" title="Running Jobs">
-    <span class="r-val zero" id="rb-jobs">0</span>
-    <span class="r-lbl">RUNNING</span>
+  <div class="right-stat" title="Total Tables">
+    <span class="r-val zero" id="rb-tables">0</span>
+    <span class="r-lbl">TABLES</span>
   </div>
   <div class="right-divider"></div>
-  <div class="right-stat" title="Total Jobs">
-    <span class="r-val zero" id="rb-total-jobs">0</span>
-    <span class="r-lbl">TOTAL</span>
-  </div>
-  <div class="right-divider"></div>
-  <div class="right-stat" title="Completed">
-    <span class="r-val zero" id="rb-completed">0</span>
-    <span class="r-lbl">DONE</span>
-  </div>
-  <div class="right-divider"></div>
-  <div class="right-stat" title="Failed">
-    <span class="r-val zero" id="rb-failed">0</span>
-    <span class="r-lbl">FAIL</span>
-  </div>
-  <div class="right-divider"></div>
-  <div class="right-stat" title="Worker Types">
-    <span class="r-val" id="rb-workers">6</span>
-    <span class="r-lbl">TYPES</span>
+  <div class="right-stat" title="Total Rows">
+    <span class="r-val zero" id="rb-rows">0</span>
+    <span class="r-lbl">ROWS</span>
   </div>
   <div class="right-bar-clock" id="rb-clock">--:--</div>
 </aside>
@@ -119,72 +104,56 @@
     <canvas id="waveform-canvas"></canvas>
     <div class="hero-pulse">
       <div class="pulse-stat">
-        <span class="pulse-label">ORCHESTRATOR</span>
-        <span class="pulse-val" id="pulse-orch">--</span>
+        <span class="pulse-label">TABLES</span>
+        <span class="pulse-val" id="pulse-tables">0</span>
       </div>
       <div class="pulse-stat">
-        <span class="pulse-label">WORKER BRAIN</span>
-        <span class="pulse-val" id="pulse-brain">--</span>
+        <span class="pulse-label">TOTAL ROWS</span>
+        <span class="pulse-val" id="pulse-rows">0</span>
       </div>
       <div class="pulse-stat">
-        <span class="pulse-label">ACTIVE JOBS</span>
-        <span class="pulse-val idle" id="pulse-jobs">0</span>
-      </div>
-      <div class="pulse-stat">
-        <span class="pulse-label">WORKER TYPES</span>
-        <span class="pulse-val" id="pulse-workers">6</span>
+        <span class="pulse-label">STATUS</span>
+        <span class="pulse-val" id="pulse-status">CONNECTED</span>
       </div>
     </div>
   </div>
 
-  <!-- Stats summary bar -->
-  <div class="agents-stats-bar" id="agents-stats-bar">
-    <div class="agents-stat"><span class="agents-stat-val" id="stat-running">0</span><span class="agents-stat-lbl">RUNNING</span></div>
-    <div class="agents-stat"><span class="agents-stat-val" id="stat-queued">0</span><span class="agents-stat-lbl">QUEUED</span></div>
-    <div class="agents-stat"><span class="agents-stat-val completed" id="stat-completed">0</span><span class="agents-stat-lbl">COMPLETED</span></div>
-    <div class="agents-stat"><span class="agents-stat-val failed" id="stat-failed">0</span><span class="agents-stat-lbl">FAILED</span></div>
-    <div class="agents-stat"><span class="agents-stat-val" id="stat-total-tools">0</span><span class="agents-stat-lbl">TOTAL TOOLS</span></div>
-  </div>
+  <!-- Content grid -->
+  <div class="content">
 
-  <!-- Workflow container (pan/zoom) -->
-  <div class="workflow-container" id="workflow-container">
-    <div class="workflow-canvas" id="workflow-canvas">
-      <svg class="workflow-svg" id="workflow-svg">
-        <defs>
-          <marker id="arrow" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 3 L 0 6 z" fill="rgba(57,255,20,0.4)"/>
-          </marker>
-          <marker id="arrow-active" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 3 L 0 6 z" fill="#39ff14"/>
-          </marker>
-        </defs>
-      </svg>
-      <div id="workflow-nodes"></div>
+    <!-- TABLE LIST -->
+    <div class="panel span-3" id="p-tables">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>TABLES<span class="tag" id="tables-tag">SCHEMA</span></div>
+      <div class="panel-body db-table-list" id="tables-body"></div>
     </div>
 
-    <!-- Zoom controls -->
-    <div class="zoom-controls">
-      <div class="zoom-btn" id="zoom-in" title="Zoom In">+</div>
-      <div class="zoom-level" id="zoom-level">100%</div>
-      <div class="zoom-btn" id="zoom-out" title="Zoom Out">&minus;</div>
-      <div class="zoom-btn text" id="zoom-fit" title="Fit to View">FIT</div>
+    <!-- TABLE DATA -->
+    <div class="panel span-9" id="p-data">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>DATA.VIEWER<span class="tag" id="data-tag">SELECT A TABLE</span></div>
+      <div class="db-toolbar" id="db-toolbar" style="display:none">
+        <span class="db-info" id="db-info"></span>
+        <div class="db-pager">
+          <button class="db-btn" id="btn-prev" disabled>PREV</button>
+          <span class="db-page" id="db-page">1</span>
+          <button class="db-btn" id="btn-next" disabled>NEXT</button>
+        </div>
+      </div>
+      <div class="panel-body db-data-body" id="data-body">
+        <div class="ob-empty">SELECT A TABLE FROM THE LEFT PANEL</div>
+      </div>
     </div>
 
-    <!-- Minimap -->
-    <div class="minimap" id="minimap">
-      <div class="minimap-viewport" id="minimap-viewport"></div>
+    <!-- ROW DETAIL -->
+    <div class="panel span-12" id="p-row-detail" style="display:none">
+      <div class="sweep"></div>
+      <div class="panel-header"><span class="dot"></span>ROW.DETAIL<span class="tag" id="row-tag">INSPECT</span></div>
+      <div class="panel-body db-row-detail" id="row-detail-body"></div>
     </div>
+
   </div>
 
-</div>
-
-<!-- Detail slide-out panel -->
-<div class="detail-panel" id="detail-panel">
-  <div class="detail-panel-header">
-    <span class="detail-panel-title" id="detail-title">--</span>
-    <span class="detail-panel-close" id="detail-close">&times;</span>
-  </div>
-  <div class="detail-panel-body" id="detail-body"></div>
 </div>
 
 <!-- Scrolling log ticker (sticky bottom) -->
@@ -194,6 +163,6 @@
 </div>
 
 <script src="shared.js"></script>
-<script src="agents.js"></script>
+<script src="database.js"></script>
 </body>
 </html>

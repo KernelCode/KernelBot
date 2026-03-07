@@ -1,0 +1,198 @@
+/* ═══════ Database Explorer Styles ═══════ */
+
+/* ── Table List ────────────────────────────────────── */
+
+.db-table-list {
+  max-height: none !important;
+  overflow-y: auto;
+}
+
+.db-table-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(57,255,20,0.04);
+  transition: background 0.15s;
+  font-size: 11px;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+}
+
+.db-table-item:hover {
+  background: rgba(57,255,20,0.06);
+}
+
+.db-table-item.active {
+  background: rgba(57,255,20,0.1);
+  border-left: 2px solid var(--accent);
+}
+
+.db-table-name {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+
+.db-table-count {
+  color: var(--dim);
+  font-size: 9px;
+  background: rgba(57,255,20,0.06);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(57,255,20,0.1);
+}
+
+/* ── Toolbar ───────────────────────────────────── */
+
+.db-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: rgba(57,255,20,0.02);
+  border-bottom: 1px solid rgba(57,255,20,0.06);
+  font-size: 10px;
+}
+
+.db-info {
+  color: var(--dim);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+.db-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-page {
+  color: var(--accent);
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+}
+
+.db-btn {
+  background: rgba(57,255,20,0.06);
+  border: 1px solid rgba(57,255,20,0.15);
+  color: var(--accent);
+  font-family: var(--font-hud);
+  font-size: 8px;
+  letter-spacing: 1px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.db-btn:hover:not(:disabled) {
+  background: rgba(57,255,20,0.12);
+  border-color: rgba(57,255,20,0.3);
+}
+
+.db-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ── Data Table ────────────────────────────────────── */
+
+.db-data-body {
+  max-height: none !important;
+  overflow: auto;
+}
+
+.db-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+}
+
+.db-grid thead th {
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: var(--accent);
+  border-bottom: 1px solid rgba(57,255,20,0.15);
+  white-space: nowrap;
+  text-transform: uppercase;
+  position: sticky;
+  top: 0;
+  background: var(--panel-bg);
+  z-index: 2;
+}
+
+.db-grid tbody tr {
+  cursor: pointer;
+  transition: background 0.15s;
+  border-bottom: 1px solid rgba(57,255,20,0.04);
+}
+
+.db-grid tbody tr:hover {
+  background: rgba(57,255,20,0.06);
+}
+
+.db-grid tbody tr.selected {
+  background: rgba(57,255,20,0.1);
+}
+
+.db-grid td {
+  padding: 5px 8px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 250px;
+}
+
+.db-grid td.pk {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Row Detail ────────────────────────────────────── */
+
+.db-row-detail {
+  max-height: 400px !important;
+  overflow-y: auto;
+}
+
+.db-field {
+  display: flex;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(57,255,20,0.04);
+}
+
+.db-field-key {
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  min-width: 140px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.db-field-val {
+  color: var(--text);
+  font-size: 11px;
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+}
+
+.db-field-val.json {
+  background: rgba(0,0,0,0.3);
+  padding: 4px 8px;
+  border-left: 2px solid rgba(57,255,20,0.2);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.db-field-val.null {
+  color: var(--dim);
+  font-style: italic;
+}
