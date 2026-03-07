@@ -3,8 +3,9 @@
 .db-main {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - var(--topbar-h) - 28px);
+  height: calc(100vh - 28px);
   padding: 0 !important;
+  padding-top: var(--topbar-h) !important;
   overflow: hidden;
 }
 
