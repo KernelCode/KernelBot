@@ -668,7 +668,8 @@ export function startDashboard(deps) {
             sendJson(res, { error: 'Missing message' }, req);
             return;
           }
-          if (!agent?._provider) {
+          const provider = agent?.orchestratorProvider || agent?.workerProvider;
+          if (!provider) {
             sendJson(res, { error: 'Agent provider not available' }, req);
             return;
           }
@@ -685,11 +686,11 @@ export function startDashboard(deps) {
           // Add the new message
           msgs.push({ role: 'user', content: message });
 
-          const result = await agent._provider.chat({
+          const result = await provider.chat({
             system: 'You are KERNEL, an AI assistant. Respond helpfully and concisely. Use markdown formatting when appropriate.',
             messages: msgs,
-            max_tokens: agent._config?.brain?.max_tokens || 2048,
-            temperature: agent._config?.brain?.temperature ?? 0.7,
+            max_tokens: config?.brain?.max_tokens || 2048,
+            temperature: config?.brain?.temperature ?? 0.7,
           });
 
           sendJson(res, { reply: result.text || '' }, req);
