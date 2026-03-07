@@ -312,8 +312,8 @@ export class BrainMemoryManager {
   buildContextBlock(userId = null, senderType = 'owner') {
     const sections = [];
 
-    // Recent general memories (last 24h, top 5)
-    const recent = this.getRecentEpisodic(24, 5);
+    // Recent general memories (last 24h, top 5) — exclude journal/life_engine noise
+    const recent = this._getRecentFiltered(24, 5);
     if (recent.length > 0) {
       const lines = recent.map(m => {
         const ago = Math.round((Date.now() - m.timestamp) / 60000);
@@ -352,6 +352,22 @@ export class BrainMemoryManager {
     let block = sections.join('\n\n');
     if (block.length > 1500) block = block.slice(0, 1500) + '\n...';
     return block;
+  }
+
+  /**
+   * Get recent episodic memories, filtering out journal/life_engine entries.
+   */
+  _getRecentFiltered(hours = 24, limit = 5) {
+    const cutoff = Date.now() - hours * 3600_000;
+    const rows = this._db.all(`
+      SELECT * FROM memories
+      WHERE character_id = :characterId AND type = 'episodic' AND created_at > :cutoff
+        AND (source IS NULL OR source NOT IN ('journal', 'life_engine'))
+      ORDER BY created_at DESC
+      LIMIT :limit
+    `, { characterId: this._characterId, cutoff, limit });
+
+    return rows.map(r => this._rowToEntry(r));
   }
 
   /** Convert a DB row to the entry format expected by consumers. */

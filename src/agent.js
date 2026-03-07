@@ -97,7 +97,9 @@ export class OrchestratorAgent {
 
     let userPersona = null;
     if (this.personaManager && user?.id) {
-      userPersona = this.personaManager.load(user.id, user.username);
+      userPersona = this.personaManager.getCompactPersona
+        ? this.personaManager.getCompactPersona(user.id, user.username)
+        : this.personaManager.load(user.id, user.username);
     }
 
     let selfData = null;

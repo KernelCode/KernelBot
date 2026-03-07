@@ -102,6 +102,50 @@ export class BrainPersonaManager {
   }
 
   /**
+   * Get a compact persona (~500-800 chars) for prompt injection.
+   * Extracts key fields from the full persona markdown.
+   * Full persona stays available via load() for recall tools.
+   */
+  getCompactPersona(userId, username) {
+    const full = this.load(userId, username);
+    if (!full) return null;
+
+    const lines = full.split('\n');
+    const compact = [];
+    let currentSection = '';
+    let sectionLines = 0;
+    const maxPerSection = 3;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      // Track section headers
+      if (trimmed.startsWith('## ')) {
+        currentSection = trimmed.replace('## ', '').toLowerCase();
+        sectionLines = 0;
+        // Skip sections with only "(Not yet known)"
+        continue;
+      }
+      if (trimmed.startsWith('# ')) continue; // skip top-level header
+
+      // Skip placeholder content
+      if (trimmed === '(Not yet known)') continue;
+
+      // Limit lines per section
+      if (sectionLines >= maxPerSection) continue;
+
+      compact.push(trimmed);
+      sectionLines++;
+    }
+
+    const result = compact.join('\n');
+    // If compact is already short enough or empty, return it
+    if (result.length <= 800) return result || null;
+    return result.slice(0, 800) + '...';
+  }
+
+  /**
    * Semantic search across user personas.
    * @param {string} query
    * @param {number} limit

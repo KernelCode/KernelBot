@@ -4,7 +4,7 @@ import { dirname } from 'path';
 import { getLogger } from '../utils/logger.js';
 import { EmbeddingProvider } from './embeddings.js';
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 /**
  * BrainDB — unified SQLite database for all KERNEL data.
@@ -460,6 +460,7 @@ export class BrainDB {
       CREATE TABLE IF NOT EXISTS self_narrative (
         id TEXT PRIMARY KEY,
         content TEXT NOT NULL,
+        summary TEXT,
         version INTEGER DEFAULT 1,
         last_evidence TEXT,
         character_id TEXT,
@@ -615,6 +616,8 @@ export class BrainDB {
       // v8: new vector tables are IF NOT EXISTS — no-op migration needed
       // v10: ensure scope column exists (was missing in v9 CREATE TABLE)
       if (existing.version < 10) this._runV10Migration();
+      // v11: add summary column to self_narrative
+      if (existing.version < 11) this._runV11Migration();
       this._db.query('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
     }
   }
@@ -625,6 +628,18 @@ export class BrainDB {
 
   _runV10Migration() {
     this._addScopeColumn();
+  }
+
+  _runV11Migration() {
+    const logger = getLogger();
+    try {
+      this._db.exec("ALTER TABLE self_narrative ADD COLUMN summary TEXT");
+      logger.info('[BrainDB] Migration v11: added summary column to self_narrative');
+    } catch (err) {
+      if (!err.message.includes('duplicate column')) {
+        logger.warn(`[BrainDB] Migration v11 warning: ${err.message}`);
+      }
+    }
   }
 
   /** Ensure memories.scope column exists (idempotent). */

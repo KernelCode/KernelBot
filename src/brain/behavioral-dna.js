@@ -391,6 +391,7 @@ export class BehavioralDNA {
 
   /**
    * Dynamic replacement for SelfManager.loadAll().
+   * Uses compressed summaries for prompt injection; falls back to truncated content.
    */
   buildSelfAwareness(characterId = 'default') {
     const parts = [];
@@ -399,12 +400,70 @@ export class BehavioralDNA {
       const narrative = this.getNarrative(section, characterId);
       if (narrative?.content) {
         const title = section.charAt(0).toUpperCase() + section.slice(1);
-        parts.push(`### ${title}\n${narrative.content}`);
+        const text = narrative.summary || narrative.content.slice(0, 500);
+        parts.push(`### ${title}\n${text}`);
       }
     }
 
     if (parts.length === 0) return null;
     return parts.join('\n\n');
+  }
+
+  /**
+   * Update the compressed summary for a narrative section.
+   */
+  updateNarrativeSummary(section, summary, characterId = 'default') {
+    if (!NARRATIVE_SECTIONS.includes(section)) return null;
+    const now = Date.now();
+    this._db.run(
+      'UPDATE self_narrative SET summary = $summary, updated_at = $now WHERE id = $id AND character_id = $cid',
+      { summary, now, id: section, cid: characterId },
+    );
+    return true;
+  }
+
+  /**
+   * Get the full uncompressed content of a narrative section (for recall tools).
+   */
+  getFullNarrativeContent(section, characterId = 'default') {
+    if (!NARRATIVE_SECTIONS.includes(section)) return null;
+    const row = this._db.get(
+      'SELECT content FROM self_narrative WHERE id = $id AND character_id = $cid',
+      { id: section, cid: characterId },
+    );
+    return row?.content || null;
+  }
+
+  /**
+   * Generate compressed summaries for all narrative sections using an LLM.
+   * Can be triggered manually or auto-run on startup if summaries are missing.
+   */
+  async generateNarrativeSummaries(characterId = 'default', provider) {
+    const logger = getLogger();
+    let generated = 0;
+
+    for (const section of NARRATIVE_SECTIONS) {
+      const narrative = this.getNarrative(section, characterId);
+      if (!narrative?.content) continue;
+      // Skip if summary already exists and content hasn't changed significantly
+      if (narrative.summary && narrative.summary.length > 50) continue;
+
+      try {
+        const prompt = `Compress the following self-narrative section "${section}" into a dense summary of 200-500 characters. Keep the essential personality, key facts, and current state. Write in first person. Return ONLY the summary, no commentary.\n\n${narrative.content}`;
+        const response = await provider.chat({ messages: [{ role: 'user', content: prompt }] });
+        const summary = (response.text || '').trim();
+
+        if (summary && summary.length >= 50) {
+          this.updateNarrativeSummary(section, summary, characterId);
+          generated++;
+          logger.info(`[BehavioralDNA] Generated summary for "${section}" (${summary.length} chars)`);
+        }
+      } catch (err) {
+        logger.warn(`[BehavioralDNA] Summary generation failed for "${section}": ${err.message}`);
+      }
+    }
+
+    return generated;
   }
 
   // ── DNA Synthesis (during consolidation) ─────────────────────────
