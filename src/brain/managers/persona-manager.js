@@ -102,47 +102,38 @@ export class BrainPersonaManager {
   }
 
   /**
-   * Get a compact persona (~500-800 chars) for prompt injection.
-   * Extracts key fields from the full persona markdown.
+   * Get a compact persona (~500 chars) for prompt injection.
+   * Keeps first meaningful lines up to the char budget.
    * Full persona stays available via load() for recall tools.
    */
   getCompactPersona(userId, username) {
     const full = this.load(userId, username);
     if (!full) return null;
 
+    // Already short enough
+    if (full.length <= 500) return full;
+
     const lines = full.split('\n');
-    const compact = [];
-    let currentSection = '';
-    let sectionLines = 0;
-    const maxPerSection = 3;
+    const kept = [];
+    let total = 0;
+    const budget = 500;
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      // Track section headers
+      // Skip empty lines, top-level headers, and placeholder content
+      if (!trimmed || trimmed.startsWith('# ') || trimmed === '(Not yet known)') continue;
+      // Keep section headers (they're cheap)
       if (trimmed.startsWith('## ')) {
-        currentSection = trimmed.replace('## ', '').toLowerCase();
-        sectionLines = 0;
-        // Skip sections with only "(Not yet known)"
+        kept.push(trimmed);
+        total += trimmed.length + 1;
         continue;
       }
-      if (trimmed.startsWith('# ')) continue; // skip top-level header
-
-      // Skip placeholder content
-      if (trimmed === '(Not yet known)') continue;
-
-      // Limit lines per section
-      if (sectionLines >= maxPerSection) continue;
-
-      compact.push(trimmed);
-      sectionLines++;
+      if (total + trimmed.length + 1 > budget) break;
+      kept.push(trimmed);
+      total += trimmed.length + 1;
     }
 
-    const result = compact.join('\n');
-    // If compact is already short enough or empty, return it
-    if (result.length <= 800) return result || null;
-    return result.slice(0, 800) + '...';
+    return kept.join('\n') || null;
   }
 
   /**
