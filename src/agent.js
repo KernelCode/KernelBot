@@ -1293,8 +1293,23 @@ export class OrchestratorAgent {
       let activeProvider = this.orchestratorProvider;
 
       try {
+        const systemPrompt = this._getSystemPrompt(chatId, user, temporalContext, identityCtx);
+
+        // === DEBUG DUMP (temporary) ===
+        if (depth === 0) {
+          logger.info(`\n${'='.repeat(80)}\n[DEBUG] SYSTEM PROMPT (${systemPrompt.length} chars):\n${'='.repeat(80)}\n${systemPrompt}\n${'='.repeat(80)}`);
+          logger.info(`\n${'='.repeat(80)}\n[DEBUG] MESSAGES (${workingMessages.length}):\n${'='.repeat(80)}`);
+          for (let i = 0; i < workingMessages.length; i++) {
+            const m = workingMessages[i];
+            const content = typeof m.content === 'string' ? m.content.slice(0, 500) : JSON.stringify(m.content).slice(0, 500);
+            logger.info(`[DEBUG] MSG[${i}] role=${m.role}: ${content}`);
+          }
+          logger.info(`${'='.repeat(80)}\n[DEBUG] END DUMP\n${'='.repeat(80)}`);
+        }
+        // === END DEBUG DUMP ===
+
         response = await activeProvider.chat({
-          system: this._getSystemPrompt(chatId, user, temporalContext, identityCtx),
+          system: systemPrompt,
           messages: workingMessages,
           tools: orchestratorToolDefinitions,
         });
