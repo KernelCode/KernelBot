@@ -90,7 +90,7 @@ const DEFAULTS = {
   },
   onboarding: {
     enabled: true,
-    skip_for_owner: false,
+    skip_for_owner: true,
   },
   linkedin: {},
   x: {},
@@ -535,6 +535,14 @@ export function loadConfig() {
     if (!config.telegram.allowed_users.includes(ownerId)) {
       config.telegram.allowed_users.push(ownerId);
     }
+    // Auto-populate identity.owner_id from OWNER_TELEGRAM_ID
+    if (!config.identity.owner_id) {
+      config.identity.owner_id = ownerId;
+    }
+  }
+  // Fallback: use first allowed user as owner if owner_id not set
+  if (!config.identity.owner_id && config.telegram.allowed_users?.length > 0) {
+    config.identity.owner_id = config.telegram.allowed_users[0];
   }
   // Declarative env → config mapping for integration credentials.
   // Each entry: [ENV_VAR_NAME, configSection, configKey]

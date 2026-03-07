@@ -1257,28 +1257,35 @@ export function startBot(config, agent, conversationManager, jobManager, automat
           return;
         }
       } else if (onboardingManager.isOnboarding(userId)) {
-        // User is mid-onboarding — route to flow
-        if (!msg.text) return;
-        const text = msg.text.trim();
-        const result = await onboardingFlow.processMessage(chatId, userId, text, msg.from);
-        if (result.text) {
-          const sendOpts = { parse_mode: 'Markdown' };
-          if (result.keyboard) sendOpts.reply_markup = result.keyboard;
-          await bot.sendMessage(chatId, result.text, sendOpts);
-        }
-        if (!result.text && !result.keyboard) {
-          // Onboarding just completed — activate selected skills for this chat
-          const state = onboardingManager.getState(userId);
-          if (state?.selected_skills?.length > 0) {
-            const key = agent._chatKey ? agent._chatKey(chatId) : String(chatId);
-            for (const skillId of state.selected_skills) {
-              conversationManager.addSkill(key, skillId);
-            }
-            logger.info(`[Bot] Activated ${state.selected_skills.length} onboarding skills for chat ${chatId}`);
-          }
+        // Skip owner if configured (in case they got stuck mid-onboarding before fix)
+        const skipOwnerMid = config.onboarding?.skip_for_owner && config.identity?.owner_id && String(config.identity.owner_id) === String(userId);
+        if (skipOwnerMid) {
+          onboardingManager.complete(userId);
           // Fall through to normal message processing
         } else {
-          return;
+          // User is mid-onboarding — route to flow
+          if (!msg.text) return;
+          const text = msg.text.trim();
+          const result = await onboardingFlow.processMessage(chatId, userId, text, msg.from);
+          if (result.text) {
+            const sendOpts = { parse_mode: 'Markdown' };
+            if (result.keyboard) sendOpts.reply_markup = result.keyboard;
+            await bot.sendMessage(chatId, result.text, sendOpts);
+          }
+          if (!result.text && !result.keyboard) {
+            // Onboarding just completed — activate selected skills for this chat
+            const state = onboardingManager.getState(userId);
+            if (state?.selected_skills?.length > 0) {
+              const key = agent._chatKey ? agent._chatKey(chatId) : String(chatId);
+              for (const skillId of state.selected_skills) {
+                conversationManager.addSkill(key, skillId);
+              }
+              logger.info(`[Bot] Activated ${state.selected_skills.length} onboarding skills for chat ${chatId}`);
+            }
+            // Fall through to normal message processing
+          } else {
+            return;
+          }
         }
       }
     }
