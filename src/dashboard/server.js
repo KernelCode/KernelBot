@@ -6,7 +6,7 @@
  */
 
 import { createServer } from 'http';
-import { readFileSync, statSync } from 'fs';
+import { readFileSync, statSync, createReadStream, writeFileSync, copyFileSync, existsSync } from 'fs';
 import { join, dirname, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { loadavg, totalmem, freemem, cpus } from 'os';
@@ -431,7 +431,7 @@ export function startDashboard(deps) {
     } catch (err) { return { tables: [], error: err.message }; }
   }
 
-  function getBrainDBTableData(tableName, limit = 50, offset = 0) {
+  function getBrainDBTableData(tableName, limit = 50, offset = 0, sort = null, order = 'ASC') {
     if (!brainDB?.isOpen) return { rows: [], columns: [], total: 0 };
     // Whitelist table names to prevent SQL injection
     const validTables = brainDB.all("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").map(r => r.name);
@@ -439,8 +439,16 @@ export function startDashboard(deps) {
     try {
       const countRow = brainDB.get(`SELECT COUNT(*) as count FROM "${tableName}"`);
       const total = countRow?.count || 0;
-      const rows = brainDB.all(`SELECT * FROM "${tableName}" LIMIT ${Number(limit)} OFFSET ${Number(offset)}`);
-      const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+      // Get column info to validate sort column
+      const sampleRows = brainDB.all(`SELECT * FROM "${tableName}" LIMIT 1`);
+      const columns = sampleRows.length > 0 ? Object.keys(sampleRows[0]) : [];
+      // Build ORDER BY clause (validate column name against actual columns)
+      let orderClause = '';
+      if (sort && columns.includes(sort)) {
+        const dir = order === 'DESC' ? 'DESC' : 'ASC';
+        orderClause = ` ORDER BY "${sort}" ${dir}`;
+      }
+      const rows = brainDB.all(`SELECT * FROM "${tableName}"${orderClause} LIMIT ${Number(limit)} OFFSET ${Number(offset)}`);
       // Truncate long values for display
       const truncated = rows.map(r => {
         const row = {};
@@ -450,7 +458,8 @@ export function startDashboard(deps) {
         }
         return row;
       });
-      return { rows: truncated, columns, total };
+      // Also return full (non-truncated) rows for row detail
+      return { rows: truncated, fullRows: rows, columns, total };
     } catch (err) { return { rows: [], columns: [], total: 0, error: err.message }; }
   }
 
@@ -645,15 +654,109 @@ export function startDashboard(deps) {
         const tableName = url.searchParams.get('name');
         const limit = parseInt(url.searchParams.get('limit') || '50', 10);
         const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+        const sort = url.searchParams.get('sort') || null;
+        const order = url.searchParams.get('order') || 'ASC';
         if (!tableName) {
           sendJson(res, { error: 'Missing table name' }, req);
         } else {
-          sendJson(res, getBrainDBTableData(tableName, limit, offset), req);
+          sendJson(res, getBrainDBTableData(tableName, limit, offset, sort, order), req);
         }
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       }
+      return;
+    }
+
+    // Brain download
+    if (path === '/api/brain/download' && req.method === 'GET') {
+      try {
+        if (!brainDB?.isOpen || !brainDB._dbPath) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'BrainDB not open' }));
+          return;
+        }
+        const dbPath = brainDB._dbPath;
+        if (!existsSync(dbPath)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Database file not found' }));
+          return;
+        }
+        const stat = statSync(dbPath);
+        const date = new Date().toISOString().split('T')[0];
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': `attachment; filename=brain-${date}.sqlite`,
+          'Content-Length': stat.size,
+        });
+        createReadStream(dbPath).pipe(res);
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    // Brain upload
+    if (path === '/api/brain/upload' && req.method === 'POST') {
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', async () => {
+        try {
+          if (!brainDB?.isOpen || !brainDB._dbPath) {
+            sendJson(res, { error: 'BrainDB not open' }, req);
+            return;
+          }
+          const body = Buffer.concat(chunks);
+          // Parse multipart boundary
+          const contentType = req.headers['content-type'] || '';
+          let fileData = null;
+          if (contentType.includes('multipart/form-data')) {
+            const boundaryMatch = contentType.match(/boundary=(.+)/);
+            if (!boundaryMatch) {
+              sendJson(res, { error: 'Invalid multipart boundary' }, req);
+              return;
+            }
+            const boundary = boundaryMatch[1].trim();
+            const boundaryBuf = Buffer.from('--' + boundary);
+            // Find start of file data (after headers)
+            const headerEnd = body.indexOf('\r\n\r\n');
+            if (headerEnd === -1) {
+              sendJson(res, { error: 'Malformed multipart data' }, req);
+              return;
+            }
+            const dataStart = headerEnd + 4;
+            // Find end boundary
+            const endBoundary = Buffer.from('\r\n--' + boundary);
+            const dataEnd = body.indexOf(endBoundary, dataStart);
+            fileData = dataEnd > dataStart ? body.slice(dataStart, dataEnd) : body.slice(dataStart);
+          } else {
+            // Raw binary upload
+            fileData = body;
+          }
+          // Validate SQLite magic bytes
+          const magic = 'SQLite format 3\0';
+          if (fileData.length < 16 || fileData.slice(0, 16).toString('ascii') !== magic) {
+            sendJson(res, { error: 'Invalid SQLite file — bad magic bytes' }, req);
+            return;
+          }
+          const dbPath = brainDB._dbPath;
+          const backupPath = dbPath + '.backup-' + Date.now();
+          // Close, backup, write, reopen
+          brainDB.close();
+          try {
+            copyFileSync(dbPath, backupPath);
+          } catch { /* no existing file to backup */ }
+          writeFileSync(dbPath, fileData);
+          await brainDB.open();
+          logger.info(`[Dashboard] Brain database uploaded and reopened (backup at ${backupPath})`);
+          sendJson(res, { success: true, backup: backupPath }, req);
+        } catch (err) {
+          // Try to reopen the original if something went wrong
+          try { await brainDB.open(); } catch { /* best effort */ }
+          sendJson(res, { error: err.message }, req);
+        }
+      });
       return;
     }
 
@@ -663,7 +766,7 @@ export function startDashboard(deps) {
       req.on('data', chunk => { body += chunk; });
       req.on('end', async () => {
         try {
-          const { message, history } = JSON.parse(body);
+          const { message, history, characterId } = JSON.parse(body);
           if (!message) {
             sendJson(res, { error: 'Missing message' }, req);
             return;
@@ -672,6 +775,23 @@ export function startDashboard(deps) {
           if (!provider) {
             sendJson(res, { error: 'Agent provider not available' }, req);
             return;
+          }
+
+          // If a character was requested, temporarily switch context
+          let prevCharId = null;
+          if (characterId && agent && characterId !== agent._activeCharacterId) {
+            prevCharId = agent._activeCharacterId;
+            try { await agent.loadCharacter(characterId); } catch { /* use current */ }
+          }
+
+          // Build system prompt using the full agent context
+          let systemPrompt;
+          try {
+            const chatId = '__dashboard__';
+            const user = { id: 'dashboard', username: 'dashboard_user' };
+            systemPrompt = agent._getSystemPrompt(chatId, user);
+          } catch {
+            systemPrompt = 'You are KERNEL, an AI assistant. Respond helpfully and concisely. Use markdown formatting when appropriate.';
           }
 
           // Build messages from history
@@ -683,15 +803,19 @@ export function startDashboard(deps) {
               }
             }
           }
-          // Add the new message
           msgs.push({ role: 'user', content: message });
 
           const result = await provider.chat({
-            system: 'You are KERNEL, an AI assistant. Respond helpfully and concisely. Use markdown formatting when appropriate.',
+            system: systemPrompt,
             messages: msgs,
             max_tokens: config?.brain?.max_tokens || 2048,
             temperature: config?.brain?.temperature ?? 0.7,
           });
+
+          // Restore previous character if we switched
+          if (prevCharId) {
+            try { await agent.loadCharacter(prevCharId); } catch { /* best effort */ }
+          }
 
           sendJson(res, { reply: result.text || '' }, req);
         } catch (err) {

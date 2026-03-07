@@ -82,78 +82,63 @@
   </div>
 </header>
 
-<!-- ═══════ RIGHT BAR ═══════ -->
-<aside class="right-bar">
-  <div class="right-stat" title="Total Tables">
-    <span class="r-val zero" id="rb-tables">0</span>
-    <span class="r-lbl">TABLES</span>
-  </div>
-  <div class="right-divider"></div>
-  <div class="right-stat" title="Total Rows">
-    <span class="r-val zero" id="rb-rows">0</span>
-    <span class="r-lbl">ROWS</span>
-  </div>
-  <div class="right-bar-clock" id="rb-clock">--:--</div>
-</aside>
-
 <!-- ═══════ MAIN ═══════ -->
-<div class="main">
+<div class="main db-main">
 
-  <!-- Hero bar -->
-  <div class="hero-bar">
-    <canvas id="waveform-canvas"></canvas>
-    <div class="hero-pulse">
-      <div class="pulse-stat">
-        <span class="pulse-label">TABLES</span>
-        <span class="pulse-val" id="pulse-tables">0</span>
-      </div>
-      <div class="pulse-stat">
-        <span class="pulse-label">TOTAL ROWS</span>
-        <span class="pulse-val" id="pulse-rows">0</span>
-      </div>
-      <div class="pulse-stat">
-        <span class="pulse-label">STATUS</span>
-        <span class="pulse-val" id="pulse-status">CONNECTED</span>
-      </div>
+  <!-- Toolbar -->
+  <div class="db-toolbar-bar">
+    <div class="db-toolbar-left">
+      <select class="db-table-select" id="table-select">
+        <option value="">-- SELECT TABLE --</option>
+      </select>
+      <input type="text" class="db-search" id="db-search" placeholder="Search rows..." />
+    </div>
+    <div class="db-toolbar-right">
+      <button class="db-action-btn download" id="btn-download" title="Download brain.sqlite">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        DOWNLOAD
+      </button>
+      <button class="db-action-btn upload" id="btn-upload" title="Upload brain.sqlite">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        UPLOAD
+      </button>
+      <input type="file" id="file-upload" accept=".sqlite,.db,.sqlite3" style="display:none" />
     </div>
   </div>
 
-  <!-- Content grid -->
-  <div class="content">
-
-    <!-- TABLE LIST -->
-    <div class="panel span-3" id="p-tables">
-      <div class="sweep"></div>
-      <div class="panel-header"><span class="dot"></span>TABLES<span class="tag" id="tables-tag">SCHEMA</span></div>
-      <div class="panel-body db-table-list" id="tables-body"></div>
+  <!-- Info bar -->
+  <div class="db-info-bar" id="db-info-bar">
+    <span class="db-info-text" id="db-info"></span>
+    <div class="db-pager">
+      <label class="db-per-page-label">ROWS:
+        <select class="db-per-page" id="per-page">
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
+      <button class="db-btn" id="btn-prev" disabled>PREV</button>
+      <span class="db-page" id="db-page">--</span>
+      <button class="db-btn" id="btn-next" disabled>NEXT</button>
     </div>
-
-    <!-- TABLE DATA -->
-    <div class="panel span-9" id="p-data">
-      <div class="sweep"></div>
-      <div class="panel-header"><span class="dot"></span>DATA.VIEWER<span class="tag" id="data-tag">SELECT A TABLE</span></div>
-      <div class="db-toolbar" id="db-toolbar" style="display:none">
-        <span class="db-info" id="db-info"></span>
-        <div class="db-pager">
-          <button class="db-btn" id="btn-prev" disabled>PREV</button>
-          <span class="db-page" id="db-page">1</span>
-          <button class="db-btn" id="btn-next" disabled>NEXT</button>
-        </div>
-      </div>
-      <div class="panel-body db-data-body" id="data-body">
-        <div class="ob-empty">SELECT A TABLE FROM THE LEFT PANEL</div>
-      </div>
-    </div>
-
-    <!-- ROW DETAIL -->
-    <div class="panel span-12" id="p-row-detail" style="display:none">
-      <div class="sweep"></div>
-      <div class="panel-header"><span class="dot"></span>ROW.DETAIL<span class="tag" id="row-tag">INSPECT</span></div>
-      <div class="panel-body db-row-detail" id="row-detail-body"></div>
-    </div>
-
   </div>
 
+  <!-- Full-width data grid -->
+  <div class="db-grid-wrap" id="db-grid-wrap">
+    <div class="db-empty-state" id="db-empty">SELECT A TABLE TO EXPLORE</div>
+  </div>
+
+</div>
+
+<!-- ═══════ ROW DETAIL MODAL ═══════ -->
+<div class="db-modal-overlay" id="modal-overlay">
+  <div class="db-modal" id="row-modal">
+    <div class="db-modal-header">
+      <span class="db-modal-title" id="modal-title">ROW DETAIL</span>
+      <button class="db-modal-close" id="modal-close">&times;</button>
+    </div>
+    <div class="db-modal-body" id="modal-body"></div>
+  </div>
 </div>
 
 <!-- Scrolling log ticker (sticky bottom) -->

@@ -87,7 +87,7 @@
 
   <!-- Chat messages area -->
   <div class="chat-messages" id="chat-messages">
-    <div class="chat-welcome">
+    <div class="chat-welcome" id="chat-welcome">
       <div class="chat-welcome-icon">
         <svg viewBox="0 0 32 32" width="48" height="48">
           <path fill="rgba(57,255,20,0.35)" d="M10,2h10v2h-10z M8,4h2v2h-2z M6,6h2v4h-2z M4,10h2v8h-2z M6,18h2v2h-2z M8,20h2v2h-2z M10,22h14v2h-14z M24,18h2v4h-2z M26,8h2v10h-2z M24,6h2v2h-2z"/>
@@ -96,12 +96,18 @@
         </svg>
       </div>
       <div class="chat-welcome-title">KERNEL CHAT INTERFACE</div>
-      <div class="chat-welcome-sub">Direct model communication channel. Messages are processed by the orchestrator agent.</div>
+      <div class="chat-welcome-sub">Chat with your bot using its full personality. Select a character below to switch personas.</div>
     </div>
   </div>
 
   <!-- Chat input area -->
   <div class="chat-input-area">
+    <div class="chat-input-controls">
+      <select class="chat-character-select" id="character-select">
+        <option value="">Loading...</option>
+      </select>
+      <button class="chat-clear-btn" id="chat-clear" title="Clear history">CLEAR</button>
+    </div>
     <div class="chat-input-wrap">
       <textarea class="chat-input" id="chat-input" placeholder="Type a message..." rows="1"></textarea>
       <button class="chat-send" id="chat-send" title="Send">

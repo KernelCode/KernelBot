@@ -155,9 +155,57 @@
 /* ── Input Area ─────────────────────────────────── */
 
 .chat-input-area {
-  padding: 12px 20px 16px;
+  padding: 10px 20px 14px;
   border-top: 1px solid rgba(57,255,20,0.08);
   background: rgba(8,14,24,0.95);
+}
+
+.chat-input-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.chat-character-select {
+  background: rgba(57,255,20,0.04);
+  border: 1px solid rgba(57,255,20,0.15);
+  color: var(--accent);
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+  flex: 1;
+  max-width: 250px;
+}
+
+.chat-character-select:focus {
+  border-color: rgba(57,255,20,0.4);
+}
+
+.chat-character-select option {
+  background: #0a0e14;
+  color: var(--text);
+}
+
+.chat-clear-btn {
+  background: rgba(255,107,107,0.06);
+  border: 1px solid rgba(255,107,107,0.2);
+  color: #ff6b6b;
+  font-family: var(--font-hud);
+  font-size: 8px;
+  letter-spacing: 1px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  border-radius: 3px;
+}
+
+.chat-clear-btn:hover {
+  background: rgba(255,107,107,0.12);
+  border-color: rgba(255,107,107,0.4);
 }
 
 .chat-input-wrap {
