@@ -1,0 +1,183 @@
+/* ═══════ Onboarding Page Styles ═══════ */
+
+/* ── User Table ────────────────────────────────────── */
+
+.ob-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
+}
+
+.ob-table thead th {
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--accent);
+  border-bottom: 1px solid rgba(57,255,20,0.15);
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+.ob-table tbody tr {
+  cursor: pointer;
+  transition: background 0.15s;
+  border-bottom: 1px solid rgba(57,255,20,0.04);
+}
+
+.ob-table tbody tr:hover {
+  background: rgba(57,255,20,0.06);
+}
+
+.ob-table tbody tr.selected {
+  background: rgba(57,255,20,0.1);
+  border-left: 2px solid var(--accent);
+}
+
+.ob-table td {
+  padding: 6px 8px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.ob-table td:first-child {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Phase badges ───────────────────────────────────── */
+
+.phase-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.phase-badge.profile {
+  background: rgba(255, 165, 0, 0.15);
+  color: #ffa500;
+  border: 1px solid rgba(255, 165, 0, 0.3);
+}
+
+.phase-badge.skills {
+  background: rgba(0, 191, 255, 0.15);
+  color: #00bfff;
+  border: 1px solid rgba(0, 191, 255, 0.3);
+}
+
+.phase-badge.training {
+  background: rgba(186, 85, 211, 0.15);
+  color: #ba55d3;
+  border: 1px solid rgba(186, 85, 211, 0.3);
+}
+
+.phase-badge.complete {
+  background: rgba(57, 255, 20, 0.15);
+  color: #39ff14;
+  border: 1px solid rgba(57, 255, 20, 0.3);
+}
+
+/* ── Detail panels ──────────────────────────────────── */
+
+.detail-row {
+  display: flex;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(57,255,20,0.04);
+}
+
+.detail-row .dk {
+  color: var(--dim);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  min-width: 90px;
+  flex-shrink: 0;
+}
+
+.detail-row .dv {
+  color: var(--text);
+  font-size: 11px;
+  word-break: break-word;
+}
+
+.skill-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  margin: 2px 3px;
+  border-radius: 3px;
+  font-size: 10px;
+  background: rgba(57,255,20,0.08);
+  border: 1px solid rgba(57,255,20,0.15);
+  color: var(--text);
+}
+
+.training-block {
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: rgba(0,0,0,0.3);
+  border-left: 2px solid rgba(186, 85, 211, 0.4);
+  font-size: 11px;
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.training-label {
+  color: var(--dim);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+/* ── Stats bar ──────────────────────────────────────── */
+
+.ob-stats-bar {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: rgba(57,255,20,0.02);
+  border: 1px solid rgba(57,255,20,0.06);
+  border-radius: 4px;
+}
+
+.ob-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ob-stat-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: 'Fira Code', monospace;
+}
+
+.ob-stat-val.zero { color: var(--dim); }
+
+.ob-stat-lbl {
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: var(--dim);
+  text-transform: uppercase;
+}
+
+/* ── Empty state ────────────────────────────────────── */
+
+.ob-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--dim);
+  font-size: 12px;
+  letter-spacing: 1px;
+}

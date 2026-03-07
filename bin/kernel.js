@@ -407,6 +407,7 @@ async function startBotFlow(config) {
     shareQueue: charCtx.shareQueue,
     evolutionTracker: charCtx.evolutionTracker,
     selfManager: charCtx.selfManager,
+    brainDB,
   };
 
   let dashboardHandle = null;

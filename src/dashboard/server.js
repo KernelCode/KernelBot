@@ -36,6 +36,7 @@ export function startDashboard(deps) {
     shareQueue,
     evolutionTracker,
     selfManager,
+    brainDB,
   } = deps;
 
   const logger = getLogger();
@@ -416,6 +417,14 @@ export function startDashboard(deps) {
     } catch { return []; }
   }
 
+  function getOnboardingData() {
+    if (!brainDB?.isOpen) return { users: [] };
+    try {
+      const users = brainDB.all('SELECT * FROM user_onboarding ORDER BY updated_at DESC');
+      return { users };
+    } catch { return { users: [] }; }
+  }
+
   // --- Full snapshot for SSE ---
   function getSnapshot() {
     return {
@@ -501,6 +510,12 @@ export function startDashboard(deps) {
       return;
     }
 
+    // Serve onboarding page
+    if (path === '/onboarding' || path === '/onboarding.html') {
+      serveStaticFile(res, 'onboarding.html');
+      return;
+    }
+
     // All API and SSE endpoints require authentication
     if (!authenticate(req, res)) return;
 
@@ -538,6 +553,7 @@ export function startDashboard(deps) {
       '/api/skills': getSkillsData,
       '/api/capabilities': getCapabilitiesData,
       '/api/knowledge': getKnowledgeData,
+      '/api/onboarding': getOnboardingData,
     };
 
     if (routes[path]) {
