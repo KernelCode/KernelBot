@@ -11,6 +11,12 @@ import { PROVIDERS } from "../providers/models.js";
 
 export { p };
 
+/**
+ * Return the first non-internal IPv4 address found on this machine.
+ * Falls back to "localhost" when no external interface is available.
+ *
+ * @returns {string} Local IPv4 address or "localhost"
+ */
 function getLocalIp() {
   const nets = networkInterfaces();
   for (const iface of Object.values(nets)) {
@@ -23,10 +29,20 @@ function getLocalIp() {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Read the application version from package.json.
+ * The result is cached after the first call since the version
+ * cannot change while the process is running.
+ *
+ * @returns {string} Semantic version string or "unknown" on read failure
+ */
+let _cachedVersion = null;
 function getVersion() {
+  if (_cachedVersion) return _cachedVersion;
   try {
     const pkg = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf-8"));
-    return pkg.version;
+    _cachedVersion = pkg.version;
+    return _cachedVersion;
   } catch {
     return "unknown";
   }
@@ -55,10 +71,19 @@ const LOGO = `
 // Green terminal gradient
 const monoGradient = gradient(["#00ff41", "#00cc33", "#009926", "#006619"]);
 
+/** Print the KernelBot ASCII logo with a green terminal gradient. */
 export function showLogo() {
   console.log(monoGradient.multiline(LOGO));
 }
 
+/**
+ * Run a startup health-check with a spinner.
+ * Displays a success or failure indicator once the check resolves.
+ *
+ * @param {string} label - Description shown next to the spinner
+ * @param {() => Promise<void>} checkFn - Async function that throws on failure
+ * @returns {Promise<boolean>} true if the check passed, false otherwise
+ */
 export async function showStartupCheck(label, checkFn) {
   const spinner = ora({ text: label, color: "cyan" }).start();
   try {
@@ -71,6 +96,7 @@ export async function showStartupCheck(label, checkFn) {
   }
 }
 
+/** Display a boxed "KernelBot is live" banner. */
 export function showStartupComplete() {
   console.log(
     boxen(chalk.green.bold("KernelBot is live"), {
@@ -82,6 +108,10 @@ export function showStartupComplete() {
   );
 }
 
+/**
+ * Display a green success box.
+ * @param {string} msg - Message to display
+ */
 export function showSuccess(msg) {
   console.log(
     boxen(chalk.green(msg), {
@@ -92,6 +122,10 @@ export function showSuccess(msg) {
   );
 }
 
+/**
+ * Display a red error box.
+ * @param {string} msg - Message to display
+ */
 export function showError(msg) {
   console.log(
     boxen(chalk.red(msg), {
@@ -102,6 +136,11 @@ export function showError(msg) {
   );
 }
 
+/**
+ * Create a cyan ora spinner (not yet started).
+ * @param {string} text - Spinner label
+ * @returns {import('ora').Ora}
+ */
 export function createSpinner(text) {
   return ora({ text, color: "cyan" });
 }
@@ -201,6 +240,11 @@ export function showWelcomeScreen(config, characterManager) {
   );
 }
 
+/**
+ * Display the character selection gallery with all available characters.
+ * @param {object[]} characters - Array of character profiles
+ * @param {string|null} [activeId] - ID of the currently active character
+ */
 export function showCharacterGallery(characters, activeId = null) {
   console.log("");
   console.log(
