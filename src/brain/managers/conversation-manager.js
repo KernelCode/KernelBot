@@ -40,11 +40,22 @@ export class BrainConversationManager {
 
     if (this._cache.has(key)) return this._cache.get(key);
 
-    const rows = this._db.all(`
+    // Try exact match first (handles prefixed keys like "kernel:12345")
+    let rows = this._db.all(`
       SELECT role, content, timestamp FROM conversations
       WHERE chat_id = :chatId
       ORDER BY timestamp ASC
     `, { chatId: key });
+
+    // Fallback: if no results and key has character prefix, try with character_id filter
+    if (rows.length === 0 && this._characterId && key.startsWith(this._characterId + ':')) {
+      const rawChatId = key.slice(this._characterId.length + 1);
+      rows = this._db.all(`
+        SELECT role, content, timestamp FROM conversations
+        WHERE chat_id = :chatId AND character_id = :characterId
+        ORDER BY timestamp ASC
+      `, { chatId: rawChatId, characterId: this._characterId });
+    }
 
     const history = rows.map(r => {
       const msg = { role: r.role, content: r.content, timestamp: r.timestamp };
@@ -212,10 +223,19 @@ export class BrainConversationManager {
    * Return the number of messages stored for a chat.
    */
   getMessageCount(chatId) {
-    const row = this._db.get(
+    const key = String(chatId);
+    let row = this._db.get(
       'SELECT COUNT(*) as count FROM conversations WHERE chat_id = :chatId',
-      { chatId: String(chatId) },
+      { chatId: key },
     );
+    // Fallback for migrated data with unprefixed chat_id
+    if ((!row || row.count === 0) && this._characterId && key.startsWith(this._characterId + ':')) {
+      const rawChatId = key.slice(this._characterId.length + 1);
+      row = this._db.get(
+        'SELECT COUNT(*) as count FROM conversations WHERE chat_id = :chatId AND character_id = :characterId',
+        { chatId: rawChatId, characterId: this._characterId },
+      );
+    }
     return row?.count || 0;
   }
 
@@ -270,10 +290,18 @@ export class BrainConversationManager {
     const key = String(chatId);
     if (this._skillCache.has(key)) return this._skillCache.get(key);
 
-    const rows = this._db.all(
+    let rows = this._db.all(
       'SELECT skill_id FROM chat_skills WHERE chat_id = :chatId AND character_id = :characterId',
       { chatId: key, characterId: this._characterId || '' },
     );
+    // Fallback for migrated data with unprefixed chat_id
+    if (rows.length === 0 && this._characterId && key.startsWith(this._characterId + ':')) {
+      const rawChatId = key.slice(this._characterId.length + 1);
+      rows = this._db.all(
+        'SELECT skill_id FROM chat_skills WHERE chat_id = :chatId AND character_id = :characterId',
+        { chatId: rawChatId, characterId: this._characterId },
+      );
+    }
     const skills = rows.map(r => r.skill_id);
     this._skillCache.set(key, skills);
     return skills;

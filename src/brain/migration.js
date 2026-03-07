@@ -91,8 +91,10 @@ export class BrainMigration {
       this._db.transaction(() => {
         for (const [key, value] of Object.entries(raw)) {
           if (key === '_skills') {
-            // Migrate chat skills
-            for (const [chatId, skillIds] of Object.entries(value)) {
+            // Migrate chat skills — strip character prefix if present
+            for (const [rawChatId, skillIds] of Object.entries(value)) {
+              let chatId = rawChatId;
+              if (chatId.startsWith(charId + ':')) chatId = chatId.slice(charId.length + 1);
               for (const skillId of (Array.isArray(skillIds) ? skillIds : [])) {
                 this._db.run(
                   'INSERT OR IGNORE INTO chat_skills (character_id, chat_id, skill_id) VALUES (@charId, @chatId, @skillId)',
@@ -104,8 +106,12 @@ export class BrainMigration {
             continue;
           }
 
-          // Regular conversation — key is chatId (possibly with "kernel:" prefix)
-          const chatId = key;
+          // Regular conversation — strip character prefix if present (e.g. "kernel:12345" → "12345")
+          // The character_id column already captures the character scope
+          let chatId = key;
+          if (chatId.startsWith(charId + ':')) {
+            chatId = chatId.slice(charId.length + 1);
+          }
           const messages = Array.isArray(value) ? value : [];
           for (const msg of messages) {
             const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
