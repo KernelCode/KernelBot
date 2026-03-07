@@ -54,7 +54,10 @@
         tables = data.tables || [];
         renderTableDropdown();
       })
-      .catch(() => {});
+      .catch(err => {
+        console.error('[DB] Failed to load tables:', err);
+        emptyState.textContent = 'FAILED TO LOAD TABLES — CHECK CONNECTION';
+      });
   }
 
   function renderTableDropdown() {
