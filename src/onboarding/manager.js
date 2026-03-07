@@ -25,14 +25,54 @@ export class OnboardingManager {
     };
   }
 
-  /** True if no onboarding row exists for this user. */
+  /**
+   * True if user genuinely needs onboarding.
+   * Checks: no onboarding row AND no existing conversation/persona data.
+   * This prevents triggering onboarding for existing users who were active
+   * before the onboarding system was added.
+   */
   needsOnboarding(userId) {
     const id = String(userId);
+
+    // Already has an onboarding record — no need
     const row = this._db.get(
       'SELECT 1 FROM user_onboarding WHERE user_id = :userId',
       { userId: id },
     );
-    return !row;
+    if (row) return false;
+
+    // Check if user has existing data (conversations or persona) — they're not new
+    const hasConversations = this._db.get(
+      'SELECT 1 FROM conversations WHERE chat_id LIKE :pattern LIMIT 1',
+      { pattern: `%${id}%` },
+    );
+    if (hasConversations) {
+      // Auto-complete onboarding for existing users
+      this._autoCompleteExisting(id);
+      return false;
+    }
+
+    const hasPersona = this._db.get(
+      'SELECT 1 FROM user_personas WHERE user_id = :userId LIMIT 1',
+      { userId: id },
+    );
+    if (hasPersona) {
+      this._autoCompleteExisting(id);
+      return false;
+    }
+
+    return true;
+  }
+
+  /** Silently mark an existing user as onboarding-complete (they pre-date the system). */
+  _autoCompleteExisting(userId) {
+    const logger = getLogger();
+    const now = Date.now();
+    this._db.run(`
+      INSERT OR IGNORE INTO user_onboarding (user_id, phase, started_at, updated_at, completed_at)
+      VALUES (:userId, 'complete', :now, :now, :now)
+    `, { userId, now });
+    logger.info(`[Onboarding] Auto-completed for existing user ${userId} (pre-dates onboarding system)`);
   }
 
   /** True if onboarding has started but isn't complete. */
