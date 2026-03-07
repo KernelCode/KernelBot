@@ -45,22 +45,22 @@ export class CausalMemory {
         INSERT INTO causal_events (id, memory_id, job_id, trigger, goal, approach, tools_used, entities_involved, outcome, outcome_type, lesson, counterfactual, user_id, character_id, duration_ms, created_at, updated_at)
         VALUES ($id, $memoryId, $jobId, $trigger, $goal, $approach, $toolsUsed, $entities, $outcome, $outcomeType, $lesson, $counterfactual, $userId, $characterId, $durationMs, $now, $now)
       `, {
-        $id: id,
-        $memoryId: event.memoryId || null,
-        $jobId: event.jobId || null,
-        $trigger: (event.trigger || '').slice(0, 500),
-        $goal: (event.goal || '').slice(0, 500),
-        $approach: (event.approach || '').slice(0, 500),
-        $toolsUsed: event.toolsUsed ? JSON.stringify(event.toolsUsed) : null,
-        $entities: event.entitiesInvolved ? JSON.stringify(event.entitiesInvolved) : null,
-        $outcome: (event.outcome || '').slice(0, 1000),
-        $outcomeType: event.outcomeType || 'unknown',
-        $lesson: (event.lesson || '').slice(0, 500) || null,
-        $counterfactual: (event.counterfactual || '').slice(0, 500) || null,
-        $userId: event.userId || null,
-        $characterId: event.characterId || null,
-        $durationMs: event.durationMs || null,
-        $now: now,
+        id,
+        memoryId: event.memoryId || null,
+        jobId: event.jobId || null,
+        trigger: (event.trigger || '').slice(0, 500),
+        goal: (event.goal || '').slice(0, 500),
+        approach: (event.approach || '').slice(0, 500),
+        toolsUsed: event.toolsUsed ? JSON.stringify(event.toolsUsed) : null,
+        entities: event.entitiesInvolved ? JSON.stringify(event.entitiesInvolved) : null,
+        outcome: (event.outcome || '').slice(0, 1000),
+        outcomeType: event.outcomeType || 'unknown',
+        lesson: (event.lesson || '').slice(0, 500) || null,
+        counterfactual: (event.counterfactual || '').slice(0, 500) || null,
+        userId: event.userId || null,
+        characterId: event.characterId || null,
+        durationMs: event.durationMs || null,
+        now,
       });
 
       // Background embed for vector search
@@ -85,10 +85,10 @@ export class CausalMemory {
   addLesson(eventId, lesson, counterfactual = null) {
     try {
       const sets = ['lesson = $lesson', 'updated_at = $now'];
-      const params = { $eventId: eventId, $lesson: lesson, $now: Date.now() };
+      const params = { eventId, lesson, now: Date.now() };
       if (counterfactual) {
         sets.push('counterfactual = $counterfactual');
-        params.$counterfactual = counterfactual;
+        params.counterfactual = counterfactual;
       }
       this._db.run(`UPDATE causal_events SET ${sets.join(', ')} WHERE id = $eventId`, params);
     } catch (err) {
@@ -104,10 +104,10 @@ export class CausalMemory {
   updateOutcome(eventId, update) {
     try {
       const sets = ['updated_at = $now'];
-      const params = { $eventId: eventId, $now: Date.now() };
-      if (update.outcome) { sets.push('outcome = $outcome'); params.$outcome = update.outcome; }
-      if (update.outcomeType) { sets.push('outcome_type = $outcomeType'); params.$outcomeType = update.outcomeType; }
-      if (update.lesson) { sets.push('lesson = $lesson'); params.$lesson = update.lesson; }
+      const params = { eventId, now: Date.now() };
+      if (update.outcome) { sets.push('outcome = $outcome'); params.outcome = update.outcome; }
+      if (update.outcomeType) { sets.push('outcome_type = $outcomeType'); params.outcomeType = update.outcomeType; }
+      if (update.lesson) { sets.push('lesson = $lesson'); params.lesson = update.lesson; }
       this._db.run(`UPDATE causal_events SET ${sets.join(', ')} WHERE id = $eventId`, params);
     } catch (err) {
       getLogger().warn(`[CausalMemory] updateOutcome failed: ${err.message}`);
@@ -130,10 +130,11 @@ export class CausalMemory {
       if (results.length === 0) return this._fallbackTextSearch(description, limit);
 
       const ids = results.map(r => r.id);
-      const placeholders = ids.map(() => '?').join(',');
+      const params = {};
+      const placeholders = ids.map((id, i) => { params[`id${i}`] = id; return `$id${i}`; }).join(',');
       return this._db.all(
         `SELECT * FROM causal_events WHERE id IN (${placeholders}) ORDER BY created_at DESC`,
-        ...ids,
+        params,
       );
     } catch {
       return this._fallbackTextSearch(description, limit);
@@ -150,8 +151,8 @@ export class CausalMemory {
 
       const conditions = words.map((_, i) => `(LOWER(trigger) LIKE $w${i} OR LOWER(goal) LIKE $w${i} OR LOWER(approach) LIKE $w${i} OR LOWER(outcome) LIKE $w${i})`);
       const params = {};
-      words.forEach((w, i) => { params[`$w${i}`] = `%${w}%`; });
-      params.$limit = limit;
+      words.forEach((w, i) => { params[`w${i}`] = `%${w}%`; });
+      params.limit = limit;
 
       return this._db.all(`
         SELECT * FROM causal_events
@@ -177,7 +178,7 @@ export class CausalMemory {
         WHERE entities_involved LIKE $pattern
         ORDER BY created_at DESC
         LIMIT $limit
-      `, { $pattern: `%${entityId}%`, $limit: limit });
+      `, { pattern: `%${entityId}%`, limit });
     } catch {
       return [];
     }
@@ -195,7 +196,7 @@ export class CausalMemory {
         WHERE outcome_type = 'failure'
         ORDER BY created_at DESC
         LIMIT $limit
-      `, { $limit: limit });
+      `, { limit });
     } catch {
       return [];
     }
@@ -215,10 +216,11 @@ export class CausalMemory {
         const hits = await this._db.vectorSearch('causal_vectors', taskPattern, limit * 2);
         if (hits.length > 0) {
           const ids = hits.map(h => h.id);
-          const placeholders = ids.map(() => '?').join(',');
+          const params = {};
+          const placeholders = ids.map((id, i) => { params[`id${i}`] = id; return `$id${i}`; }).join(',');
           const rows = this._db.all(
             `SELECT * FROM causal_events WHERE id IN (${placeholders}) AND outcome_type = 'success'`,
-            ...ids,
+            params,
           );
           const rowMap = new Map(rows.map(r => [r.id, r]));
           const ordered = ids.map(id => rowMap.get(id)).filter(Boolean).slice(0, limit);
@@ -237,7 +239,7 @@ export class CausalMemory {
           AND (LOWER(trigger) LIKE $pattern OR LOWER(goal) LIKE $pattern)
         ORDER BY created_at DESC
         LIMIT $limit
-      `, { $pattern: `%${taskPattern.toLowerCase()}%`, $limit: limit });
+      `, { pattern: `%${taskPattern.toLowerCase()}%`, limit });
     } catch {
       return [];
     }
@@ -250,7 +252,7 @@ export class CausalMemory {
    */
   getEventByJobId(jobId) {
     try {
-      return this._db.get('SELECT * FROM causal_events WHERE job_id = $jobId', { $jobId: jobId });
+      return this._db.get('SELECT * FROM causal_events WHERE job_id = $jobId', { jobId });
     } catch {
       return null;
     }
@@ -276,7 +278,7 @@ export class CausalMemory {
       WHERE created_at > $cutoff
       ORDER BY created_at DESC
       LIMIT 30
-    `, { $cutoff: cutoff });
+    `, { cutoff });
 
     if (events.length < 3) {
       logger.debug('[CausalMemory] Too few causal events for pattern extraction');
@@ -363,7 +365,7 @@ Rules:
             SELECT * FROM task_patterns
             WHERE pattern_type = $type AND description = $desc
             LIMIT 1
-          `, { $type: pat.pattern_type, $desc: pat.description });
+          `, { type: pat.pattern_type, desc: pat.description });
 
           if (existing) {
             // Update confidence and evidence
@@ -376,10 +378,10 @@ Rules:
                   updated_at = $now
               WHERE id = $id
             `, {
-              $id: existing.id,
-              $confidence: Math.min(1.0, (existing.confidence + pat.confidence) / 2 + 0.05),
-              $evidence: JSON.stringify(mergedEvidence),
-              $now: now,
+              id: existing.id,
+              confidence: Math.min(1.0, (existing.confidence + pat.confidence) / 2 + 0.05),
+              evidence: JSON.stringify(mergedEvidence),
+              now,
             });
             stats.patternsUpdated++;
           } else {
@@ -388,16 +390,16 @@ Rules:
               INSERT INTO task_patterns (id, pattern_type, description, trigger_pattern, recommended_approach, avoid, evidence_ids, confidence, character_id, created_at, updated_at)
               VALUES ($id, $type, $desc, $trigger, $approach, $avoid, $evidence, $confidence, $characterId, $now, $now)
             `, {
-              $id: id,
-              $type: pat.pattern_type,
-              $desc: pat.description,
-              $trigger: pat.trigger_pattern || null,
-              $approach: pat.recommended_approach || null,
-              $avoid: pat.avoid || null,
-              $evidence: JSON.stringify(evidenceIds),
-              $confidence: pat.confidence || 0.5,
-              $characterId: characterId,
-              $now: now,
+              id,
+              type: pat.pattern_type,
+              desc: pat.description,
+              trigger: pat.trigger_pattern || null,
+              approach: pat.recommended_approach || null,
+              avoid: pat.avoid || null,
+              evidence: JSON.stringify(evidenceIds),
+              confidence: pat.confidence || 0.5,
+              characterId,
+              now,
             });
             stats.patternsCreated++;
           }
@@ -508,7 +510,7 @@ Rules:
           AND (character_id = $characterId OR character_id IS NULL)
         ORDER BY confidence DESC
         LIMIT $limit
-      `, { $characterId: characterId, $limit: limit });
+      `, { characterId, limit });
 
       if (patterns.length === 0) return null;
 

@@ -153,15 +153,15 @@ export class FeedbackEngine {
         INSERT INTO feedback_signals (id, signal_type, trigger_message, bot_message, context, user_id, chat_id, character_id, created_at)
         VALUES ($id, $type, $trigger, $bot, $context, $userId, $chatId, $characterId, $now)
       `, {
-        $id: signalId,
-        $type: signal.type,
-        $trigger: (signal.trigger || '').slice(0, 500),
-        $bot: (signal.bot || '').slice(0, 500),
-        $context: JSON.stringify(signal.detail || {}),
-        $userId: userId || null,
-        $chatId: chatId || null,
-        $characterId: characterId || null,
-        $now: now,
+        id: signalId,
+        type: signal.type,
+        trigger: (signal.trigger || '').slice(0, 500),
+        bot: (signal.bot || '').slice(0, 500),
+        context: JSON.stringify(signal.detail || {}),
+        userId: userId || null,
+        chatId: chatId || null,
+        characterId: characterId || null,
+        now,
       });
     } catch (err) {
       logger.warn(`[FeedbackEngine] Failed to store signal: ${err.message}`);
@@ -217,11 +217,11 @@ export class FeedbackEngine {
           AND (character_id = $characterId OR character_id IS NULL)
           AND updated_at > $recentThreshold
       `, {
-        $boost: boost,
-        $now: Date.now(),
-        $userId: userId || null,
-        $characterId: characterId || null,
-        $recentThreshold: Date.now() - 24 * 3600_000, // last 24h
+        boost,
+        now: Date.now(),
+        userId: userId || null,
+        characterId: characterId || null,
+        recentThreshold: Date.now() - 24 * 3600_000, // last 24h
       });
     } catch (err) {
       getLogger().warn(`[FeedbackEngine] Reinforce failed: ${err.message}`);
@@ -242,11 +242,11 @@ export class FeedbackEngine {
           AND (character_id = $characterId OR character_id IS NULL)
           AND updated_at > $recentThreshold
       `, {
-        $penalty: penalty,
-        $now: Date.now(),
-        $userId: userId || null,
-        $characterId: characterId || null,
-        $recentThreshold: Date.now() - 24 * 3600_000,
+        penalty,
+        now: Date.now(),
+        userId: userId || null,
+        characterId: characterId || null,
+        recentThreshold: Date.now() - 24 * 3600_000,
       });
     } catch (err) {
       getLogger().warn(`[FeedbackEngine] Weaken failed: ${err.message}`);
@@ -345,7 +345,7 @@ export class FeedbackEngine {
         WHERE created_at > $cutoff
         ORDER BY created_at DESC
         LIMIT 1
-      `, { $cutoff: Date.now() - 10 * 60_000 }); // last 10 minutes
+      `, { cutoff: Date.now() - 10 * 60_000 }); // last 10 minutes
 
       if (recentOutcome) {
         // Check if a causal event already exists for this job
@@ -397,7 +397,7 @@ export class FeedbackEngine {
               evidence_count = evidence_count + 1,
               updated_at = $now
           WHERE id = $id
-        `, { $id: existing.id, $now: now });
+        `, { id: existing.id, now });
 
         logger.debug(`[FeedbackEngine] Reinforced adjustment ${existing.id} (${category}): evidence=${existing.evidence_count + 1}`);
       } else {
@@ -407,14 +407,14 @@ export class FeedbackEngine {
           INSERT INTO behavioral_adjustments (id, trigger_pattern, wrong_behavior, right_behavior, category, confidence, evidence_count, user_id, character_id, active, created_at, updated_at)
           VALUES ($id, $trigger, $wrong, $right, $category, 0.5, 1, $userId, $characterId, 1, $now, $now)
         `, {
-          $id: id,
-          $trigger: trigger_pattern,
-          $wrong: wrong_behavior || null,
-          $right: right_behavior,
-          $category: category || null,
-          $userId: userId || null,
-          $characterId: characterId || null,
-          $now: now,
+          id,
+          trigger: trigger_pattern,
+          wrong: wrong_behavior || null,
+          right: right_behavior,
+          category: category || null,
+          userId: userId || null,
+          characterId: characterId || null,
+          now,
         });
 
         logger.debug(`[FeedbackEngine] Created adjustment ${id} (${category}): ${right_behavior}`);
@@ -444,10 +444,10 @@ export class FeedbackEngine {
               AND (user_id = $userId OR user_id IS NULL)
               AND (character_id = $characterId OR character_id IS NULL)
           `, {
-            $id: hit.id,
-            $category: category || null,
-            $userId: userId || null,
-            $characterId: characterId || null,
+            id: hit.id,
+            category: category || null,
+            userId: userId || null,
+            characterId: characterId || null,
           });
           if (row) return row;
         }
@@ -467,10 +467,10 @@ export class FeedbackEngine {
           AND (character_id = $characterId OR character_id IS NULL)
         LIMIT 1
       `, {
-        $category: category || null,
-        $right: rightBehavior,
-        $userId: userId || null,
-        $characterId: characterId || null,
+        category: category || null,
+        right: rightBehavior,
+        userId: userId || null,
+        characterId: characterId || null,
       });
     } catch {
       return null;
@@ -494,15 +494,15 @@ export class FeedbackEngine {
           AND (user_id = $userId OR user_id IS NULL)
           AND (character_id = $characterId OR character_id IS NULL)
       `;
-      const params = { $userId: userId || null, $characterId: characterId || null };
+      const params = { userId: userId || null, characterId: characterId || null };
 
       if (category) {
         sql += ` AND category = $category`;
-        params.$category = category;
+        params.category = category;
       }
 
       sql += ` ORDER BY (confidence * evidence_count) DESC LIMIT $limit`;
-      params.$limit = limit;
+      params.limit = limit;
 
       return this._db.all(sql, params);
     } catch {
@@ -554,14 +554,14 @@ export class FeedbackEngine {
         WHERE active = 1
           AND updated_at < $threshold
           AND confidence > 0.0
-      `, { $now: Date.now(), $threshold: threshold });
+      `, { now: Date.now(), threshold });
 
       // Deactivate adjustments that have decayed to zero
       this._db.run(`
         UPDATE behavioral_adjustments
         SET active = 0, updated_at = $now
         WHERE active = 1 AND confidence <= 0.0
-      `, { $now: Date.now() });
+      `, { now: Date.now() });
 
       if (result.changes > 0) {
         logger.info(`[FeedbackEngine] Decayed ${result.changes} stale adjustments`);
@@ -587,12 +587,12 @@ export class FeedbackEngine {
         INSERT OR IGNORE INTO task_outcomes (job_id, worker_type, task_summary, user_id, character_id, created_at)
         VALUES ($jobId, $workerType, $taskSummary, $userId, $characterId, $now)
       `, {
-        $jobId: jobId,
-        $workerType: workerType,
-        $taskSummary: (taskSummary || '').slice(0, 500),
-        $userId: userId || null,
-        $characterId: characterId || null,
-        $now: Date.now(),
+        jobId,
+        workerType,
+        taskSummary: (taskSummary || '').slice(0, 500),
+        userId: userId || null,
+        characterId: characterId || null,
+        now: Date.now(),
       });
     } catch (err) {
       getLogger().warn(`[FeedbackEngine] recordJobCompletion failed: ${err.message}`);
@@ -607,23 +607,23 @@ export class FeedbackEngine {
   recordTaskOutcome(jobId, outcome) {
     try {
       const sets = [];
-      const params = { $jobId: jobId };
+      const params = { jobId };
 
       if (outcome.result_used !== undefined) {
         sets.push('result_used = $resultUsed');
-        params.$resultUsed = outcome.result_used ? 1 : 0;
+        params.resultUsed = outcome.result_used ? 1 : 0;
       }
       if (outcome.follow_up_requested !== undefined) {
         sets.push('follow_up_requested = $followUp');
-        params.$followUp = outcome.follow_up_requested ? 1 : 0;
+        params.followUp = outcome.follow_up_requested ? 1 : 0;
       }
       if (outcome.user_satisfaction) {
         sets.push('user_satisfaction = $satisfaction');
-        params.$satisfaction = outcome.user_satisfaction;
+        params.satisfaction = outcome.user_satisfaction;
       }
       if (outcome.time_to_response !== undefined) {
         sets.push('time_to_response = $timeToResponse');
-        params.$timeToResponse = outcome.time_to_response;
+        params.timeToResponse = outcome.time_to_response;
       }
 
       if (sets.length > 0) {
@@ -652,7 +652,7 @@ export class FeedbackEngine {
         WHERE worker_type = $workerType
         GROUP BY worker_type
         LIMIT $limit
-      `, { $workerType: workerType, $limit: limit });
+      `, { workerType, limit });
     } catch {
       return [];
     }

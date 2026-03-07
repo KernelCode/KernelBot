@@ -106,7 +106,7 @@ export class BehavioralDNA {
   initializeDefaultTraits(characterId) {
     const existing = this._db.get(
       'SELECT COUNT(*) as cnt FROM dna_traits WHERE character_id = $cid AND user_id IS NULL',
-      { $cid: characterId },
+      { cid: characterId },
     );
     if (existing && existing.cnt > 0) return;
 
@@ -119,13 +119,13 @@ export class BehavioralDNA {
           INSERT INTO dna_traits (id, category, name, description, value, evidence_count, trend, user_id, character_id, created_at, updated_at)
           VALUES ($id, $cat, $name, $desc, $val, 0, 'stable', NULL, $cid, $now, $now)
         `, {
-          $id: randomUUID(),
-          $cat: t.category,
-          $name: t.name,
-          $desc: t.description,
-          $val: t.value,
-          $cid: characterId,
-          $now: now,
+          id: randomUUID(),
+          cat: t.category,
+          name: t.name,
+          desc: t.description,
+          val: t.value,
+          cid: characterId,
+          now,
         });
       }
     });
@@ -140,13 +140,13 @@ export class BehavioralDNA {
     if (userId) {
       const userTrait = this._db.get(
         'SELECT * FROM dna_traits WHERE name = $name AND user_id = $uid AND character_id = $cid',
-        { $name: name, $uid: userId, $cid: characterId },
+        { name, uid: userId, cid: characterId },
       );
       if (userTrait) return userTrait;
     }
     return this._db.get(
       'SELECT * FROM dna_traits WHERE name = $name AND user_id IS NULL AND character_id = $cid',
-      { $name: name, $cid: characterId },
+      { name, cid: characterId },
     ) || null;
   }
 
@@ -158,14 +158,14 @@ export class BehavioralDNA {
 
     let trait = this._db.get(
       'SELECT * FROM dna_traits WHERE name = $name AND (user_id = $uid OR (user_id IS NULL AND $uid IS NULL)) AND character_id = $cid',
-      { $name: name, $uid: userId, $cid: characterId },
+      { name, uid: userId, cid: characterId },
     );
 
     // If user-specific doesn't exist and we have a userId, clone from global
     if (!trait && userId) {
       const global = this._db.get(
         'SELECT * FROM dna_traits WHERE name = $name AND user_id IS NULL AND character_id = $cid',
-        { $name: name, $cid: characterId },
+        { name, cid: characterId },
       );
       if (!global) return null;
 
@@ -175,8 +175,8 @@ export class BehavioralDNA {
         INSERT INTO dna_traits (id, category, name, description, value, evidence_count, trend, user_id, character_id, created_at, updated_at)
         VALUES ($id, $cat, $name, $desc, $val, 0, 'stable', $uid, $cid, $now, $now)
       `, {
-        $id: newId, $cat: global.category, $name: name, $desc: global.description,
-        $val: global.value, $uid: userId, $cid: characterId, $now: now,
+        id: newId, cat: global.category, name, desc: global.description,
+        val: global.value, uid: userId, cid: characterId, now: Date.now(),
       });
       trait = { ...global, id: newId, user_id: userId };
     }
@@ -194,8 +194,8 @@ export class BehavioralDNA {
       INSERT INTO dna_trait_history (trait_id, old_value, new_value, reason, signal_id, causal_event_id, created_at)
       VALUES ($tid, $old, $new, $reason, $sid, $ceid, $now)
     `, {
-      $tid: trait.id, $old: oldValue, $new: newValue, $reason: reason,
-      $sid: signalId, $ceid: causalEventId, $now: now,
+      tid: trait.id, old: oldValue, new: newValue, reason,
+      sid: signalId, ceid: causalEventId, now,
     });
 
     // Calculate trend from last 5 entries
@@ -205,7 +205,7 @@ export class BehavioralDNA {
     this._db.run(`
       UPDATE dna_traits SET value = $val, evidence_count = evidence_count + 1, trend = $trend, updated_at = $now
       WHERE id = $tid
-    `, { $val: newValue, $trend: trend, $now: now, $tid: trait.id });
+    `, { val: newValue, trend, now, tid: trait.id });
 
     logger.debug(`[BehavioralDNA] Trait ${name}: ${oldValue.toFixed(2)} → ${newValue.toFixed(2)} (${reason})`);
     return { ...trait, value: newValue, trend };
@@ -214,7 +214,7 @@ export class BehavioralDNA {
   _calculateTrend(traitId) {
     const history = this._db.all(
       'SELECT old_value, new_value FROM dna_trait_history WHERE trait_id = $tid ORDER BY created_at DESC LIMIT 5',
-      { $tid: traitId },
+      { tid: traitId },
     );
     if (history.length < 2) return 'stable';
 
@@ -236,7 +236,7 @@ export class BehavioralDNA {
     const cutoff = Date.now() - days * 24 * 3600_000;
     return this._db.all(
       'SELECT * FROM dna_trait_history WHERE trait_id = $tid AND created_at > $cutoff ORDER BY created_at DESC',
-      { $tid: trait.id, $cutoff: cutoff },
+      { tid: trait.id, cutoff },
     );
   }
 
@@ -246,9 +246,11 @@ export class BehavioralDNA {
    * Get or create a per-user communication profile.
    */
   getProfile(userId, characterId = 'default') {
+    if (!userId) return null;
+
     let profile = this._db.get(
       'SELECT * FROM communication_profiles WHERE user_id = $uid AND (character_id = $cid OR character_id IS NULL)',
-      { $uid: userId, $cid: characterId },
+      { uid: userId, cid: characterId },
     );
 
     if (!profile) {
@@ -257,9 +259,9 @@ export class BehavioralDNA {
       this._db.run(`
         INSERT INTO communication_profiles (id, user_id, character_id, created_at, updated_at)
         VALUES ($id, $uid, $cid, $now, $now)
-      `, { $id: id, $uid: userId, $cid: characterId, $now: now });
+      `, { id, uid: userId, cid: characterId, now });
 
-      profile = this._db.get('SELECT * FROM communication_profiles WHERE id = $id', { $id: id });
+      profile = this._db.get('SELECT * FROM communication_profiles WHERE id = $id', { id });
     }
 
     return profile;
@@ -281,7 +283,7 @@ export class BehavioralDNA {
     this._db.run(`
       UPDATE communication_profiles SET ${field} = $val, evidence_count = evidence_count + 1, updated_at = $now
       WHERE id = $id
-    `, { $val: newValue, $now: Date.now(), $id: profile.id });
+    `, { val: newValue, now: Date.now(), id: profile.id });
 
     getLogger().debug(`[BehavioralDNA] Profile ${userId}.${field}: ${oldValue.toFixed(2)} → ${newValue.toFixed(2)} (${reason})`);
     return { ...profile, [field]: newValue };
@@ -327,7 +329,7 @@ export class BehavioralDNA {
     if (!NARRATIVE_SECTIONS.includes(section)) return null;
     return this._db.get(
       'SELECT * FROM self_narrative WHERE id = $id AND character_id = $cid',
-      { $id: section, $cid: characterId },
+      { id: section, cid: characterId },
     );
   }
 
@@ -343,14 +345,14 @@ export class BehavioralDNA {
       this._db.run(`
         UPDATE self_narrative SET content = $content, version = version + 1, last_evidence = $evidence, updated_at = $now
         WHERE id = $id AND character_id = $cid
-      `, { $content: newContent, $evidence: evidence, $now: now, $id: section, $cid: characterId });
+      `, { content: newContent, evidence, now, id: section, cid: characterId });
       return { ...existing, content: newContent, version: existing.version + 1 };
     }
 
     this._db.run(`
       INSERT INTO self_narrative (id, content, version, last_evidence, character_id, created_at, updated_at)
       VALUES ($id, $content, 1, $evidence, $cid, $now, $now)
-    `, { $id: section, $content: newContent, $evidence: evidence, $cid: characterId, $now: now });
+    `, { id: section, content: newContent, evidence, cid: characterId, now });
 
     return { id: section, content: newContent, version: 1, character_id: characterId };
   }
@@ -416,7 +418,7 @@ export class BehavioralDNA {
 
     const signals = this._db.all(
       'SELECT * FROM feedback_signals WHERE created_at > $cutoff AND (character_id = $cid OR character_id IS NULL) ORDER BY created_at ASC',
-      { $cutoff: cutoff, $cid: characterId },
+      { cutoff, cid: characterId },
     );
 
     let adjustments = 0;
@@ -452,7 +454,7 @@ export class BehavioralDNA {
 
     const events = this._db.all(
       'SELECT * FROM causal_events WHERE created_at > $cutoff AND (character_id = $cid OR character_id IS NULL) ORDER BY created_at ASC',
-      { $cutoff: cutoff, $cid: characterId },
+      { cutoff, cid: characterId },
     );
 
     let adjustments = 0;
@@ -490,7 +492,7 @@ export class BehavioralDNA {
     // Gather evidence: recent traits, signals, causal events
     const traits = this._db.all(
       'SELECT name, value, trend, evidence_count FROM dna_traits WHERE character_id = $cid AND user_id IS NULL',
-      { $cid: characterId },
+      { cid: characterId },
     );
 
     const recentHistory = this._db.all(
@@ -499,7 +501,7 @@ export class BehavioralDNA {
        JOIN dna_traits dt ON dth.trait_id = dt.id
        WHERE dt.character_id = $cid
        ORDER BY dth.created_at DESC LIMIT 20`,
-      { $cid: characterId },
+      { cid: characterId },
     );
 
     if (recentHistory.length < 3) return; // Not enough evidence
@@ -609,7 +611,7 @@ Rewrite the "${section}" section to reflect recent developments. Keep the same v
     // Active traits summary (global)
     const traits = this._db.all(
       'SELECT category, name, value, trend FROM dna_traits WHERE character_id = $cid AND user_id IS NULL ORDER BY category, name',
-      { $cid: characterId },
+      { cid: characterId },
     );
 
     if (traits.length > 0) {
@@ -646,7 +648,7 @@ Rewrite the "${section}" section to reflect recent developments. Keep the same v
   getDNASnapshot(characterId = 'default') {
     const traits = this._db.all(
       'SELECT * FROM dna_traits WHERE character_id = $cid AND user_id IS NULL ORDER BY category, name',
-      { $cid: characterId },
+      { cid: characterId },
     );
 
     const narratives = {};
@@ -657,14 +659,14 @@ Rewrite the "${section}" section to reflect recent developments. Keep the same v
 
     const profileCount = this._db.get(
       'SELECT COUNT(*) as cnt FROM communication_profiles WHERE character_id = $cid',
-      { $cid: characterId },
+      { cid: characterId },
     )?.cnt || 0;
 
     const totalHistory = this._db.get(
       `SELECT COUNT(*) as cnt FROM dna_trait_history dth
        JOIN dna_traits dt ON dth.trait_id = dt.id
        WHERE dt.character_id = $cid`,
-      { $cid: characterId },
+      { cid: characterId },
     )?.cnt || 0;
 
     return {

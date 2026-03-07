@@ -88,7 +88,7 @@ class OpenAIEmbedder extends BaseEmbedder {
 // ── Google ────────────────────────────────────────────────────────
 
 class GoogleEmbedder extends BaseEmbedder {
-  constructor(apiKey, model = 'text-embedding-004') {
+  constructor(apiKey, model = 'gemini-embedding-001') {
     super();
     this._apiKey = apiKey;
     this._model = model;
@@ -114,6 +114,7 @@ class GoogleEmbedder extends BaseEmbedder {
       const res = await client.models.embedContent({
         model: this._model,
         contents: text.slice(0, 8000),
+        config: { outputDimensionality: this._dimensions },
       });
       return new Float32Array(res.embeddings[0].values);
     } catch (err) {
