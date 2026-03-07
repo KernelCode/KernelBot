@@ -67,7 +67,7 @@ const DEFAULTS = {
     port: 3000,
   },
   brain_db: {
-    enabled: false,
+    enabled: true,
     path: null,
     embedding_provider: 'auto',
     embedding_model: null,
