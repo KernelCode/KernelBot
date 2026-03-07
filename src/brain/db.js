@@ -85,6 +85,7 @@ export class BrainDB {
         importance INTEGER DEFAULT 5,
         related_topics TEXT,           -- JSON array (semantic only)
         sources TEXT,                  -- JSON array (semantic only)
+        scope TEXT DEFAULT 'org_wide',
         created_at INTEGER NOT NULL,
         updated_at INTEGER
       );

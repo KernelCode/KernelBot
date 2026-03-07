@@ -55,8 +55,8 @@ export class SynthesisLoop {
       );
       const since = lastConsolidation?.created_at || 0;
       const unprocessed = this._db.get(
-        `SELECT COUNT(*) as cnt FROM memories WHERE type = 'episodic' AND created_at > ?`,
-        { 1: since }
+        `SELECT COUNT(*) as cnt FROM memories WHERE type = 'episodic' AND created_at > :since`,
+        { since }
       );
       const count = unprocessed?.cnt || 0;
       const urgency = Math.min(1.0, count / 50);
@@ -80,8 +80,8 @@ export class SynthesisLoop {
     // 3. Knowledge gaps — low-confidence beliefs
     try {
       const gaps = this._db.get(
-        `SELECT COUNT(*) as cnt FROM beliefs WHERE confidence < 0.4 AND updated_at < ?`,
-        { 1: now - 24 * 3600_000 }
+        `SELECT COUNT(*) as cnt FROM beliefs WHERE confidence < 0.4 AND updated_at < :cutoff`,
+        { cutoff: now - 24 * 3600_000 }
       );
       const count = gaps?.cnt || 0;
       const urgency = Math.min(1.0, count / 5);
@@ -125,8 +125,8 @@ export class SynthesisLoop {
     // 6. Narrative — staleness of self narratives
     try {
       const oldest = this._db.get(
-        `SELECT MIN(updated_at) as oldest_at FROM self_narrative WHERE character_id = ?`,
-        { 1: this._characterId }
+        `SELECT MIN(updated_at) as oldest_at FROM self_narrative WHERE character_id = :characterId`,
+        { characterId: this._characterId }
       );
       if (oldest?.oldest_at) {
         const daysSince = (now - oldest.oldest_at) / (24 * 3600_000);
@@ -227,8 +227,8 @@ export class SynthesisLoop {
 
     this._db.run(
       `INSERT INTO synthesis_outcomes (id, action_type, target, urgency_score, result_quality, duration_ms, character_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      { 1: id, 2: action.action, 3: action.target || null, 4: action.urgency, 5: quality, 6: result.duration_ms, 7: this._characterId, 8: Date.now() }
+       VALUES (:id, :actionType, :target, :urgency, :quality, :duration, :characterId, :createdAt)`,
+      { id, actionType: action.action, target: action.target || null, urgency: action.urgency, quality, duration: result.duration_ms, characterId: this._characterId, createdAt: Date.now() }
     );
 
     return { id, quality, duration_ms: result.duration_ms };
@@ -240,7 +240,7 @@ export class SynthesisLoop {
     const type = action.action;
     const isSuccess = measurement.quality === 'productive';
 
-    const w = this._db.get(`SELECT * FROM synthesis_weights WHERE action_type = ?`, { 1: type });
+    const w = this._db.get(`SELECT * FROM synthesis_weights WHERE action_type = :type`, { type });
     if (!w) return;
 
     const newTotal = (w.total_runs || 0) + 1;
@@ -251,9 +251,9 @@ export class SynthesisLoop {
 
     this._db.run(
       `UPDATE synthesis_weights
-       SET current_weight = ?, success_rate = ?, total_runs = ?, last_run_at = ?
-       WHERE action_type = ?`,
-      { 1: newWeight, 2: newSuccessRate, 3: newTotal, 4: Date.now(), 5: type }
+       SET current_weight = :weight, success_rate = :rate, total_runs = :total, last_run_at = :lastRun
+       WHERE action_type = :type`,
+      { weight: newWeight, rate: newSuccessRate, total: newTotal, lastRun: Date.now(), type }
     );
   }
 
@@ -328,8 +328,8 @@ export class SynthesisLoop {
       const nudge = (trait.target_value - trait.value) * 0.1;
       const newValue = Math.max(0, Math.min(1, trait.value + nudge));
       this._db.run(
-        `UPDATE dna_traits SET value = ?, updated_at = ? WHERE id = ?`,
-        { 1: newValue, 2: Date.now(), 3: trait.id }
+        `UPDATE dna_traits SET value = :value, updated_at = :now WHERE id = :id`,
+        { value: newValue, now: Date.now(), id: trait.id }
       );
     }
   }
@@ -340,16 +340,16 @@ export class SynthesisLoop {
 
     // Decay old beliefs confidence × 0.9
     this._db.run(
-      `UPDATE beliefs SET confidence = confidence * 0.9, updated_at = ?
-       WHERE updated_at < ? AND confidence > 0.1`,
-      { 1: now, 2: staleCutoff }
+      `UPDATE beliefs SET confidence = confidence * 0.9, updated_at = :now
+       WHERE updated_at < :cutoff AND confidence > 0.1`,
+      { now, cutoff: staleCutoff }
     );
 
     // Decay old adjustments
     this._db.run(
-      `UPDATE behavioral_adjustments SET confidence = confidence * 0.9, updated_at = ?
-       WHERE updated_at < ? AND confidence > 0.1`,
-      { 1: now, 2: staleCutoff }
+      `UPDATE behavioral_adjustments SET confidence = confidence * 0.9, updated_at = :now
+       WHERE updated_at < :cutoff AND confidence > 0.1`,
+      { now, cutoff: staleCutoff }
     );
   }
 
@@ -370,8 +370,8 @@ export class SynthesisLoop {
       if (existingSet.has(action)) continue;
       this._db.run(
         `INSERT INTO synthesis_weights (action_type, base_weight, current_weight, cooldown_ms, character_id)
-         VALUES (?, ?, ?, ?, ?)`,
-        { 1: action, 2: defaults.base_weight, 3: defaults.base_weight, 4: defaults.cooldown_ms, 5: this._characterId }
+         VALUES (:action, :baseWeight, :currentWeight, :cooldown, :characterId)`,
+        { action, baseWeight: defaults.base_weight, currentWeight: defaults.base_weight, cooldown: defaults.cooldown_ms, characterId: this._characterId }
       );
     }
   }

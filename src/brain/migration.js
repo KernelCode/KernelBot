@@ -619,8 +619,8 @@ export class BrainMigration {
               if (vectors[j]) {
                 const buf = Buffer.from(vectors[j].buffer);
                 this._db.run(
-                  'INSERT OR REPLACE INTO memory_vectors (memory_id, embedding) VALUES (?, ?)',
-                  { 1: batch[j].id, 2: buf },
+                  'INSERT OR REPLACE INTO memory_vectors (memory_id, embedding) VALUES (:memoryId, :embedding)',
+                  { memoryId: batch[j].id, embedding: buf },
                 );
                 embedded++;
               }

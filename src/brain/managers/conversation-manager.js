@@ -24,6 +24,21 @@ export class BrainConversationManager {
     this._skillCache = new Map();
   }
 
+  /**
+   * Enumerate all conversations as a Map (compat with file-based ConversationManager).
+   * Returns Map<chatId, messages[]> from SQLite.
+   */
+  get conversations() {
+    const rows = this._db.all(`
+      SELECT DISTINCT chat_id FROM conversations ORDER BY chat_id
+    `);
+    const map = new Map();
+    for (const row of rows) {
+      map.set(row.chat_id, this.getHistory(row.chat_id));
+    }
+    return map;
+  }
+
   /** No-op — data is always in SQLite. Returns true for compat. */
   load() { return true; }
 
