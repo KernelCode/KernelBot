@@ -342,16 +342,17 @@ export class BehavioralDNA {
 
     const existing = this.getNarrative(section, characterId);
     if (existing) {
+      // Clear summary — content changed, summary needs regeneration
       this._db.run(`
-        UPDATE self_narrative SET content = $content, version = version + 1, last_evidence = $evidence, updated_at = $now
+        UPDATE self_narrative SET content = $content, summary = NULL, version = version + 1, last_evidence = $evidence, updated_at = $now
         WHERE id = $id AND character_id = $cid
       `, { content: newContent, evidence, now, id: section, cid: characterId });
-      return { ...existing, content: newContent, version: existing.version + 1 };
+      return { ...existing, content: newContent, summary: null, version: existing.version + 1 };
     }
 
     this._db.run(`
-      INSERT INTO self_narrative (id, content, version, last_evidence, character_id, created_at, updated_at)
-      VALUES ($id, $content, 1, $evidence, $cid, $now, $now)
+      INSERT INTO self_narrative (id, content, summary, version, last_evidence, character_id, created_at, updated_at)
+      VALUES ($id, $content, NULL, 1, $evidence, $cid, $now, $now)
     `, { id: section, content: newContent, evidence, cid: characterId, now });
 
     return { id: section, content: newContent, version: 1, character_id: characterId };
@@ -435,8 +436,19 @@ export class BehavioralDNA {
   }
 
   /**
+   * Check if any narrative sections are missing summaries.
+   */
+  hasMissingSummaries(characterId = 'default') {
+    for (const section of NARRATIVE_SECTIONS) {
+      const narrative = this.getNarrative(section, characterId);
+      if (narrative?.content && !narrative.summary) return true;
+    }
+    return false;
+  }
+
+  /**
    * Generate compressed summaries for all narrative sections using an LLM.
-   * Can be triggered manually or auto-run on startup if summaries are missing.
+   * Auto-runs on startup if summaries are missing. Can also be triggered manually.
    */
   async generateNarrativeSummaries(characterId = 'default', provider) {
     const logger = getLogger();
@@ -445,25 +457,35 @@ export class BehavioralDNA {
     for (const section of NARRATIVE_SECTIONS) {
       const narrative = this.getNarrative(section, characterId);
       if (!narrative?.content) continue;
-      // Skip if summary already exists and content hasn't changed significantly
+      // Skip if summary already exists
       if (narrative.summary && narrative.summary.length > 50) continue;
 
-      try {
-        const prompt = `Compress the following self-narrative section "${section}" into a dense summary of 200-500 characters. Keep the essential personality, key facts, and current state. Write in first person. Return ONLY the summary, no commentary.\n\n${narrative.content}`;
-        const response = await provider.chat({ messages: [{ role: 'user', content: prompt }] });
-        const summary = (response.text || '').trim();
-
-        if (summary && summary.length >= 50) {
-          this.updateNarrativeSummary(section, summary, characterId);
-          generated++;
-          logger.info(`[BehavioralDNA] Generated summary for "${section}" (${summary.length} chars)`);
-        }
-      } catch (err) {
-        logger.warn(`[BehavioralDNA] Summary generation failed for "${section}": ${err.message}`);
-      }
+      const ok = await this._generateSummaryForSection(section, narrative.content, characterId, provider);
+      if (ok) generated++;
     }
 
     return generated;
+  }
+
+  /**
+   * Generate a summary for a single narrative section.
+   */
+  async _generateSummaryForSection(section, content, characterId, provider) {
+    const logger = getLogger();
+    try {
+      const prompt = `Compress the following self-narrative section "${section}" into a dense summary of 200-500 characters. Keep the essential personality, key facts, and current state. Write in first person. Return ONLY the summary, no commentary.\n\n${content}`;
+      const response = await provider.chat({ messages: [{ role: 'user', content: prompt }] });
+      const summary = (response.text || '').trim();
+
+      if (summary && summary.length >= 50) {
+        this.updateNarrativeSummary(section, summary, characterId);
+        logger.info(`[BehavioralDNA] Generated summary for "${section}" (${summary.length} chars)`);
+        return true;
+      }
+    } catch (err) {
+      logger.warn(`[BehavioralDNA] Summary generation failed for "${section}": ${err.message}`);
+    }
+    return false;
   }
 
   // ── DNA Synthesis (during consolidation) ─────────────────────────
@@ -592,6 +614,8 @@ Rewrite the "${section}" section to reflect recent developments. Keep the same v
         if (newContent && newContent.length > 20) {
           this.evolveNarrative(section, newContent, `consolidation: ${recentHistory.length} trait changes`, characterId);
           logger.debug(`[BehavioralDNA] Evolved narrative "${section}" to v${(current.version || 1) + 1}`);
+          // Regenerate summary for the updated narrative
+          await this._generateSummaryForSection(section, newContent, characterId, provider);
         }
       } catch (err) {
         logger.warn(`[BehavioralDNA] Narrative evolution failed for "${section}": ${err.message}`);

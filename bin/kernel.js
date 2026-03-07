@@ -324,6 +324,20 @@ async function startBotFlow(config) {
       await agent.behavioralDNA.initializeDefaultTraits(activeCharacterId);
       await agent.behavioralDNA.initializeNarratives(activeCharacterId, charCtx.selfManager);
       if (agent.feedbackEngine) agent.feedbackEngine._behavioralDNA = agent.behavioralDNA;
+
+      // Auto-generate narrative summaries if any are missing (background, non-blocking)
+      if (agent.behavioralDNA.hasMissingSummaries(activeCharacterId)) {
+        setImmediate(async () => {
+          try {
+            const provider = createProvider(config);
+            const count = await agent.behavioralDNA.generateNarrativeSummaries(activeCharacterId, provider);
+            if (count > 0) logger.info(`[Startup] Generated ${count} narrative summaries`);
+          } catch (err) {
+            logger.warn(`[Startup] Narrative summary generation failed: ${err.message}`);
+          }
+        });
+      }
+
       logger.info('[Startup] BehavioralDNA initialized');
     } catch (err) {
       logger.warn(`[Startup] BehavioralDNA init failed: ${err.message}`);
