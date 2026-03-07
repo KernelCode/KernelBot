@@ -4,7 +4,7 @@ import { dirname } from 'path';
 import { getLogger } from '../utils/logger.js';
 import { EmbeddingProvider } from './embeddings.js';
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 /**
  * BrainDB — unified SQLite database for all KERNEL data.
@@ -613,19 +613,30 @@ export class BrainDB {
     } else if (existing.version < SCHEMA_VERSION) {
       if (existing.version < 7) this._runV7Migration();
       // v8: new vector tables are IF NOT EXISTS — no-op migration needed
+      // v10: ensure scope column exists (was missing in v9 CREATE TABLE)
+      if (existing.version < 10) this._runV10Migration();
       this._db.query('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
     }
   }
 
   _runV7Migration() {
+    this._addScopeColumn();
+  }
+
+  _runV10Migration() {
+    this._addScopeColumn();
+  }
+
+  /** Ensure memories.scope column exists (idempotent). */
+  _addScopeColumn() {
     const logger = getLogger();
     try {
       this._db.exec('ALTER TABLE memories ADD COLUMN scope TEXT DEFAULT \'org_wide\'');
-      logger.info('[BrainDB] v7 migration: added scope column to memories');
+      logger.info('[BrainDB] Migration: added scope column to memories');
     } catch (err) {
       // Column may already exist
       if (!err.message.includes('duplicate column')) {
-        logger.warn(`[BrainDB] v7 migration warning: ${err.message}`);
+        logger.warn(`[BrainDB] Migration warning: ${err.message}`);
       }
     }
   }
