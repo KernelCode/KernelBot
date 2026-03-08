@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { createHash, randomBytes } from 'crypto';
 import yaml from 'js-yaml';
 import dotenv from 'dotenv';
 import chalk from 'chalk';
@@ -65,6 +66,9 @@ const DEFAULTS = {
   dashboard: {
     enabled: false,
     port: 3000,
+    credentials: null,
+    session_secret: null,
+    session_ttl_hours: 24,
   },
   brain_db: {
     enabled: true,
@@ -488,6 +492,35 @@ async function promptForMissing(config) {
   }
 
   return mutableConfig;
+}
+
+/**
+ * Hash a password with a random salt using SHA-256.
+ */
+export function hashPassword(password) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = createHash('sha256').update(password + salt).digest('hex');
+  return { hash, salt };
+}
+
+/**
+ * Verify a password against a stored hash + salt.
+ */
+export function verifyPassword(password, hash, salt) {
+  const computed = createHash('sha256').update(password + salt).digest('hex');
+  return computed === hash;
+}
+
+/**
+ * Set dashboard login credentials in config.yaml and update live config.
+ */
+export function setDashboardCredentials(config, username, password) {
+  const { hash, salt } = hashPassword(password);
+  const credentials = { username, password_hash: hash, salt };
+  _patchConfigYaml('dashboard', { credentials });
+  if (!config.dashboard) config.dashboard = {};
+  config.dashboard.credentials = credentials;
+  return credentials;
 }
 
 export function loadConfig() {

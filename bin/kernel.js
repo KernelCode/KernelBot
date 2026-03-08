@@ -9,7 +9,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import chalk from 'chalk';
 import * as p from '@clack/prompts';
-import { loadConfig, loadConfigInteractive, changeBrainModel, changeOrchestratorModel, saveDashboardToYaml } from '../src/utils/config.js';
+import { loadConfig, loadConfigInteractive, changeBrainModel, changeOrchestratorModel, saveDashboardToYaml, setDashboardCredentials } from '../src/utils/config.js';
 import { createLogger, getLogger } from '../src/utils/logger.js';
 import {
   showLogo,
@@ -848,11 +848,13 @@ async function manageDashboard(config) {
     'Dashboard',
   );
 
+  const hasCreds = !!(config.dashboard?.credentials?.password_hash);
   const choice = await p.select({
     message: 'Dashboard settings',
     options: [
       { value: 'toggle', label: `${dashEnabled ? 'Disable' : 'Enable'} auto-start on boot` },
       { value: 'port', label: 'Change port', hint: String(dashPort) },
+      { value: 'credentials', label: 'Set login credentials', hint: hasCreds ? 'configured' : 'not set' },
       { value: 'back', label: 'Back' },
     ],
   });
@@ -880,6 +882,21 @@ async function manageDashboard(config) {
     saveDashboardToYaml({ port: newPort });
     config.dashboard.port = newPort;
     p.log.success(`Dashboard port set to ${newPort}`);
+  } else if (choice === 'credentials') {
+    const username = await p.text({
+      message: 'Dashboard username',
+      validate: (v) => (!v.trim() ? 'Username is required' : undefined),
+    });
+    if (handleCancel(username)) return;
+
+    const password = await p.password({
+      message: 'Dashboard password',
+      validate: (v) => (!v || v.length < 4 ? 'Password must be at least 4 characters' : undefined),
+    });
+    if (handleCancel(password)) return;
+
+    setDashboardCredentials(config, username.trim(), password);
+    p.log.success(`Dashboard credentials set for user: ${username.trim()}`);
   }
 }
 

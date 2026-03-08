@@ -16,8 +16,6 @@ Most AI assistants are stateless — they forget everything between conversation
 - **Synthesis Loop** — replaces random background activity with intelligent, goal-directed cycles: assess → prioritize → execute → measure → adapt.
 - **Identity Awareness** — classifies every sender (owner, known user, unknown, AI agent), enforces knowledge isolation, and adapts communication style per person.
 
-Everything is stored in a unified SQLite brain with vector embeddings for semantic search. No external databases, no cloud dependencies — your data stays on your machine.
-
 ## How It Works
 
 ```
@@ -43,9 +41,6 @@ Orchestrator + five specialized worker types (coding, browser, system, devops, r
 **Multi-Model**
 Anthropic, OpenAI, Google Gemini, and Groq. Switch the orchestrator or workers anytime with `/brain` or `/orchestrator`.
 
-**Unified Brain (SQLite + Vector Search)**
-17+ tables covering memories, conversations, world model entities, causal events, behavioral traits, feedback signals, and more — all in a single `brain.sqlite` file with sqlite-vec embeddings.
-
 **40+ Tools**
 Shell, files, Git, GitHub PRs, Docker, Puppeteer browsing, JIRA, system monitoring, networking, Claude Code.
 
@@ -64,6 +59,28 @@ Proposes and codes its own improvements via pull requests. Never auto-merges —
 **Security**
 User allowlist, per-sender trust levels, knowledge isolation between users, blocked paths, dangerous-op confirmation, audit logging, secret redaction, job timeouts.
 
+## brain.sqlite — The Portable Brain
+
+Everything KernelBot learns lives in a single SQLite file: `brain.sqlite`. It's like a disk that holds everything an AI employee needs to do its job. Copy it to another machine and your agent picks up exactly where it left off. No external databases, no cloud dependencies.
+
+**35+ tables. 6 vector indices. One file.**
+
+| Layer | What it stores | Why it matters |
+|-------|---------------|----------------|
+| **World Model** | Entities, relationships, beliefs, jargon | Knows your team, stack, and terminology |
+| **Causal Memory** | trigger → goal → approach → outcome → lesson | Learns *why* things worked or failed |
+| **Episodic Memory** | Timestamped interaction summaries | Recalls what happened and when |
+| **Semantic Memory** | Consolidated knowledge topics | Connects dots across conversations |
+| **Behavioral DNA** | 13 evolving traits + per-user profiles | Adapts personality to each person |
+| **Feedback Engine** | Implicit signals, adjustments, confidence | Learns preferences without feedback buttons |
+| **Identity System** | Sender types, trust levels, knowledge scopes | Controls who sees what |
+| **Personas** | Per-user communication profiles | Remembers how each person works |
+| **Journals** | Daily reflections and ideas | Tracks its own evolving understanding |
+| **Codebase Knowledge** | File summaries, architecture map | Understands your code without re-reading |
+| **Vector Embeddings** | 6 sqlite-vec indices | Semantic search across all data |
+
+Every search is hybrid — vector similarity first, SQL fallback if embeddings aren't configured. No data goes unsearchable.
+
 ## Quick Start
 
 ```bash
@@ -71,7 +88,7 @@ npm install -g kernelbot
 kernelbot
 ```
 
-On first run, KernelBot walks you through picking a provider and entering API keys. Config is saved to `~/.kernelbot/`.
+On first run, KernelBot walks you through picking a provider and entering API keys. Config is saved to `~/.kernelbot/`. The brain starts empty and grows from there.
 
 ## Requirements
 
@@ -115,24 +132,35 @@ On first run, KernelBot walks you through picking a provider and entering API ke
 ## Architecture
 
 ```
-Interface Layer (src/bot.js)
-    ↓
-OrchestratorAgent (src/agent.js) — 3 core tools
-    ↓ dispatch_task / list_jobs / cancel_job
-JobManager (src/swarm/) — queued → running → completed/failed/cancelled
-    ↓
-WorkerAgent (src/worker.js) — scoped tools, background execution
-
-Unified Brain (src/brain/)
-    ├── db.js              — SQLite + sqlite-vec core
-    ├── world-model.js     — entities, relationships, beliefs, jargon
-    ├── causal-memory.js   — trigger → outcome → lesson chains
-    ├── behavioral-dna.js  — evolving traits + per-user profiles
-    ├── feedback-engine.js — implicit signal detection
-    ├── consolidation.js   — periodic memory synthesis
-    ├── synthesis.js       — intelligent activity loop
-    ├── embeddings.js      — vector embedding providers
-    └── managers/          — SQLite-backed replacements for all data stores
+src/
+├── bot.js                 → Telegram interface
+├── agent.js               → Orchestrator (3 tools: dispatch, list, cancel)
+├── worker.js              → Background worker execution
+├── swarm/                 → Job lifecycle (queued → running → done)
+│
+├── brain/                 → Everything that makes brain.sqlite
+│   ├── db.js              → SQLite + sqlite-vec core, schema migrations
+│   ├── world-model.js     → Entities, relationships, beliefs, jargon
+│   ├── causal-memory.js   → Trigger → outcome → lesson chains
+│   ├── behavioral-dna.js  → 13 evolving traits + per-user profiles
+│   ├── feedback-engine.js → Implicit signal detection + adjustments
+│   ├── identity-awareness → Sender classification + knowledge isolation
+│   ├── consolidation.js   → Periodic memory synthesis
+│   ├── synthesis.js       → Intelligent activity loop
+│   ├── embeddings.js      → Vector embedding providers
+│   └── managers/
+│       ├── memory-manager.js       → Episodic + semantic memory
+│       ├── conversation-manager.js → Chat history
+│       ├── persona-manager.js      → Per-user personas
+│       ├── journal-manager.js      → Daily journals
+│       ├── self-manager.js         → Bot self-awareness files
+│       ├── evolution-tracker.js    → Self-improvement proposals
+│       └── share-queue.js          → Pending discoveries to share
+│
+├── life/                  → Autonomous background activity
+├── tools/                 → 40+ tool implementations
+├── prompts/               → System prompts for orchestrator + workers
+└── providers/             → LLM provider abstraction
 ```
 
 Both the orchestrator and workers are configurable — use any supported provider and model. All persistent data lives in `~/.kernelbot/`.

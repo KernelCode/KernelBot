@@ -385,6 +385,9 @@ export function startBot(config, agent, conversationManager, jobManager, automat
   // Track pending custom character build: chatId -> { answers: {}, step: number }
   const pendingCharacterBuild = new Map();
 
+  // Track pending dashboard credential setup: chatId -> { step: 'username' | 'password', username?: string }
+  const pendingDashboardCreds = new Map();
+
   // Handle inline keyboard callbacks for /brain
   bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
@@ -1573,6 +1576,36 @@ export function startBot(config, agent, conversationManager, jobManager, automat
       return;
     }
 
+    // Handle pending dashboard credential setup
+    if (pendingDashboardCreds.has(chatId)) {
+      const pending = pendingDashboardCreds.get(chatId);
+
+      if (text.toLowerCase() === 'cancel') {
+        pendingDashboardCreds.delete(chatId);
+        await bot.sendMessage(chatId, 'Dashboard credential setup cancelled.');
+        return;
+      }
+
+      if (pending.step === 'username') {
+        pending.username = text.trim();
+        pending.step = 'password';
+        pendingDashboardCreds.set(chatId, pending);
+        await bot.sendMessage(chatId, `Username: *${pending.username}*\n\nNow send the *password*.\n\nSend *cancel* to abort.`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      if (pending.step === 'password') {
+        pendingDashboardCreds.delete(chatId);
+        const { setDashboardCredentials } = await import('./utils/config.js');
+        setDashboardCredentials(config, pending.username, text);
+        // Invalidate existing sessions so old logins are cleared
+        if (dashboardHandle?.invalidateAllSessions) dashboardHandle.invalidateAllSessions();
+        logger.info(`[Bot] Dashboard credentials set for user: ${pending.username} by ${username}`);
+        await bot.sendMessage(chatId, `🔐 Dashboard credentials set for user: *${pending.username}*\n\nAll existing sessions have been invalidated.`, { parse_mode: 'Markdown' });
+        return;
+      }
+    }
+
     // Handle commands — these bypass batching entirely
     if (text === '/character') {
       logger.info(`[Bot] /character command from ${username} (${userId}) in chat ${chatId}`);
@@ -2071,18 +2104,27 @@ export function startBot(config, agent, conversationManager, jobManager, automat
         return;
       }
 
+      if (args === 'password') {
+        pendingDashboardCreds.set(chatId, { step: 'username' });
+        await bot.sendMessage(chatId, '🔐 *Dashboard Login Setup*\n\nEnter a *username* for the dashboard login.\n\nSend *cancel* to abort.', { parse_mode: 'Markdown' });
+        return;
+      }
+
       // Default: show status
       const running = !!dashboardHandle;
+      const hasCreds = !!(config.dashboard?.credentials?.password_hash);
       const lines = [
         '🖥️ *Dashboard*',
         '',
         `*Status:* ${running ? '🟢 Running' : '⚪ Stopped'}`,
         `*Port:* ${port}`,
         running ? `*URL:* http://localhost:${port}` : '',
+        `*Login:* ${hasCreds ? '🔒 Configured' : '🔓 No credentials set'}`,
         '',
         '_Commands:_',
         '`/dashboard start` — Start the dashboard',
         '`/dashboard stop` — Stop the dashboard',
+        '`/dashboard password` — Set login credentials',
       ].filter(Boolean);
       await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
       return;

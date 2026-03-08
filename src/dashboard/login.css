@@ -1,0 +1,122 @@
+.login-container {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.login-box {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 40px 36px 32px;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+  box-shadow: 0 0 40px rgba(57,255,20,0.03), inset 0 0 30px rgba(0,0,0,0.3);
+}
+
+.login-logo {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 16px;
+}
+.login-logo svg { width: 100%; height: 100%; }
+
+.login-title {
+  font-family: var(--font-hud);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 6px;
+  margin-bottom: 2px;
+  text-shadow: 0 0 20px rgba(57,255,20,0.3);
+}
+
+.login-subtitle {
+  font-family: var(--font-hud);
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--dim);
+  letter-spacing: 4px;
+  margin-bottom: 32px;
+}
+
+.input-group {
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+.input-group label {
+  display: block;
+  font-family: var(--font-hud);
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--dim);
+  letter-spacing: 2px;
+  margin-bottom: 6px;
+}
+
+.input-group input {
+  width: 100%;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid var(--panel-border);
+  border-radius: 2px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-bright);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.input-group input:focus {
+  border-color: var(--accent-dim);
+  box-shadow: 0 0 8px rgba(57,255,20,0.1);
+}
+
+.error-msg {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--red);
+  min-height: 18px;
+  margin-bottom: 8px;
+  text-shadow: 0 0 6px rgba(255,51,51,0.3);
+}
+
+#login-btn {
+  width: 100%;
+  background: rgba(57,255,20,0.08);
+  border: 1px solid var(--accent-dim);
+  border-radius: 2px;
+  padding: 10px 0;
+  font-family: var(--font-hud);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+#login-btn:hover {
+  background: rgba(57,255,20,0.15);
+  box-shadow: 0 0 15px rgba(57,255,20,0.15);
+}
+
+#login-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#login-btn .btn-loading {
+  animation: pulse-text 1s ease-in-out infinite;
+}
+
+@keyframes pulse-text {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}

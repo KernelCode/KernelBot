@@ -6,11 +6,13 @@
  */
 
 import { createServer } from 'http';
-import { readFileSync, statSync, createReadStream, writeFileSync, copyFileSync, existsSync } from 'fs';
+import { readFileSync, statSync, createReadStream, writeFileSync, copyFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname, extname } from 'path';
 import { fileURLToPath } from 'url';
-import { loadavg, totalmem, freemem, cpus } from 'os';
+import { loadavg, totalmem, freemem, cpus, homedir } from 'os';
+import { createHash, randomBytes } from 'crypto';
 import { getLogger } from '../utils/logger.js';
+import { verifyPassword, saveDashboardToYaml } from '../utils/config.js';
 import { WORKER_TYPES } from '../swarm/worker-registry.js';
 import { TOOL_CATEGORIES } from '../tools/categories.js';
 import { loadAllSkills, getCategoryList, SKILL_CATEGORIES } from '../skills/loader.js';
@@ -42,32 +44,88 @@ export function startDashboard(deps) {
 
   const logger = getLogger();
 
-  // --- Authentication ---
+  // --- Authentication & Session Management ---
   const dashboardToken = config.dashboard?.token || process.env.DASHBOARD_TOKEN || null;
   const allowedOrigins = config.dashboard?.allowed_origins || null;
 
+  // Session secret: load from config or generate + persist
+  let serverSecret = config.dashboard?.session_secret;
+  if (!serverSecret) {
+    serverSecret = randomBytes(32).toString('hex');
+    config.dashboard.session_secret = serverSecret;
+    try { saveDashboardToYaml({ session_secret: serverSecret }); } catch { /* best effort */ }
+  }
+
+  const sessions = new Map();
+  const sessionTTL = (config.dashboard?.session_ttl_hours || 24) * 3600_000;
+
+  function createSession(username) {
+    const token = createHash('sha256')
+      .update(username + Date.now() + serverSecret + randomBytes(8).toString('hex'))
+      .digest('hex');
+    sessions.set(token, { username, createdAt: Date.now() });
+    return token;
+  }
+
+  function validateSession(req) {
+    const cookieHeader = req.headers.cookie || '';
+    const match = cookieHeader.match(/kernel_session=([a-f0-9]{64})/);
+    if (!match) return null;
+    const token = match[1];
+    const session = sessions.get(token);
+    if (!session) return null;
+    if (Date.now() - session.createdAt > sessionTTL) {
+      sessions.delete(token);
+      return null;
+    }
+    return session.username;
+  }
+
+  function hasCredentials() {
+    return !!(config.dashboard?.credentials?.password_hash);
+  }
+
+  function requireAuth(req, res) {
+    // If no credentials configured, allow access (backward compat)
+    if (!hasCredentials()) return true;
+
+    // Check session cookie
+    if (validateSession(req)) return true;
+
+    // Check Bearer token fallback (for API/programmatic access)
+    if (dashboardToken) {
+      const authHeader = req.headers.authorization;
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const queryToken = url.searchParams.get('token');
+      if (authHeader === `Bearer ${dashboardToken}` || queryToken === dashboardToken) return true;
+    }
+
+    return false;
+  }
+
   function getCorOrigin(req) {
-    if (!allowedOrigins) return null; // No CORS headers when no origins configured
+    if (!allowedOrigins) return null;
     const origin = req.headers.origin;
     if (origin && allowedOrigins.includes(origin)) return origin;
     return null;
   }
 
   function authenticate(req, res) {
-    if (!dashboardToken) return true; // No token configured = no auth required
-
-    // Check Authorization header or query param
+    if (!dashboardToken) return true;
     const authHeader = req.headers.authorization;
     const url = new URL(req.url, `http://${req.headers.host}`);
     const queryToken = url.searchParams.get('token');
-
-    if (authHeader === `Bearer ${dashboardToken}` || queryToken === dashboardToken) {
-      return true;
-    }
-
+    if (authHeader === `Bearer ${dashboardToken}` || queryToken === dashboardToken) return true;
+    // Also allow if session is valid
+    if (validateSession(req)) return true;
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Unauthorized — provide a valid dashboard token' }));
     return false;
+  }
+
+  /** Clear all sessions (called when credentials change) */
+  function invalidateAllSessions() {
+    sessions.clear();
   }
 
   // --- Static file serving ---
@@ -567,37 +625,109 @@ export function startDashboard(deps) {
       return;
     }
 
-    // Serve index.html (static pages don't require auth)
+    // --- Login page (always accessible) ---
+    if (path === '/login' || path === '/login.html') {
+      // If already authenticated, redirect to dashboard
+      if (requireAuth(req, res)) {
+        res.writeHead(302, { 'Location': '/' });
+        res.end();
+        return;
+      }
+      serveStaticFile(res, 'login.html');
+      return;
+    }
+
+    // --- Login/Logout API (always accessible) ---
+    if (path === '/api/login' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { username, password } = JSON.parse(body);
+          const creds = config.dashboard?.credentials;
+          if (!creds?.password_hash) {
+            sendJson(res, { error: 'No credentials configured. Use /dashboard password in Telegram or CLI to set up.' }, req);
+            return;
+          }
+          if (username === creds.username && verifyPassword(password, creds.password_hash, creds.salt)) {
+            const token = createSession(username);
+            res.writeHead(200, {
+              'Content-Type': 'application/json',
+              'Set-Cookie': `kernel_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(sessionTTL / 1000)}`,
+            });
+            res.end(JSON.stringify({ success: true }));
+          } else {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid username or password' }));
+          }
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid request body' }));
+        }
+      });
+      return;
+    }
+
+    if (path === '/api/logout') {
+      // Clear session
+      const cookieHeader = req.headers.cookie || '';
+      const match = cookieHeader.match(/kernel_session=([a-f0-9]{64})/);
+      if (match) sessions.delete(match[1]);
+      res.writeHead(302, {
+        'Location': '/login',
+        'Set-Cookie': 'kernel_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0',
+      });
+      res.end();
+      return;
+    }
+
+    // --- Static assets (css, js, svg, png) — always accessible ---
+    if (/^\/([\w.-]+\.(css|js|svg|png))$/.test(path)) {
+      const fileName = path.slice(1);
+      if (serveStaticFile(res, fileName)) return;
+    }
+
+    // --- Auth check for all other routes ---
+    if (!requireAuth(req, res)) {
+      // Determine if this is an API request or a page request
+      const isApi = path.startsWith('/api/') || path === '/events';
+      if (isApi) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+      } else {
+        res.writeHead(302, { 'Location': '/login' });
+        res.end();
+      }
+      return;
+    }
+
+    // --- Protected HTML pages ---
     if (path === '/' || path === '/index.html') {
       serveStaticFile(res, 'index.html');
       return;
     }
 
-    // Serve agents page
     if (path === '/agents' || path === '/agents.html') {
       serveStaticFile(res, 'agents.html');
       return;
     }
 
-    // Serve onboarding page
     if (path === '/onboarding' || path === '/onboarding.html') {
       serveStaticFile(res, 'onboarding.html');
       return;
     }
 
-    // Serve database explorer page
     if (path === '/database' || path === '/database.html') {
       serveStaticFile(res, 'database.html');
       return;
     }
 
-    // Serve chat page
     if (path === '/chat' || path === '/chat.html') {
       serveStaticFile(res, 'chat.html');
       return;
     }
 
-    // All API and SSE endpoints require authentication
+    // All API and SSE endpoints require authentication (already checked above)
     if (!authenticate(req, res)) return;
 
     // SSE endpoint
@@ -825,12 +955,6 @@ export function startDashboard(deps) {
       return;
     }
 
-    // Static files (.css, .js, etc.)
-    if (/^\/([\w.-]+\.(css|js|svg|png))$/.test(path)) {
-      const fileName = path.slice(1);
-      if (serveStaticFile(res, fileName)) return;
-    }
-
     // 404
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not Found');
@@ -846,6 +970,7 @@ export function startDashboard(deps) {
 
   return {
     server,
+    invalidateAllSessions,
     stop() {
       clearInterval(sseInterval);
       for (const res of sseClients) {

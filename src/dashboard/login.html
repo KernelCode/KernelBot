@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KERNEL // Login</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="login.css">
+</head>
+<body>
+
+<canvas id="particle-canvas"></canvas>
+<div class="scanlines"></div>
+
+<div class="login-container">
+  <div class="login-box">
+    <div class="login-logo">
+      <svg viewBox="0 0 32 32" shape-rendering="crispEdges">
+        <path fill="rgba(57,255,20,0.35)" d="M10,2h10v2h-10z M8,4h2v2h-2z M6,6h2v4h-2z M4,10h2v8h-2z M6,18h2v2h-2z M8,20h2v2h-2z M10,22h14v2h-14z M24,18h2v4h-2z M26,8h2v10h-2z M24,6h2v2h-2z"/>
+        <path fill="rgba(57,255,20,0.6)" d="M12,8h8v2h-8z M10,10h2v10h-2z M20,10h2v6h-2z M18,18h2v2h-2z M12,20h6v2h-6z"/>
+        <path fill="#39ff14" d="M14,14h4v2h-2v2h-2z"/>
+      </svg>
+    </div>
+    <h1 class="login-title">KERNEL</h1>
+    <p class="login-subtitle">COMMAND CENTER</p>
+
+    <form id="login-form" autocomplete="off">
+      <div class="input-group">
+        <label for="username">USERNAME</label>
+        <input type="text" id="username" name="username" autocomplete="username" required>
+      </div>
+      <div class="input-group">
+        <label for="password">PASSWORD</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <div id="error-msg" class="error-msg"></div>
+      <button type="submit" id="login-btn">
+        <span class="btn-text">LOGIN</span>
+        <span class="btn-loading" style="display:none">AUTHENTICATING...</span>
+      </button>
+    </form>
+  </div>
+</div>
+
+<script src="login.js"></script>
+<!-- Particle canvas from shared.js -->
+<script>
+(function(){
+  const c=document.getElementById('particle-canvas'),x=c.getContext('2d');
+  let w,h,pts=[];
+  function resize(){w=c.width=innerWidth;h=c.height=innerHeight;pts=[];for(let i=0;i<60;i++)pts.push({x:Math.random()*w,y:Math.random()*h,vx:(Math.random()-.5)*.3,vy:(Math.random()-.5)*.3,r:Math.random()*1.5+.5});}
+  resize();addEventListener('resize',resize);
+  function draw(){x.clearRect(0,0,w,h);for(const p of pts){p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>w)p.vx*=-1;if(p.y<0||p.y>h)p.vy*=-1;x.beginPath();x.arc(p.x,p.y,p.r,0,Math.PI*2);x.fillStyle='rgba(57,255,20,0.3)';x.fill();}for(let i=0;i<pts.length;i++)for(let j=i+1;j<pts.length;j++){const dx=pts[i].x-pts[j].x,dy=pts[i].y-pts[j].y,d=Math.sqrt(dx*dx+dy*dy);if(d<120){x.beginPath();x.moveTo(pts[i].x,pts[i].y);x.lineTo(pts[j].x,pts[j].y);x.strokeStyle=`rgba(57,255,20,${.08*(1-d/120)})`;x.stroke();}}requestAnimationFrame(draw);}
+  draw();
+})();
+</script>
+</body>
+</html>
