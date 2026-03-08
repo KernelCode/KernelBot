@@ -6,11 +6,12 @@
  */
 
 import { createServer } from 'http';
-import { readFileSync, statSync, createReadStream, writeFileSync, copyFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, statSync, createReadStream, writeFileSync, copyFileSync, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { join, dirname, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { loadavg, totalmem, freemem, cpus, homedir } from 'os';
 import { createHash, randomBytes } from 'crypto';
+import { tmpdir } from 'os';
 import { getLogger } from '../utils/logger.js';
 import { verifyPassword, saveDashboardToYaml } from '../utils/config.js';
 import { WORKER_TYPES } from '../swarm/worker-registry.js';
@@ -58,6 +59,59 @@ export function startDashboard(deps) {
 
   const sessions = new Map();
   const sessionTTL = (config.dashboard?.session_ttl_hours || 24) * 3600_000;
+
+  // --- Login Rate Limiting ---
+  const LOGIN_MAX_ATTEMPTS = 5;        // max attempts before lockout
+  const LOGIN_WINDOW_MS = 15 * 60_000; // 15-minute window
+  const LOGIN_LOCKOUT_MS = 15 * 60_000; // 15-minute lockout after max attempts
+  const loginAttempts = new Map();      // ip → { count, firstAttempt, lockedUntil }
+
+  function checkLoginRateLimit(ip) {
+    const now = Date.now();
+    const record = loginAttempts.get(ip);
+    if (!record) return { allowed: true };
+    // Currently locked out
+    if (record.lockedUntil && now < record.lockedUntil) {
+      const retryAfter = Math.ceil((record.lockedUntil - now) / 1000);
+      return { allowed: false, retryAfter };
+    }
+    // Window expired — reset
+    if (now - record.firstAttempt > LOGIN_WINDOW_MS) {
+      loginAttempts.delete(ip);
+      return { allowed: true };
+    }
+    // Under threshold
+    if (record.count < LOGIN_MAX_ATTEMPTS) return { allowed: true };
+    // Exceeded — lock out
+    record.lockedUntil = now + LOGIN_LOCKOUT_MS;
+    const retryAfter = Math.ceil(LOGIN_LOCKOUT_MS / 1000);
+    return { allowed: false, retryAfter };
+  }
+
+  function recordLoginFailure(ip) {
+    const now = Date.now();
+    const record = loginAttempts.get(ip);
+    if (!record || now - record.firstAttempt > LOGIN_WINDOW_MS) {
+      loginAttempts.set(ip, { count: 1, firstAttempt: now, lockedUntil: null });
+    } else {
+      record.count++;
+    }
+  }
+
+  function clearLoginAttempts(ip) {
+    loginAttempts.delete(ip);
+  }
+
+  // Periodic cleanup of stale rate-limit entries (every 5 minutes)
+  const loginCleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [ip, record] of loginAttempts) {
+      if (now - record.firstAttempt > LOGIN_WINDOW_MS && (!record.lockedUntil || now > record.lockedUntil)) {
+        loginAttempts.delete(ip);
+      }
+    }
+  }, 5 * 60_000);
+  loginCleanupInterval.unref();
 
   function createSession(username) {
     const token = createHash('sha256')
@@ -639,6 +693,17 @@ export function startDashboard(deps) {
 
     // --- Login/Logout API (always accessible) ---
     if (path === '/api/login' && req.method === 'POST') {
+      const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+      const rateCheck = checkLoginRateLimit(clientIp);
+      if (!rateCheck.allowed) {
+        logger.warn(`[Dashboard] Login rate-limited for IP ${clientIp} (retry after ${rateCheck.retryAfter}s)`);
+        res.writeHead(429, {
+          'Content-Type': 'application/json',
+          'Retry-After': String(rateCheck.retryAfter),
+        });
+        res.end(JSON.stringify({ error: `Too many login attempts. Try again in ${Math.ceil(rateCheck.retryAfter / 60)} minute(s).` }));
+        return;
+      }
       let body = '';
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
@@ -650,6 +715,7 @@ export function startDashboard(deps) {
             return;
           }
           if (username === creds.username && verifyPassword(password, creds.password_hash, creds.salt)) {
+            clearLoginAttempts(clientIp);
             const token = createSession(username);
             res.writeHead(200, {
               'Content-Type': 'application/json',
@@ -657,6 +723,10 @@ export function startDashboard(deps) {
             });
             res.end(JSON.stringify({ success: true }));
           } else {
+            recordLoginFailure(clientIp);
+            const record = loginAttempts.get(clientIp);
+            const remaining = LOGIN_MAX_ATTEMPTS - (record?.count || 0);
+            logger.warn(`[Dashboard] Failed login attempt from ${clientIp} (${remaining} attempts remaining)`);
             res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Invalid username or password' }));
           }
@@ -829,9 +899,24 @@ export function startDashboard(deps) {
 
     // Brain upload
     if (path === '/api/brain/upload' && req.method === 'POST') {
+      const MAX_UPLOAD_SIZE = 500 * 1024 * 1024; // 500 MB max
+      let totalSize = 0;
       const chunks = [];
-      req.on('data', chunk => chunks.push(chunk));
+      let aborted = false;
+      req.on('data', chunk => {
+        totalSize += chunk.length;
+        if (totalSize > MAX_UPLOAD_SIZE) {
+          if (!aborted) {
+            aborted = true;
+            sendJson(res, { error: `Upload too large — max ${MAX_UPLOAD_SIZE / (1024 * 1024)} MB` }, req);
+            req.destroy();
+          }
+          return;
+        }
+        chunks.push(chunk);
+      });
       req.on('end', async () => {
+        if (aborted) return;
         try {
           if (!brainDB?.isOpen || !brainDB._dbPath) {
             sendJson(res, { error: 'BrainDB not open' }, req);
@@ -848,7 +933,6 @@ export function startDashboard(deps) {
               return;
             }
             const boundary = boundaryMatch[1].trim();
-            const boundaryBuf = Buffer.from('--' + boundary);
             // Find start of file data (after headers)
             const headerEnd = body.indexOf('\r\n\r\n');
             if (headerEnd === -1) {
@@ -870,6 +954,72 @@ export function startDashboard(deps) {
             sendJson(res, { error: 'Invalid SQLite file — bad magic bytes' }, req);
             return;
           }
+
+          // --- Security: validate uploaded DB before replacing live database ---
+          const { Database } = await import('bun:sqlite');
+          const tempPath = join(tmpdir(), `kernel-upload-check-${Date.now()}.sqlite`);
+          try {
+            writeFileSync(tempPath, fileData);
+            const testDb = new Database(tempPath, { readonly: true, strict: true });
+
+            // Block SQLite triggers (could execute arbitrary SQL on queries)
+            const triggers = testDb.prepare(
+              "SELECT name, tbl_name FROM sqlite_master WHERE type='trigger'"
+            ).all();
+            if (triggers.length > 0) {
+              testDb.close();
+              try { unlinkSync(tempPath); } catch {}
+              const names = triggers.map(t => t.name).join(', ');
+              sendJson(res, { error: `Upload rejected — database contains triggers (${names}) which could execute malicious SQL` }, req);
+              return;
+            }
+
+            // Require schema_version table (must be a valid brain database)
+            const hasSchema = testDb.prepare(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
+            ).get();
+            if (!hasSchema) {
+              testDb.close();
+              try { unlinkSync(tempPath); } catch {}
+              sendJson(res, { error: 'Upload rejected — not a valid brain database (missing schema_version table)' }, req);
+              return;
+            }
+
+            // Verify core tables exist
+            const coreTables = ['memories', 'conversations', 'journals'];
+            const existingTables = testDb.prepare(
+              "SELECT name FROM sqlite_master WHERE type='table'"
+            ).all().map(r => r.name);
+            const missingCore = coreTables.filter(t => !existingTables.includes(t));
+            if (missingCore.length > 0) {
+              testDb.close();
+              try { unlinkSync(tempPath); } catch {}
+              sendJson(res, { error: `Upload rejected — missing required tables: ${missingCore.join(', ')}` }, req);
+              return;
+            }
+
+            // Quick integrity check
+            try {
+              const integrity = testDb.prepare('PRAGMA integrity_check(1)').get();
+              if (integrity && Object.values(integrity)[0] !== 'ok') {
+                testDb.close();
+                try { unlinkSync(tempPath); } catch {}
+                sendJson(res, { error: 'Upload rejected — database failed integrity check' }, req);
+                return;
+              }
+            } catch {
+              testDb.close();
+              try { unlinkSync(tempPath); } catch {}
+              sendJson(res, { error: 'Upload rejected — database is corrupted' }, req);
+              return;
+            }
+
+            testDb.close();
+          } finally {
+            // Clean up temp file
+            try { unlinkSync(tempPath); } catch {}
+          }
+
           const dbPath = brainDB._dbPath;
           const backupPath = dbPath + '.backup-' + Date.now();
           // Close, backup, write, reopen
@@ -884,7 +1034,8 @@ export function startDashboard(deps) {
         } catch (err) {
           // Try to reopen the original if something went wrong
           try { await brainDB.open(); } catch { /* best effort */ }
-          sendJson(res, { error: err.message }, req);
+          sendJson(res, { error: 'Database upload failed' }, req);
+          logger.error(`[Dashboard] Brain upload error: ${err.message}`);
         }
       });
       return;

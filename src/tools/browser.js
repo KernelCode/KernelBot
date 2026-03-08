@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import { writeFile, mkdir, access } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
+import { lookup } from 'dns/promises';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,44 @@ async function setupPage(page) {
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   );
   await page.setViewport({ width: MAX_SCREENSHOT_WIDTH, height: MAX_SCREENSHOT_HEIGHT });
+
+  // --- SSRF protection: intercept requests to block redirects to private IPs ---
+  await page.setRequestInterception(true);
+  page.on('request', async (request) => {
+    try {
+      const reqUrl = request.url();
+      // Block non-HTTP(S) protocols
+      if (!/^https?:/i.test(reqUrl)) {
+        request.abort('blockedbyclient');
+        return;
+      }
+      // Parse and check the target hostname
+      const parsed = new URL(reqUrl);
+      const host = parsed.hostname;
+      // Block if host is a private IP directly
+      if (isPrivateIP(host)) {
+        request.abort('blockedbyclient');
+        return;
+      }
+      // For navigation requests (redirects), resolve DNS and check
+      if (request.isNavigationRequest() && request.redirectChain().length > 0) {
+        try {
+          const results = await lookup(host, { all: true });
+          for (const r of results) {
+            if (isPrivateIP(r.address)) {
+              request.abort('blockedbyclient');
+              return;
+            }
+          }
+        } catch {
+          // DNS failed — let it proceed, Puppeteer will handle the error
+        }
+      }
+      request.continue();
+    } catch {
+      try { request.continue(); } catch { /* already handled */ }
+    }
+  });
 }
 
 /**
@@ -140,11 +179,54 @@ async function getTempPage() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function validateUrl(url) {
+/**
+ * Check if an IP address is private/reserved (RFC 1918, loopback, link-local, etc.)
+ */
+function isPrivateIP(ip) {
+  // IPv4 private ranges
+  const ipv4Patterns = [
+    /^127\./,                          // loopback
+    /^10\./,                           // Class A private
+    /^172\.(1[6-9]|2\d|3[01])\./,     // Class B private
+    /^192\.168\./,                     // Class C private
+    /^169\.254\./,                     // link-local
+    /^0\./,                            // current network
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // CGNAT (RFC 6598)
+    /^198\.1[89]\./,                   // benchmark testing
+    /^192\.0\.0\./,                    // IETF protocol assignments
+    /^192\.0\.2\./,                    // documentation (TEST-NET-1)
+    /^198\.51\.100\./,                 // documentation (TEST-NET-2)
+    /^203\.0\.113\./,                  // documentation (TEST-NET-3)
+    /^(22[4-9]|23\d)\./,              // multicast
+    /^(24\d|25[0-5])\./,              // reserved
+  ];
+  for (const p of ipv4Patterns) {
+    if (p.test(ip)) return true;
+  }
+  // IPv6 loopback and private
+  const normalizedIp = ip.replace(/^\[|\]$/g, '');
+  if (normalizedIp === '::1' || normalizedIp === '::') return true;
+  if (/^f[cd]/i.test(normalizedIp)) return true;   // fc00::/7 unique-local
+  if (/^fe[89ab]/i.test(normalizedIp)) return true; // fe80::/10 link-local
+  // IPv4-mapped IPv6 (::ffff:x.x.x.x)
+  const mappedMatch = normalizedIp.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mappedMatch) return isPrivateIP(mappedMatch[1]);
+  return false;
+}
+
+/**
+ * Validate URL with comprehensive SSRF protection.
+ * - Blocks non-HTTP protocols
+ * - Blocks numeric/decimal IP representations
+ * - Blocks credentials in URL (authority confusion)
+ * - Resolves DNS and blocks private IPs (prevents DNS rebinding at validation time)
+ */
+async function validateUrl(url) {
   if (!url || typeof url !== 'string') {
     return { valid: false, error: 'URL is required' };
   }
 
+  // Quick protocol and pattern check on raw input
   for (const pattern of BLOCKED_URL_PATTERNS) {
     if (pattern.test(url)) {
       return { valid: false, error: 'Access to internal/private network addresses or non-HTTP protocols is blocked' };
@@ -155,19 +237,58 @@ function validateUrl(url) {
     url = 'https://' + url;
   }
 
+  let parsed;
   try {
-    new URL(url);
+    parsed = new URL(url);
   } catch {
     return { valid: false, error: 'Invalid URL format' };
   }
 
+  // Block credentials in URL (e.g., http://attacker.com@localhost/)
+  if (parsed.username || parsed.password) {
+    return { valid: false, error: 'URLs with embedded credentials are not allowed' };
+  }
+
+  // Block non-http(s) protocols that might sneak through
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return { valid: false, error: 'Only HTTP and HTTPS protocols are allowed' };
+  }
+
+  const hostname = parsed.hostname;
+
+  // Block decimal/octal/hex IP representations (e.g., 2130706433 = 127.0.0.1)
+  if (/^\d+$/.test(hostname)) {
+    return { valid: false, error: 'Numeric IP addresses are not allowed' };
+  }
+  if (/^0x/i.test(hostname) || /^0\d/.test(hostname)) {
+    return { valid: false, error: 'Hex/octal IP addresses are not allowed' };
+  }
+
+  // Check the hostname itself as an IP
+  if (isPrivateIP(hostname)) {
+    return { valid: false, error: 'Access to internal/private network addresses is blocked' };
+  }
+
+  // Re-check the fully parsed URL against blocked patterns
   for (const pattern of BLOCKED_URL_PATTERNS) {
-    if (pattern.test(url)) {
+    if (pattern.test(parsed.href)) {
       return { valid: false, error: 'Access to internal/private network addresses is blocked' };
     }
   }
 
-  return { valid: true, url };
+  // DNS resolution check — resolve hostname and verify it doesn't point to a private IP
+  try {
+    const results = await lookup(hostname, { all: true });
+    for (const result of results) {
+      if (isPrivateIP(result.address)) {
+        return { valid: false, error: 'Domain resolves to a private/internal IP address' };
+      }
+    }
+  } catch {
+    // DNS resolution failed — let Puppeteer handle the error naturally
+  }
+
+  return { valid: true, url: parsed.href };
 }
 
 function truncate(text, maxLength = MAX_CONTENT_LENGTH) {
@@ -465,7 +586,7 @@ async function handleWebSearch(params) {
 }
 
 async function handleBrowse(params, context) {
-  const validation = validateUrl(params.url);
+  const validation = await validateUrl(params.url);
   if (!validation.valid) return { error: validation.error };
 
   const url = validation.url;
@@ -508,7 +629,7 @@ async function handleBrowse(params, context) {
 }
 
 async function handleScreenshot(params, context) {
-  const validation = validateUrl(params.url);
+  const validation = await validateUrl(params.url);
   if (!validation.valid) return { error: validation.error };
 
   const url = validation.url;
@@ -568,7 +689,7 @@ async function handleExtract(params, context) {
   // URL is optional — if not given, use the current open page
   let url = null;
   if (params.url) {
-    const validation = validateUrl(params.url);
+    const validation = await validateUrl(params.url);
     if (!validation.valid) return { error: validation.error };
     url = validation.url;
   }
@@ -650,7 +771,7 @@ async function handleInteract(params, context) {
   // URL is optional — if not given, use the current open page
   let url = null;
   if (params.url) {
-    const validation = validateUrl(params.url);
+    const validation = await validateUrl(params.url);
     if (!validation.valid) return { error: validation.error };
     url = validation.url;
   }

@@ -137,26 +137,60 @@ export const handlers = {
     const { config } = context;
     const blockedPaths = config.security?.blocked_paths || [];
 
-    // Tokenize the command to extract all path-like arguments, then resolve
-    // each one and check against blocked paths. This prevents bypasses via
-    // shell operators (&&, |, ;), quoting, or subshells.
-    const shellTokens = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-    for (const token of shellTokens) {
-      // Strip surrounding quotes
-      const cleaned = token.replace(/^["']|["']$/g, '');
-      // Skip tokens that look like flags or shell operators
-      if (/^[-|;&<>]/.test(cleaned) || cleaned.length === 0) continue;
-      try {
-        const resolved = expandPath(cleaned);
+    // --- Shell injection detection ---
+    // Detect command substitution and variable expansion that could bypass path checks.
+    // These constructs allow an attacker to construct blocked paths dynamically.
+    const INJECTION_PATTERNS = [
+      { pattern: /`[^`]+`/, label: 'backtick command substitution' },
+      { pattern: /\$\([^)]+\)/, label: '$() command substitution' },
+      { pattern: /\$\{[^}]+\}/, label: '${} variable expansion' },
+    ];
+
+    for (const { pattern, label } of INJECTION_PATTERNS) {
+      if (pattern.test(command)) {
+        // Check if the substitution could reference blocked paths
+        const match = command.match(pattern);
+        const inner = match ? match[0] : '';
         for (const bp of blockedPaths) {
           const expandedBp = expandPath(bp);
-          if (resolved.startsWith(expandedBp) || resolved === expandedBp) {
-            logger.warn(`execute_command blocked: argument "${cleaned}" references restricted path ${bp}`);
-            return { error: `Blocked: command references restricted path ${bp}` };
+          // Block if the substitution text references any blocked path
+          if (inner.includes(bp) || inner.includes(expandedBp)) {
+            logger.warn(`execute_command blocked: ${label} references restricted path ${bp}`);
+            return { error: `Blocked: ${label} references restricted path` };
           }
         }
-      } catch {
-        // Not a valid path — skip
+      }
+    }
+
+    // Expand $VAR and ${VAR} references using the current environment, then
+    // re-check the expanded form against blocked paths. This catches
+    // `cat $HOME/.ssh/id_rsa` style bypasses.
+    const expandedCommand = command.replace(/\$\{(\w+)\}|\$(\w+)/g, (_, g1, g2) => {
+      return process.env[g1 || g2] || '';
+    });
+
+    // Tokenize the command to extract all path-like arguments, then resolve
+    // each one and check against blocked paths.
+    const commandsToCheck = [command, expandedCommand];
+    for (const cmd of commandsToCheck) {
+      const shellTokens = cmd.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+      for (const token of shellTokens) {
+        // Strip surrounding quotes
+        const cleaned = token.replace(/^["']|["']$/g, '');
+        // Skip tokens that look like flags or shell operators
+        if (/^[-|;&<>]/.test(cleaned) || cleaned.length === 0) continue;
+        try {
+          const resolved = expandPath(cleaned);
+          for (const bp of blockedPaths) {
+            const expandedBp = expandPath(bp);
+            if (resolved.startsWith(expandedBp) || resolved === expandedBp) {
+              logger.warn(`execute_command blocked: argument "${cleaned}" references restricted path ${bp}`);
+              return { error: `Blocked: command references restricted path` };
+            }
+          }
+        } catch {
+          // Not a valid path — skip
+        }
       }
     }
 
