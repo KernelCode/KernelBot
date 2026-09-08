@@ -8,7 +8,8 @@
     "kernelbot": "./bin/kernel.js"
   },
   "scripts": {
-    "start": "node bin/kernel.js start"
+    "start": "node bin/kernel.js start",
+    "test": "node --test"
   },
   "keywords": [
     "ai",
