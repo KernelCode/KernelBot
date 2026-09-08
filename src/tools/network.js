@@ -1,5 +1,7 @@
 import { shellRun, shellEscape } from '../utils/shell.js';
 import { getLogger } from '../utils/logger.js';
+import { resolvePublicHost, validateHttpUrl } from '../security/network-policy.js';
+import { isIP } from 'node:net';
 
 const run = (cmd, timeout = 15000) => shellRun(cmd, timeout);
 
@@ -37,43 +39,28 @@ export const definitions = [
   },
 ];
 
-// SSRF protection: block requests to internal/cloud metadata addresses
-const BLOCKED_HOSTS = [
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,       // AWS/cloud metadata endpoint
-  /^0\./,
-  /^localhost$/i,
-  /^metadata\.google\.internal$/i,
-  /^\[::1\]$/,
-  /^\[fd/i,            // IPv6 private
-  /^\[fe80:/i,         // IPv6 link-local
-];
-
-function isBlockedHost(host) {
-  return BLOCKED_HOSTS.some(pattern => pattern.test(host));
-}
-
-export const handlers = {
+// Dependency injection keeps policy/execution regression tests off the network.
+export const createNetworkHandlers = ({ lookup, execute = run, logger = getLogger } = {}) => ({
   check_port: async (params) => {
-    const logger = getLogger();
     const host = params.host || 'localhost';
     const port = parseInt(params.port, 10);
     if (!Number.isFinite(port) || port <= 0 || port > 65535) return { error: 'Invalid port number' };
 
-    // SSRF protection: block internal network probing
-    if (host !== 'localhost' && isBlockedHost(host)) {
-      return { error: 'Blocked: cannot probe internal or cloud metadata addresses' };
+    let destination;
+    try {
+      // Keep the explicit local diagnostic exception, without trusting DNS for it.
+      destination = host === 'localhost' ? { address: '127.0.0.1', family: 4 }
+        : await resolvePublicHost(host, { lookup });
+    } catch (error) {
+      return { error: error.message };
     }
 
-    logger.debug(`check_port: checking ${host}:${port}`);
+    logger().debug(`check_port: checking ${host}:${port}`);
     // Use nc (netcat) for port check — works on both macOS and Linux
-    const result = await run(`nc -z -w 3 ${shellEscape(host)} ${port} 2>&1 && echo "OPEN" || echo "CLOSED"`, 5000);
+    const result = await execute(`nc -${destination.family} -n -z -w 3 ${shellEscape(destination.address)} ${port} 2>&1 && echo "OPEN" || echo "CLOSED"`, 5000);
 
     if (result.error) {
-      logger.error(`check_port failed for ${host}:${port}: ${result.error}`);
+      logger().error(`check_port failed for ${host}:${port}: ${result.error}`);
       return { port, host, status: 'closed', detail: result.error };
     }
 
@@ -84,17 +71,20 @@ export const handlers = {
   curl_url: async (params) => {
     const { url, method = 'GET', headers, body } = params;
 
-    // SSRF protection: block requests to internal networks and cloud metadata
+    let destination;
     try {
-      const parsed = new URL(url);
-      if (isBlockedHost(parsed.hostname)) {
-        return { error: 'Blocked: cannot access internal or cloud metadata addresses' };
-      }
-    } catch {
-      return { error: 'Invalid URL' };
+      destination = await validateHttpUrl(url, { lookup });
+    } catch (error) {
+      return { error: error.message };
     }
 
-    let cmd = `curl -s -w "\\n---HTTP_STATUS:%{http_code}" -X ${shellEscape(method)}`;
+    // -q must be first: curlrc, proxies and URL expansion must not override the
+    // validated destination. Redirects remain disabled (curl's default).
+    let cmd = `curl -q --globoff --proto '=http,https' --noproxy '*' -s -w "\\n---HTTP_STATUS:%{http_code}" -X ${shellEscape(method)}`;
+    if (!isIP(destination.host)) {
+      const address = destination.family === 6 ? `[${destination.address}]` : destination.address;
+      cmd += ` --resolve ${shellEscape(`${destination.host}:${destination.port}:${address}`)}`;
+    }
 
     if (headers) {
       for (const [key, val] of Object.entries(headers)) {
@@ -106,9 +96,9 @@ export const handlers = {
       cmd += ` -d ${shellEscape(body)}`;
     }
 
-    cmd += ` ${shellEscape(url)}`;
+    cmd += ` --url ${shellEscape(destination.url)}`;
 
-    const result = await run(cmd);
+    const result = await execute(cmd);
 
     if (result.error) return result;
 
@@ -138,4 +128,6 @@ export const handlers = {
     logger.debug('nginx_reload: successfully reloaded');
     return { success: true, test_output: test.output };
   },
-};
+});
+
+export const handlers = createNetworkHandlers();
